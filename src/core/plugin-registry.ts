@@ -1,8 +1,8 @@
 /**
  * TauTerm 内核 — 插件注册表
  *
- * 前端插件注册中心。插件通过 `registerPlugin()` 向内核注册其
- * manifest、UI 组件、翻译资源等。
+ * 前端插件注册中心。插件通过 `registerPlugin()` 向内核注册 manifest 与可选贡献点。
+ * 公共 UI 只消费稳定 contribution，不解释具体协议的运行态字段。
  */
 
 import type { ComponentType, ReactNode } from "react";
@@ -22,10 +22,8 @@ export type {
 
 // ── Types ───────────────────────────────────────────
 
-/** 内容类型 */
 export type ContentType = "terminal" | "file_browser" | "stats_dashboard" | "custom";
 
-/** 插件清单 */
 export interface PluginManifest {
   id: string;
   name: string;
@@ -40,14 +38,12 @@ export interface PluginManifest {
   transfer_protocols: string[];
 }
 
-/** Session 通用连接能力开关；不属于任何单个协议 params。 */
 export interface SessionConnectOptions {
   transferEnabled: boolean;
   transferProtocol?: string;
   sendBarEnabled: boolean;
 }
 
-/** 连接表单组件 Props。协议表单只拥有协议配置，Session 外壳能力单独传递。 */
 export interface ConnectFormProps {
   params: Record<string, unknown>;
   onChange: (params: Record<string, unknown>) => void;
@@ -61,15 +57,12 @@ export interface ConnectFormProps {
   onSessionOptionsChange?: (options: SessionConnectOptions) => void;
 }
 
-/** 端点信息 */
 export interface EndpointInfo {
   name: string;
   description: string;
-  /** 插件发现端点时附带的配置预设；内核只透传。 */
   params?: Record<string, unknown>;
 }
 
-/** 工具栏项 */
 export interface ToolbarItem {
   id: string;
   icon: IconName;
@@ -78,34 +71,24 @@ export interface ToolbarItem {
   onClick: () => void;
 }
 
-/** 右键菜单项 */
 export interface ContextMenuItem {
   id: string;
   label: string;
   onClick: (tabId: string) => void;
 }
 
-/** 底部面板标签页定义 */
 export interface BottomPanelDef {
   id: string;
   title: string;
   component: ComponentType<{ sessionId: string }>;
 }
 
-/** 状态栏渲染上下文 */
 export interface StatusBarContext {
-  /** 活跃会话 ID（无活跃会话时为空串） */
   sessionId: string;
-  /** 活跃会话的协议无关最小快照。协议私有状态由插件自己的 store/hook 读取。 */
+  /** 协议无关最小快照；插件私有状态通过 runtimeStore 读取。 */
   activeTab: StatusBarTab | null;
 }
 
-/**
- * 状态栏可见性/渲染所需的最小 Session 信息。
- *
- * 这里禁止加入 Serial/SSH/Network 等插件私有字段；插件 renderer 如需专属运行态，
- * 应使用自己的 store/hook。这样公共 registry 不会随新增协议持续膨胀。
- */
 export interface StatusBarTab {
   id: string;
   pluginId: string;
@@ -114,64 +97,104 @@ export interface StatusBarTab {
   params?: Record<string, unknown>;
 }
 
-/** 状态栏项（声明式描述符） */
 export interface StatusBarItem {
   id: string;
-  /** 对齐：左 / 右 */
   align: "left" | "right";
-  /** 排序优先级：左对齐时数值越大越靠左，右对齐时数值越大越靠右 */
   priority: number;
-  /** 可见性谓词：返回 false 则不渲染 */
   when?: (context: StatusBarContext) => boolean;
-  /** 渲染函数：返回一个 React 元素（可在内部使用 hooks） */
   render: (context: StatusBarContext) => ReactNode;
 }
 
-/** 状态栏项渲染函数 */
 export type StatusBarRenderer = (context: StatusBarContext) => ReactNode;
-
-/** 插件翻译资源：language -> plugin-local key/value。 */
 export type LocaleMap = Record<string, Record<string, string>>;
 
-/** 插件注册对象 */
+/**
+ * 插件私有前端运行态。快照类型故意为 unknown：公共层只能订阅/转交，不能读取协议字段。
+ * `revision()` 必须在每次可观察变更后单调递增，用于共享树等聚合消费者安全订阅。
+ */
+export interface PluginRuntimeStore {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: (sessionId: string) => unknown;
+  revision: () => number;
+  release?: (sessionId: string) => void;
+}
+
+export interface PluginSendContext {
+  sessionId: string;
+  params: Record<string, unknown>;
+  data: string | Uint8Array;
+  /** 走协议无关 `send_data` 路径，并保持统一 TX 订阅/统计行为。 */
+  sendDefault: (sessionId: string, data: string | Uint8Array) => Promise<void>;
+}
+
+export interface PluginSessionTreeMenuItem {
+  id: string;
+  label: string;
+  icon?: IconName;
+  danger?: boolean;
+  run: () => void | Promise<void>;
+}
+
+export interface PluginSessionTreeChild {
+  id: string;
+  name: string;
+  subtitle: string;
+  state: "connected" | "connecting" | "disconnected" | "transferring";
+  selected?: boolean;
+  onSelect?: () => void;
+  menuItems?: PluginSessionTreeMenuItem[];
+}
+
+/** 插件为左侧 Session 树贡献的后台实体；普通 Session child 仍由 Core 自己渲染。 */
+export interface PluginSessionTreeContribution {
+  groupKey?: (params: Record<string, unknown>, fallback: string) => string;
+  children: (
+    sessionId: string,
+    params: Record<string, unknown>,
+    runtimeSnapshot: unknown,
+  ) => PluginSessionTreeChild[];
+  onParentSelect?: (
+    sessionId: string,
+    params: Record<string, unknown>,
+    runtimeSnapshot: unknown,
+  ) => void;
+}
+
 export interface PluginRegistration {
   manifest: PluginManifest;
   connectForm?: ComponentType<ConnectFormProps>;
-  /** 新建配置时的唯一默认值来源。 */
   defaultConnectionParams?: () => Record<string, unknown>;
-  /** 将持久化/编辑态参数收束到插件当前 schema；不承担旧版本兼容迁移。 */
   normalizeConnectionParams?: (params: Record<string, unknown>) => Record<string, unknown>;
-  /** 插件连接表单是否满足创建/保存会话的最低要求。 */
   isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
-  /**
-   * 保存 Session 后返回前端应继续持有的参数快照。
-   * 用于剥离凭据等插件私有瞬态输入；公共 Session 层不解释协议字段。
-   */
   persistedConnectionParams?: (
     params: Record<string, unknown>,
     sessionId: string,
   ) => Record<string, unknown>;
-  /** 断开会话重新连接前的插件专属安全/配置检查。 */
   reconnectGuard?: (
     context: SessionReconnectContext,
   ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;
-  /** 默认名称（创建时一次性生成）与动态配置摘要。 */
   sessionPresentation?: SessionPresentation;
+  /** 插件私有 Session-scoped 运行态。 */
+  runtimeStore?: PluginRuntimeStore;
+  /** 覆盖公共 send_data 的协议专属目标/扇出策略。 */
+  sendData?: (context: PluginSendContext) => Promise<void>;
+  /** 左侧 Session 树中的插件私有后台实体。 */
+  sessionTree?: PluginSessionTreeContribution;
+  /** 全局 SendBar 中的插件专属目标选择区。 */
+  sendTarget?: ComponentType<{ sessionId: string }>;
+  /** TerminalView 查询插件运行态后决定是否本地回显。 */
+  terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];
   statusBarItems?: StatusBarItem[];
   locales?: LocaleMap;
-  /** 自定义内容视图组件（content_type === "custom" 时使用） */
   customView?: ComponentType<{ sessionId: string }>;
 }
-
-// ── Registry ────────────────────────────────────────
 
 class PluginRegistry {
   private plugins = new Map<string, PluginRegistration>();
 
-  /** 注册插件 */
   register(registration: PluginRegistration): void {
     const id = registration.manifest.id;
     if (this.plugins.has(id)) {
@@ -190,58 +213,45 @@ class PluginRegistry {
     }
   }
 
-  /** 注销插件 */
   unregister(pluginId: string): void {
     this.plugins.delete(pluginId);
   }
 
-  /** 获取插件 */
   get(pluginId: string): PluginRegistration | undefined {
     return this.plugins.get(pluginId);
   }
 
-  /** 获取所有已注册插件 */
   getAll(): PluginRegistration[] {
     return Array.from(this.plugins.values());
   }
 
-  /** 获取具有特定能力的插件列表（用于 ConnectDialog） */
   getByCapability(capability: string): PluginRegistration[] {
-    return this.getAll().filter(
-      (p) => p.manifest.capabilities.includes(capability)
-    );
+    return this.getAll().filter((p) => p.manifest.capabilities.includes(capability));
   }
 
-  /** 插件是否拥有 TauTerm 全局 SendBar。 */
   supportsSendBar(pluginId: string): boolean {
     return this.get(pluginId)?.manifest.send_bar === true;
   }
 
-  /** 插件能力是上限，会话配置只能关闭支持的 SendBar，不能为不支持的插件强行开启。 */
   resolveSendBarEnabled(pluginId: string, requested?: boolean): boolean {
     return this.supportsSendBar(pluginId) && requested !== false;
   }
 
-  /** 获取活跃插件的工具栏项 */
   getToolbarItems(pluginId: string): ToolbarItem[] {
     return this.get(pluginId)?.toolbarItems ?? [];
   }
 
-  /** 获取活跃插件的右键菜单项 */
   getContextMenuItems(pluginId: string): ContextMenuItem[] {
     return this.get(pluginId)?.contextMenuItems ?? [];
   }
 
-  /** 获取活跃插件的底部面板 */
   getBottomPanels(pluginId: string): BottomPanelDef[] {
     return this.get(pluginId)?.bottomPanels ?? [];
   }
 }
 
-/** 全局单例 */
 export const pluginRegistry = new PluginRegistry();
 
-/** 注册插件（便捷函数） */
 export function registerPlugin(registration: PluginRegistration): void {
   pluginRegistry.register(registration);
 }
