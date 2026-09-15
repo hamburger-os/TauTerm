@@ -45,6 +45,22 @@ interface StatusBarProps {
   onVersionClick: () => void;
 }
 
+interface PluginStatusItemHostProps {
+  item: StatusBarItem;
+  context: StatusBarContext;
+}
+
+/**
+ * 每个插件状态项拥有独立 React 边界。
+ *
+ * StatusBarItem.render 是插件扩展点；把它直接作为普通函数在 StatusBar 主组件中调用，
+ * 会让插件内部 Hook 共享宿主 Hook 顺序。独立 Host 让每个 contribution 的 Hook 生命周期
+ * 随自己的 key 挂载/卸载，不受其它状态项显隐、排序或插件切换影响。
+ */
+function PluginStatusItemHost({ item, context }: PluginStatusItemHostProps) {
+  return <>{item.render(context)}</>;
+}
+
 function priorityClass(priority: number): string {
   if (priority >= 800) return styles.priorityHigh;
   if (priority >= 500) return styles.priorityMedium;
@@ -94,7 +110,7 @@ export default function StatusBar({
       key: `plugin:${activeTab?.pluginId ?? "none"}:${item.id}`,
       priority: item.priority,
       overflow: item.overflow,
-      node: item.render(statusBarContext),
+      node: <PluginStatusItemHost item={item} context={statusBarContext} />,
     }));
 
   const coreSegments: Array<StatusSegment | null> = [
