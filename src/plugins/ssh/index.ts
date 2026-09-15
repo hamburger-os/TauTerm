@@ -1,11 +1,15 @@
 /**
  * SSH 插件前端注册
  *
- * 向内核注册 SSH 协议插件的 manifest、翻译资源。
- * 连接表单在 ConnectDialog 中内联渲染（与串口表单相同的模式）。
+ * 向内核注册 SSH 协议插件的 manifest、翻译资源和运行时状态贡献。
  */
+import { createElement } from "react";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
+import SshStatusItems from "./SshStatusItems";
+
+const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
+  activeTab?.state === "connected" || activeTab?.state === "transferring";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
@@ -17,6 +21,14 @@ registerPlugin({
       return `SSH @ ${username}`;
     },
   },
+  statusBarItems: [
+    {
+      id: "ssh-runtime",
+      priority: 860,
+      when: connected,
+      render: context => createElement(SshStatusItems, context),
+    },
+  ],
   locales: {
     "zh-CN": {
       "host": "主机地址",
