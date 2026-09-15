@@ -73,7 +73,8 @@ flowchart LR
 - Progress 阶段使用显式 `kind`，禁止通过互斥布尔组合或特殊文件名编码状态。
 - 发送批次在启动 ACK 后必须保留完整初始文件清单；progress 只更新清单状态，不负责定义清单本身。任务失败/取消且后端没有逐文件终态时，仍处于 `pending/transferring` 的条目必须收敛为可解释的 `skipped`，不能在终态 UI 中残留 `pending`。
 - **100% 是 payload 字节进度，不等价于完整生命周期结束。** 最后一个字节后仍可能存在 flush、metadata、协议收尾和资源释放；真正 `finished` 前 UI 显示 Finalizing。
-- SFTP 速率由真实 async I/O 层使用 `Instant` 采样并随进度事件发送；WebView 不以 IPC/React 事件到达时间反推吞吐。
+- `bytes_done` 表示已经确认完成的 payload 字节，`bytes_total` 表示该文件原始总大小；失败的 `file_complete` 不能把 `bytes_total` 改写成已完成字节，否则会把部分失败伪装成 100%。
+- **吞吐率由后端真实 I/O 路径使用单调时钟采样并通过 `bytes_per_second` 上报。** 串口 X/Y/ZModem 在已确认 payload 进度上使用短滑动窗口测速，SFTP 在 async I/O 层测速；首个无充分样本的进度允许返回 `None`。WebView 只展示后端样本，禁止使用 IPC/React 事件到达时间或任务开始时间反推速率。
 - 正常完成路径必须先排空进度广播队列，再释放传输资源并恢复 Session，最后 emit `finished`。用户收到完成事件时可以立即安全启动下一次传输。
 - 辅助文件传输后台 task 使用 start gate：先把 JoinHandle 注册进 SessionStore，再 emit `started`，最后打开 gate，确保会话关闭能够看到并等待已接受任务。
 - 批量传输中 failed 必须使最终传输失败；用户取消进入 cancelled；显式覆盖策略产生的 skipped 属于已解析用户意图。
