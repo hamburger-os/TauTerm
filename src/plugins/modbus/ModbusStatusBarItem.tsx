@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
+import {
+  StatusBarBadge,
+  StatusBarGroup,
+  StatusBarText,
+} from "../../components/Layout/StatusBarPrimitives";
 import type { StatusBarContext } from "../../core/plugin-registry";
-import styles from "./Modbus.module.css";
 import { normalizeModbusSessionParams, type ModbusStatus, type TransactionStatus } from "./model";
 import { modbusTypeLabel } from "./presentation";
 
@@ -43,7 +47,10 @@ export default function ModbusStatusBarItem({ context }: { context: StatusBarCon
     };
     refresh();
     const timer = window.setInterval(refresh, 1000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
   }, [context.sessionId]);
 
   const type = modbusTypeLabel(params);
@@ -58,13 +65,26 @@ export default function ModbusStatusBarItem({ context }: { context: StatusBarCon
   const latency = status?.last_latency_ms != null ? formatLatency(status.last_latency_ms) : null;
   const latencyPrefix = last === "success" ? (isClient ? "RTT" : "Proc") : "Time";
 
-  return <div className={styles.statusBarPlugin}>
-    <span className={styles.statusBarType}>{type}</span>
-    <span>Unit {unit}</span>
-    {isClient && status?.watch_total ? <span className={status.watch_running ? styles.statusBarActive : ""}>{t("modbus.statusWatch", { enabled: status.watch_enabled, total: status.watch_total })}{status.watch_running ? " ▶" : ""}</span> : null}
-    {transactionCount > 0 ? <span>Txn {transactionCount}</span> : null}
-    {lastLabel ? <span className={last === "broadcast" ? styles.statusBarSuccess : styles.statusBarWarning}>{lastLabel}</span> : null}
-    {last === "success" && latency ? <span className={styles.statusBarSuccess}>{latencyPrefix} {latency}</span> : null}
-    {last && last !== "success" && last !== "broadcast" && latency ? <span>{latencyPrefix} {latency}</span> : null}
-  </div>;
+  return (
+    <StatusBarGroup>
+      <StatusBarBadge>{type}</StatusBarBadge>
+      <StatusBarText>Unit {unit}</StatusBarText>
+      {isClient && status?.watch_total ? (
+        <StatusBarText tone={status.watch_running ? "accent" : "neutral"}>
+          {t("modbus.statusWatch", { enabled: status.watch_enabled, total: status.watch_total })}
+          {status.watch_running ? " ▶" : ""}
+        </StatusBarText>
+      ) : null}
+      {transactionCount > 0 ? <StatusBarText>Txn {transactionCount}</StatusBarText> : null}
+      {lastLabel ? (
+        <StatusBarText tone={last === "broadcast" ? "success" : "warning"}>{lastLabel}</StatusBarText>
+      ) : null}
+      {last === "success" && latency ? (
+        <StatusBarText tone="success">{latencyPrefix} {latency}</StatusBarText>
+      ) : null}
+      {last && last !== "success" && last !== "broadcast" && latency ? (
+        <StatusBarText>{latencyPrefix} {latency}</StatusBarText>
+      ) : null}
+    </StatusBarGroup>
+  );
 }
