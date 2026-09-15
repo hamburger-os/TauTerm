@@ -1,0 +1,218 @@
+//! SSH application-layer persistence and credential policy.
+//!
+//! The common Session command layer treats plugin params as opaque JSON. SSH owns how transient
+//! authentication material is projected into the Session Library and hydrated again at connect time.
+
+use serde_json::Value;
+
+use crate::kernel::session_store::SavedSession;
+use crate::security::credential_store::{
+    CredentialStoreError, CredentialType, CredentialValue,
+};
+use crate::AppState;
+
+use super::SshConfig;
+
+const CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
+
+fn credential_account(session_id: &str) -> String {
+    format!("ssh-session:{session_id}")
+}
+
+fn non_empty_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
+fn credential_from_params(
+    params: &Value,
+) -> Result<Option<(CredentialType, CredentialValue)>, String> {
+    let auth_method = params
+        .get("auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("password");
+
+    match auth_method {
+        "password" => Ok(non_empty_param(params, "password").map(|password| {
+            (
+                CredentialType::Password,
+                CredentialValue::Password(password.to_string()),
+            )
+        })),
+        "key" => Ok(non_empty_param(params, "private_key").map(|private_key| {
+            let passphrase = non_empty_param(params, "passphrase").map(str::to_string);
+            (
+                CredentialType::SshKey,
+                CredentialValue::SshKey {
+                    private_key: private_key.to_string(),
+                    passphrase,
+                },
+            )
+        })),
+        other => Err(format!("不支持的 SSH 认证方式: {other}")),
+    }
+}
+
+fn credential_matches_auth(auth_method: &str, credential: &CredentialValue) -> bool {
+    matches!(
+        (auth_method, credential),
+        ("password", CredentialValue::Password(_)) | ("key", CredentialValue::SshKey { .. })
+    )
+}
+
+fn strip_secret_fields(params: &mut Value) -> Result<bool, String> {
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
+    let mut changed = false;
+    changed |= object.remove("password").is_some();
+    changed |= object.remove("private_key").is_some();
+    changed |= object.remove("passphrase").is_some();
+    Ok(changed)
+}
+
+pub(crate) fn scrub_secrets_from_saved_sessions(
+    sessions: &mut [SavedSession],
+) -> Result<bool, String> {
+    let mut changed = false;
+    for session in sessions {
+        if session.plugin_id == super::PLUGIN_ID {
+            changed |= strip_secret_fields(&mut session.params)?;
+        }
+    }
+    Ok(changed)
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingSshCredential {
+    account: String,
+    credential_type: CredentialType,
+    value: CredentialValue,
+    description: String,
+}
+
+/// Prepare the canonical SSH Session Library representation without mutating the credential store.
+/// Plaintext secrets are transient input only; persisted params contain a deterministic credential
+/// account reference and the actual secret is committed after the Session Library transaction.
+pub(crate) fn prepare_session_params(
+    state: &AppState,
+    session_id: &str,
+    params: &mut Value,
+) -> Result<Option<PendingSshCredential>, String> {
+    let auth_method = params
+        .get("auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("password")
+        .to_string();
+    let account = credential_account(session_id);
+
+    let pending = if let Some((credential_type, value)) = credential_from_params(params)? {
+        let username = params
+            .get("username")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let host = params
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Some(PendingSshCredential {
+            account: account.clone(),
+            credential_type,
+            value,
+            description: format!("SSH {username}@{host}"),
+        })
+    } else {
+        match state.credential_store.get_credential(&account) {
+            Ok(value) if credential_matches_auth(&auth_method, &value) => {}
+            Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
+            Err(CredentialStoreError::NotFound(_)) => {
+                return Err("SSH 会话没有可用的安全凭据，请重新输入密码或私钥".into());
+            }
+            Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
+        }
+        None
+    };
+
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
+    object.insert(
+        CREDENTIAL_ACCOUNT_KEY.to_string(),
+        Value::String(account),
+    );
+    strip_secret_fields(params)?;
+    Ok(pending)
+}
+
+pub(crate) fn commit_credential(
+    state: &AppState,
+    pending: PendingSshCredential,
+) -> Result<(), String> {
+    state
+        .credential_store
+        .store_credential(
+            &pending.account,
+            pending.credential_type,
+            pending.value,
+            &pending.description,
+        )
+        .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
+}
+
+fn apply_credential(config: &mut SshConfig, credential: CredentialValue) -> Result<(), String> {
+    match (config.auth_method.as_str(), credential) {
+        ("password", CredentialValue::Password(password)) => {
+            config.password = Some(password);
+            config.private_key = None;
+            config.passphrase = None;
+        }
+        (
+            "key",
+            CredentialValue::SshKey {
+                private_key,
+                passphrase,
+            },
+        ) => {
+            config.password = None;
+            config.private_key = Some(private_key);
+            config.passphrase = passphrase;
+        }
+        _ => {
+            return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn hydrate_config(state: &AppState, params: &Value) -> Result<SshConfig, String> {
+    let mut config: SshConfig = serde_json::from_value(params.clone())
+        .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
+    let account = params
+        .get(CREDENTIAL_ACCOUNT_KEY)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
+    let credential = state
+        .credential_store
+        .get_credential(account)
+        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
+    apply_credential(&mut config, credential)?;
+    Ok(config)
+}
+
+pub(crate) fn hydrate_config_with_pending(
+    state: &AppState,
+    params: &Value,
+    pending: Option<&PendingSshCredential>,
+) -> Result<SshConfig, String> {
+    if let Some(pending) = pending {
+        let mut config: SshConfig = serde_json::from_value(params.clone())
+            .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
+        apply_credential(&mut config, pending.value.clone())?;
+        Ok(config)
+    } else {
+        hydrate_config(state, params)
+    }
+}
