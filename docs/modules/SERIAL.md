@@ -16,7 +16,7 @@ X/Y/ZModem 不再把物理串口从运行时取出再归还。传输启动时通
 
 Serial 的连接表单、当前参数 schema、参数规范化、校验、会话展示和串口专属状态栏项都由 `src/plugins/serial/` 注册到 PluginRegistry。`ConnectDialog` 只提供通用会话外壳、端点发现挂接和 Session 级能力，不再维护 baud/data bits/parity/stop bits/flow control/virtual-port 等 Serial 专属状态。
 
-`transferEnabled / transferProtocol / sendBarEnabled` 属于通用 Session 能力，只有顶层 Session 配置一份事实源；它们不得再次写入 Serial `params`。Serial `params` 当前只保存协议自身需要的链路、终端显示和虚拟端口策略字段。预稳定阶段不保留旧字段别名或双写兼容层；读入当前 Session 时由插件规范化到当前 schema，未知的旧 Serial 字段不会继续进入运行态。
+`transferEnabled / transferProtocol / sendBarEnabled` 属于通用 Session 能力，只有顶层 Session 配置一份事实源；它们不得再次写入 Serial `params`。Serial `params` 当前只保存协议自身需要的链路、终端显示和虚拟串口策略字段。预稳定阶段不保留旧字段别名或双写兼容层；读入当前 Session 时由插件规范化到当前 schema，未知的旧 Serial 字段不会继续进入运行态。
 
 会话默认名称只在创建时生成一次，例如 `Serial @ COM5`；当前 baud/frame/flow 等链路参数由动态 subtitle 展示。改变显示方式或链路配置不得偷偷改写用户可见的 Session 身份。
 
@@ -38,7 +38,7 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
 
 虚拟串口是平台能力而不是协议替代品：
 
-- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；
+- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`，普通启动不运行 `setupc list` 或 orphan 清理，只有创建/安装/手动清理等明确动作才按需提权；
 - Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。
 
 上层统一使用“内部 bridge + 对外 external endpoint”的能力模型。Windows 的 com0com 一对端口中：
@@ -88,7 +88,7 @@ orphan = owned_endpoints - active_endpoints
 4. 外部程序断开 external endpoint 不改变父 Serial Session ownership；
 5. 父 Serial Session 结束时尝试销毁端口对；成功后同时移除 active/owned 和内部隐藏注册；
 6. 销毁暂时失败时只移除 active、保留 owned，此时才成为可恢复 orphan；
-7. 进程异常退出后新进程没有 active owner，而持久化 owned 仍存在，因此可恢复清理；
+7. 进程异常退出后新进程没有 active owner，而持久化 owned 仍存在，因此可恢复清理；正式安装场景由 TauTermService 在特权启动恢复中处理，GUI 直连 fallback 不在普通启动阶段尝试特权枚举或删除；
 8. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
 9. 特权服务模式同样使用 ownership 模型，服务重启只恢复/清理有 ownership 证据的 TauTerm orphan；
 10. com0com 驱动本身是系统级共享资源，与 TauTerm endpoint ownership 分开处理；无法确认系统级 driver ownership 时必须保留共享驱动。
@@ -120,7 +120,7 @@ flowchart LR
 - DataPlane subscriber 必须有界；透明桥接消费者一旦无法跟上必须明确失败，禁止静默丢字节或无界增长内存。
 - external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。
 - 虚拟串口创建/桥接启动失败不能让主串口连接的状态变成错误真相，并必须回滚本次不可用端点资源。
-- 平台提权逻辑不得进入普通 Serial UI/协议语义。
+- 平台提权逻辑不得进入普通 Serial UI/协议语义；Windows 直连 fallback 只在明确动作中按需 UAC，普通启动不得为了诊断/清理调用需要提升的 `setupc`。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。
 - 不展示没有真实后端 capability 的 DTR/RTS/CTS/DSR 等控制线占位状态。
 - 当前采集设备 identity，但自动按 stable identity 重连仍是后续能力，不能提前宣传。
