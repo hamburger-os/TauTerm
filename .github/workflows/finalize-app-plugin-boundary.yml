@@ -1,0 +1,39 @@
+name: Finalize App Plugin Boundary
+on:
+  push:
+    branches: [refactor/plugin-boundary-cleanup]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: python3 .github/finalize-app-plugin-boundary.py
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - run: npm run docs:check
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - run: cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Commit cleanup and remove one-shot tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/finalize-app-plugin-boundary.py .github/workflows/finalize-app-plugin-boundary.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: make app shell consume plugin contributions"
+          git push origin HEAD:refactor/plugin-boundary-cleanup
