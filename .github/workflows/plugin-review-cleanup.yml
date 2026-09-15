@@ -105,16 +105,80 @@ jobs:
           python3 .github/scripts/plugin_review_cleanup.py
           python3 - <<'PY'
           from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          # Complete the adapter API cleanup for plugins whose transfer list was always empty.
+          for plugin in ['iperf', 'local_shell', 'tftp']:
+              path = Path(f'src-tauri/src/plugins/{plugin}/mod.rs')
+              text = path.read_text(encoding='utf-8')
+              text = replace_once(text, ', TransferProtocolType', '', f'{plugin} transfer import')
+              text = replace_once(
+                  text,
+                  '''\n    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {\n        vec![]\n    }\n''',
+                  '',
+                  f'{plugin} transfer method',
+              )
+              path.write_text(text, encoding='utf-8')
+
+          # Serial transfer metadata now lives in the canonical manifest; its adapter test only
+          # verifies the adapter-owned content type.
+          path = Path('src-tauri/src/plugins/serial/mod.rs')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '''    #[test]\n    fn serial_adapter_contract_exposes_expected_shared_capabilities() {\n        let adapter = SerialAdapter::new();\n        let protocols = adapter\n            .transfer_protocols()\n            .into_iter()\n            .map(|protocol| protocol.to_string())\n            .collect::<Vec<_>>();\n        assert_eq!(protocols, vec!["ymodem", "xmodem", "zmodem"]);\n        assert_eq!(adapter.content_type(), ContentType::Terminal);\n    }\n''',
+              '''    #[test]\n    fn serial_adapter_contract_exposes_terminal_content_type() {\n        let adapter = SerialAdapter::new();\n        assert_eq!(adapter.content_type(), ContentType::Terminal);\n    }\n''',
+              'serial adapter test',
+          )
+          path.write_text(text, encoding='utf-8')
+
+          # Provider-specific directory validation belongs to the inline transfer provider, not
+          # to the common IPC command layer.
+          path = Path('src-tauri/src/commands.rs')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '''    if pt.is_serial_inline() && files.iter().any(|file| file.is_dir) {\n        return Err("X/Y/ZModem 只支持普通文件；目录上传仅适用于 SFTP".into());\n    }\n''',
+              '',
+              'generic transfer provider check',
+          )
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('src-tauri/src/transfer/orchestrator.rs')
+          text = path.read_text(encoding='utf-8')
+          anchor = '''    ) -> Result<TransferStartAck, String> {\n        let transfer_id = uuid::Uuid::new_v4().to_string();\n'''
+          replacement = '''    ) -> Result<TransferStartAck, String> {\n        if ctx.files.iter().any(|file| file.is_dir) {\n            return Err(format!("传输协议 '{}' 只支持普通文件", self.pt));\n        }\n        let transfer_id = uuid::Uuid::new_v4().to_string();\n'''
+          text = replace_once(text, anchor, replacement, 'inline directory validation')
+          path.write_text(text, encoding='utf-8')
+
+          # Fix architecture-contract string literals produced by the migration script.
           path = Path('src-tauri/src/architecture_contract.rs')
           text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '!commands.contains("plugin_id.unwrap_or_else(|| "serial"")',
+              '!commands.contains(r#"plugin_id.unwrap_or_else(|| "serial""#)',
+              'commands raw-string assertion',
+          )
+          text = replace_once(
+              text,
+              '!frontend.contains("pluginId || "serial"")',
+              '!frontend.contains(r#"pluginId || "serial""#)',
+              'frontend serial raw-string assertion',
+          )
+          text = replace_once(
+              text,
+              '!frontend.contains("transferProtocol || "ymodem"")',
+              '!frontend.contains(r#"transferProtocol || "ymodem""#)',
+              'frontend transfer raw-string assertion',
+          )
           marker = 'fn read_workspace_source(relative: &str) -> String {'
-          helper = '''fn read_source(relative: &str) -> String {
-              let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-              std::fs::read_to_string(manifest_dir.join("src").join(relative))
-                  .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
-          }
-
-          '''
+          helper = '''fn read_source(relative: &str) -> String {\n    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));\n    std::fs::read_to_string(manifest_dir.join("src").join(relative))\n        .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))\n}\n\n'''
           if 'fn read_source(relative: &str)' not in text:
               text = text.replace(marker, helper + marker, 1)
           path.write_text(text, encoding='utf-8')
