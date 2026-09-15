@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { StatusBarContext } from "../../core/plugin-registry";
+import { useSession } from "../../context/SessionContext";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { formatPortParams } from "../../utils/format";
 import Icon from "../../components/common/Icon";
@@ -15,8 +16,15 @@ export function SerialTypeStatus() {
   return <span className={styles.badge}>{t("statusBar.typeSerial")}</span>;
 }
 
-export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
+/**
+ * Virtual-port state is Serial-owned runtime state. The generic StatusBarContext intentionally
+ * carries only common Session fields; this renderer resolves its plugin-private state from the
+ * Session store by session id instead of widening the global plugin contract.
+ */
+export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarContext) {
   const { t } = useTranslation();
+  const { state } = useSession();
+  const runtimeTab = state.tabs.find(tab => tab.id === sessionId);
   const {
     driverMissing,
     driverInstalling,
@@ -26,14 +34,15 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
     handleCleanupVPorts,
   } = useCom0comStatus();
 
-  if (!activeTab) return null;
+  if (!activeTab || !runtimeTab) return null;
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
-  const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
-  const endpoints = activeTab.virtualVirtualEndpoints ?? [];
-  const error = connected ? activeTab.virtualPortError : undefined;
-  const driverError = activeTab.virtualPortErrorKind === "files_missing"
-    || activeTab.virtualPortErrorKind === "permission"
-    || activeTab.virtualPortErrorKind === "driver_missing";
+  const virtualPortEnabled = runtimeTab.params?.virtual_port_enabled === true;
+  const endpoints = runtimeTab.virtualVirtualEndpoints ?? [];
+  const error = connected ? runtimeTab.virtualPortError : undefined;
+  const errorKind = runtimeTab.virtualPortErrorKind;
+  const driverError = errorKind === "files_missing"
+    || errorKind === "permission"
+    || errorKind === "driver_missing";
 
   return (
     <span className={styles.group}>
@@ -47,13 +56,13 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
         <>
           <span className={`${styles.param} ${styles.warning}`} title={error}>
             <Icon name="warning" size="xs" />{" "}
-            {activeTab.virtualPortErrorKind === "files_missing"
+            {errorKind === "files_missing"
               ? t("serial.virtualPort.filesMissing")
-              : activeTab.virtualPortErrorKind === "permission"
+              : errorKind === "permission"
                 ? t("serial.virtualPort.permissionRequired")
-                : activeTab.virtualPortErrorKind === "driver_missing"
+                : errorKind === "driver_missing"
                   ? t("serial.virtualPort.notInstalled")
-                  : activeTab.virtualPortErrorKind === "bridge_failed"
+                  : errorKind === "bridge_failed"
                     ? t("serial.virtualPortBridgeFailed")
                     : t("serial.virtualPort.createFailed")}
           </span>
