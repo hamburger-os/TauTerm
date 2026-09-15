@@ -143,6 +143,7 @@ assert.match(unified, /pub transfer_id:\s*String/);
 assert.match(unified, /pub bytes_per_second:\s*Option<f64>/);
 assert.match(unified, /pub struct TransferRateMeter/);
 assert.match(unified, /Instant::now\(\)/);
+assert.match(unified, /pub struct FileProgressBytes[\s\S]*transferred:\s*u64[\s\S]*total:\s*u64/);
 assert.match(unified, /pub enum TransferProgressKind[\s\S]*FileStart[\s\S]*Progress[\s\S]*FileComplete[\s\S]*BatchComplete/);
 assert.match(unified, /pub kind:\s*TransferProgressKind/);
 assert.match(unified, /pub enum OverwritePolicy[\s\S]*Replace[\s\S]*Skip[\s\S]*KeepBoth/);
@@ -150,12 +151,12 @@ assert.match(unified, /pub struct FileTransferOptions[\s\S]*destination_paths:\s
 assert.match(unified, /file_success:\s*Some\(files_failed == 0\)/);
 assert.match(
   unified,
-  /pub fn file_complete_with_total\([\s\S]{0,260}bytes_transferred:\s*u64,[\s\S]{0,80}bytes_total:\s*u64/,
-  "known file completion must preserve original total separately from transferred bytes",
+  /pub fn file_complete_with_total\([\s\S]{0,260}bytes:\s*FileProgressBytes/,
+  "known file completion must carry original total separately from transferred bytes",
 );
 assert.match(
   unified,
-  /pub fn file_complete\([\s\S]{0,420}let bytes_total = if success \{ bytes_transferred \} else \{ 0 \}/,
+  /pub fn file_complete\([\s\S]{0,520}total: if success \{ bytes_transferred \} else \{ 0 \}/,
   "unknown failed file completion must not invent a completed total",
 );
 assert.doesNotMatch(unified, /is_file_start|is_file_complete|is_batch_complete|__batch_complete__/);
@@ -306,6 +307,7 @@ const serialTransfer = await source("src-tauri/src/transfer/serial_transfer.rs")
 assert.match(serialTransfer, /TransferRateMeter/);
 assert.match(serialTransfer, /UnifiedProgress::chunk_with_speed/);
 assert.match(serialTransfer, /UnifiedProgress::file_complete_with_total/);
+assert.match(serialTransfer, /FileProgressBytes/);
 assert.doesNotMatch(
   serialTransfer,
   /flush_port_buffer/,
