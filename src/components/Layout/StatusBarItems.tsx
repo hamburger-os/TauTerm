@@ -37,6 +37,15 @@ export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
   );
 }
 
+/**
+ * Activity 是连接健康之外的正交提示。当前 SessionStore 仍把文件传输编码在
+ * transferring state 中，这里先确保视觉语义不再把“正在传输”误画成连接异常。
+ */
+export function SessionActivityStatus({ tab }: { tab: StatusBarTab | null }) {
+  if (tab?.state !== "transferring") return null;
+  return <StatusBarBadge tone="warning">TRANSFER</StatusBarBadge>;
+}
+
 export function SessionUptimeStatus({ tab }: { tab: StatusBarTab | null }) {
   const connected = isConnected(tab);
   const [uptime, setUptime] = useState(0);
