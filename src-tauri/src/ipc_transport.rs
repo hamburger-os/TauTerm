@@ -23,7 +23,7 @@ pub async fn write_data(
     data: Vec<u8>,
     transcode: bool,
 ) -> Result<Vec<u8>, String> {
-    let (encoding, data_mode, io) = {
+    let (log_owner_id, encoding, data_mode, io) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         let resolved_id = store
             .resolve_parent_id(&session_id)
@@ -39,7 +39,12 @@ pub async fn write_data(
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_else(|| "text".to_string());
-        (encoding, data_mode, store.get_io_for(&session_id))
+        (
+            resolved_id,
+            encoding,
+            data_mode,
+            store.get_io_for(&session_id),
+        )
     };
 
     let io = io.ok_or_else(|| format!("会话 {} 没有可写 I/O 能力", session_id))?;
@@ -54,14 +59,15 @@ pub async fn write_data(
         data
     };
 
-    // Session logging is opt-in per Session. Do not allocate/copy a log payload on the transport
-    // hot path unless the recorder is actually active for this exact Session.
-    if session_log_is_active(&session_id) {
+    // Logging ownership follows the canonical parent Session even when the frontend writes through
+    // a child/channel id. This matches the metadata lookup and prevents child TX from bypassing a
+    // recorder that was started on the parent Session. Skip the payload copy unless it is active.
+    if session_log_is_active(&log_owner_id) {
         if let Ok(log_engine) = state.log_engine.lock() {
             try_send_session_log(
                 &log_engine.sender(),
                 DataLogEntry {
-                    session_id,
+                    session_id: log_owner_id,
                     direction: DataDirection::TX,
                     data_mode,
                     encoding,
