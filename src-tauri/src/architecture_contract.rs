@@ -43,7 +43,9 @@ fn kernel_does_not_depend_on_concrete_plugins() {
 #[test]
 fn app_state_does_not_own_concrete_protocol_adapters() {
     let source = include_str!("lib.rs");
-    let start = source.find("pub struct AppState {").expect("AppState start");
+    let start = source
+        .find("pub struct AppState {")
+        .expect("AppState start");
     let tail = &source[start..];
     let end = tail.find("\n}").expect("AppState end");
     let app_state = &tail[..end];
