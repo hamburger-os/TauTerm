@@ -33,12 +33,13 @@ const MANUAL_CHECK_TIMEOUT_MS = 30_000;
 const AUTO_CHECK_TIMEOUT_MS = 15_000;
 const MANUAL_RETRY_DELAY_MS = 750;
 
-// Tauri updater target resolution depends on bundle metadata (for example the
-// Windows NSIS installer marker). A Vite/Tauri dev process has no installed
-// bundle identity, so it must never query the production updater endpoint.
-// Keep this boundary explicit instead of publishing generic compatibility
-// targets that weaken the release manifest contract.
-const UPDATER_RUNTIME_ENABLED = import.meta.env.PROD;
+// Updater target resolution depends on installed bundle metadata (for example
+// the Windows NSIS installer marker). Tauri exposes TAURI_ENV_DEBUG to frontend
+// hook commands via Vite envPrefix. Only a non-debug Tauri build may access the
+// production updater endpoint; `tauri dev`, `build --debug`, and generic Vite
+// builds all stay outside that trust boundary.
+const UPDATER_RUNTIME_ENABLED =
+  import.meta.env.PROD && import.meta.env.TAURI_ENV_DEBUG === "false";
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -53,8 +54,8 @@ function sleep(ms: number): Promise<void> {
  * 原始 updater 错误只进入统一运行时诊断日志；UI 仅展示稳定、可操作的
  * 本地化错误类别，避免把 reqwest/TLS 内部错误直接暴露给用户。
  *
- * 开发态没有安装包 target 身份，因此 updater 完全禁用；只有生产 bundle
- * 可以访问正式更新端点。
+ * 开发态/调试 bundle 没有可依赖的正式安装 target 身份，因此 updater 完全禁用；
+ * 只有 release Tauri bundle 可以访问正式更新端点。
  *
  * @param tr — i18n translate 函数，用于设置本地化状态文本
  */
