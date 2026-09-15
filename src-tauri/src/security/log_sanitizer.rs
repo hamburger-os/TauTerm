@@ -27,10 +27,8 @@ static AUTH_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static PRIVATE_KEY_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?s)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
-    )
-    .expect("valid private-key block regex")
+    Regex::new(r"(?s)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----")
+        .expect("valid private-key block regex")
 });
 
 /// Redact common credential forms and force one physical line per event.
@@ -78,7 +76,8 @@ mod tests {
 
     #[test]
     fn redacts_private_key_blocks() {
-        let input = "key=-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----";
+        let input =
+            "key=-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----";
         let output = sanitize_log(input);
         assert!(!output.contains("secret"));
         assert!(output.contains("[REDACTED PRIVATE KEY]"));
