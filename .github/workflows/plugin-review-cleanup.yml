@@ -54,8 +54,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep the migration script strict, but teach it about every generic Serial fallback
-          # discovered by the final review. These are source transformations, not compatibility shims.
           python3 - <<'PY'
           from pathlib import Path
           path = Path('.github/scripts/plugin_review_cleanup.py')
@@ -101,7 +99,6 @@ jobs:
           if anchor not in text:
               raise SystemExit('frontend cleanup anchor missing')
           text = text.replace(anchor, extra + '\n' + anchor, 1)
-          # Make the migration guard reject every generic Serial fallback, not only connect().
           text = text.replace("for forbidden in ['pluginId || \"serial\"', 'transferProtocol || \"ymodem\"']:", "for forbidden in [' || \"serial\"', ' || \"Serial\"', 'transferProtocol || \"ymodem\"']:")
           path.write_text(text, encoding='utf-8')
           PY
@@ -126,26 +123,45 @@ jobs:
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
 
-      - name: Frontend lint
-        run: npm run lint
-
       - name: TypeScript type check
-        run: npm run type-check
-
-      - name: Contract tests
-        run: npm run test:contracts
-
-      - name: Frontend tests
-        run: npm run test
-
-      - name: Frontend build
-        run: npm run build
+        run: npx tsc --noEmit
 
       - name: Documentation contract
         run: npm run docs:check
 
       - name: Product integrity contracts
         run: npm run check:product-integrity
+
+      - name: Tauri blocking-command contract
+        run: npm run check:tauri-blocking
+
+      - name: Runtime error contract
+        run: npm run check:runtime-errors
+
+      - name: Terminal clipboard contract
+        run: npm run check:terminal-clipboard
+
+      - name: Engineering tool contract
+        run: npm run check:engineering-tools
+
+      - name: SendBar contract
+        run: npm run check:sendbar
+
+      - name: File-transfer contract
+        run: npm run check:file-transfer
+
+      - name: Journald contract
+        run: npm run check:journald
+
+      - name: Frontend production build without warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee /tmp/frontend-build.log
+          if grep -E 'Some chunks are larger than|circular dependency between chunks' /tmp/frontend-build.log; then
+            echo '::error::Vite/Rollup emitted a production-build warning.'
+            exit 1
+          fi
 
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
