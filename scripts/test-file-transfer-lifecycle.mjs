@@ -61,6 +61,21 @@ assert.doesNotMatch(
   /const existing = currentFiles\[index\]/,
   "terminal results may contain synthesized entries that never emitted progress",
 );
+assert.match(
+  context,
+  /const preserveFailedProgress =[\s\S]{0,220}payload\.kind === "file_complete"[\s\S]{0,160}payload\.bytes_total <= 0/,
+  "failed file completion with unknown total must preserve the last per-file byte projection",
+);
+assert.match(
+  context,
+  /bytesTransferred: preserveFailedProgress[\s\S]{0,120}existing\?\.bytesTransferred/,
+  "failed file completion must not erase already transferred bytes",
+);
+assert.match(
+  context,
+  /totalBytes: preserveFailedProgress[\s\S]{0,120}existing\?\.totalBytes/,
+  "failed file completion must not erase a previously known file total",
+);
 assert.match(context, /payload\.kind === "file_start"/);
 assert.match(context, /payload\.kind === "file_complete"/);
 assert.match(context, /payload\.kind === "batch_complete"/);
@@ -372,6 +387,7 @@ assert.match(service, /pub async fn sftp_list_tree_recursive/);
 assert.match(service, /pub async fn sftp_prepare_upload_directory/);
 assert.match(service, /pub async fn sftp_ensure_directory/);
 assert.match(service, /mode & 0o7777/);
+
 // ── Existing SFTP adapter safety invariants remain intact ───────────────────
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
