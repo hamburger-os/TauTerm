@@ -629,7 +629,7 @@ fn send_block(
             }
 
             let remaining = response_timeout.saturating_sub(elapsed);
-            let poll_ms = remaining.as_millis().min(200).max(1) as u64;
+            let poll_ms = remaining.as_millis().clamp(1, 200) as u64;
             match read_byte_with_timeout(port, poll_ms)? {
                 Some(ACK) => return Ok(()),
                 Some(b) if b == CAN => {
@@ -1662,9 +1662,11 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    type CapturedWrites = Arc<Mutex<Vec<Vec<u8>>>>;
+
     struct ScriptedIo {
         reads: VecDeque<u8>,
-        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+        writes: CapturedWrites,
     }
 
     impl Read for ScriptedIo {
@@ -1695,10 +1697,7 @@ mod tests {
 
     fn scripted_io(
         reads: impl IntoIterator<Item = u8>,
-    ) -> (
-        Box<dyn crate::transfer::protocol::TransferIo>,
-        Arc<Mutex<Vec<Vec<u8>>>>,
-    ) {
+    ) -> (Box<dyn crate::transfer::protocol::TransferIo>, CapturedWrites) {
         let writes = Arc::new(Mutex::new(Vec::new()));
         (
             Box::new(ScriptedIo {
@@ -1715,16 +1714,7 @@ mod tests {
         let data = [0u8; BLOCK0_SIZE];
         let mut cancel = || false;
 
-        send_block(
-            &mut port,
-            1,
-            &data,
-            BLOCK0_SIZE,
-            &mut cancel,
-            true,
-            false,
-        )
-        .unwrap();
+        send_block(&mut port, 1, &data, BLOCK0_SIZE, &mut cancel, true, false).unwrap();
 
         assert_eq!(writes.lock().unwrap().len(), 1);
     }
@@ -1735,16 +1725,7 @@ mod tests {
         let data = [0u8; BLOCK0_SIZE];
         let mut cancel = || false;
 
-        send_block(
-            &mut port,
-            7,
-            &data,
-            BLOCK0_SIZE,
-            &mut cancel,
-            true,
-            false,
-        )
-        .unwrap();
+        send_block(&mut port, 7, &data, BLOCK0_SIZE, &mut cancel, true, false).unwrap();
 
         assert_eq!(writes.lock().unwrap().len(), 2);
     }
@@ -1755,16 +1736,7 @@ mod tests {
         let data = [0u8; BLOCK0_SIZE];
         let mut cancel = || false;
 
-        send_block(
-            &mut port,
-            3,
-            &data,
-            BLOCK0_SIZE,
-            &mut cancel,
-            true,
-            false,
-        )
-        .unwrap();
+        send_block(&mut port, 3, &data, BLOCK0_SIZE, &mut cancel, true, false).unwrap();
 
         assert_eq!(writes.lock().unwrap().len(), 1);
     }
