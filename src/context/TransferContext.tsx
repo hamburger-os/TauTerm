@@ -57,7 +57,6 @@ export interface ManagedTransferTask {
   bytesTotal: number;
   percent: number;
   speed: number | null;
-  startedAt: number;
   /** Successful-task completion timestamp used only for UI retention/cleanup. */
   completedAt: number | null;
   error: string | null;
@@ -137,7 +136,6 @@ function createTask(
     bytesTotal: 0,
     percent: 0,
     speed: null,
-    startedAt: Date.now(),
     completedAt: null,
     error: null,
     fileIndex: 0,
@@ -234,15 +232,28 @@ function updateFileProjection(
   return next;
 }
 
-function resultProjection(payload: TransferFinishedPayload): BatchFileEntry[] | null {
+function resultProjection(
+  payload: TransferFinishedPayload,
+  currentFiles: BatchFileEntry[],
+): BatchFileEntry[] | null {
   if (!payload.results) return null;
-  return payload.results.map((result) => ({
-    fileName: result.file_name,
-    status: result.status,
-    bytesTransferred: result.size,
-    totalBytes: result.size,
-    error: result.error ?? undefined,
-  }));
+  return payload.results.map((result, index) => {
+    const existing = currentFiles[index];
+    const completed = result.status === "completed";
+    const bytesTransferred = completed
+      ? result.size
+      : (existing?.bytesTransferred ?? 0);
+    const totalBytes = existing?.totalBytes && existing.totalBytes > 0
+      ? existing.totalBytes
+      : Math.max(result.size, bytesTransferred);
+    return {
+      fileName: result.file_name,
+      status: result.status,
+      bytesTransferred,
+      totalBytes,
+      error: result.error ?? existing?.error,
+    };
+  });
 }
 
 function transferReducer(state: TransferState, action: TransferAction): TransferState {
@@ -365,12 +376,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         && payload.bytes_per_second > 0
           ? payload.bytes_per_second
           : null;
-      const elapsedSeconds = Math.max(0.001, (Date.now() - current.startedAt) / 1000);
-      const fallbackSpeed = payload.aggregate_bytes > 0
-        ? payload.aggregate_bytes / elapsedSeconds
-        : null;
-      const nextSpeed = measuredSpeed
-        ?? (isFileStart ? null : current.speed ?? fallbackSpeed);
+      const nextSpeed = isFileStart ? null : measuredSpeed ?? current.speed;
       const preserveFailedProgress =
         isFileComplete && payload.file_success === false && !knownTotal;
 
@@ -431,7 +437,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           ? "cancelled"
           : "failed";
       const error = payload.success ? null : (payload.error || current.error);
-      const exactResults = resultProjection(payload);
+      const exactResults = resultProjection(payload, current.files);
       const files = exactResults ?? current.files.map((entry) => {
         if (
           phase !== "completed"
