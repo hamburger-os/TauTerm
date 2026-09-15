@@ -29,6 +29,7 @@ jobs:
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
           python3 .github/plugin-boundary-frontend.py
+          sed -i '/import { invoke } from "@tauri-apps\/api\/core";/d' src/components/Network/NetworkDebugSessionView.tsx
       - run: npm ci
       - run: npx tsc --noEmit
       - name: Commit migration and remove one-shot tooling
