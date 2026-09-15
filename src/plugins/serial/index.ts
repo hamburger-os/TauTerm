@@ -1,7 +1,7 @@
 /**
  * Serial 插件前端注册
  *
- * 串口专属配置、校验、会话展示和状态栏项均由插件拥有；通用 Session UI
+ * 串口专属配置、运行态、校验、会话展示和状态栏项均由插件拥有；通用 Session UI
  * 只负责承载这些声明式能力。
  */
 import { createElement } from "react";
@@ -17,6 +17,7 @@ import {
   SerialTypeStatus,
   SerialVirtualPortStatus,
 } from "./SerialStatusItems";
+import { serialRuntimeStore } from "./runtime-store";
 
 function serialSubtitle(params: Record<string, unknown>, endpoint: string): string {
   const baudRate = typeof params.baud_rate === "number" && Number.isFinite(params.baud_rate)
@@ -47,11 +48,10 @@ registerPlugin({
   normalizeConnectionParams: normalizeSerialParams,
   isConnectionConfigValid: isSerialConnectionConfigValid,
   sessionPresentation: {
-    // 会话名只在创建时生成一次，表达稳定身份；Text/HEX/Dual 属于可变显示方式，不能进入名称。
     defaultName: (_params, endpoint) => `Serial @ ${endpoint}`,
-    // 第二行始终由当前链路配置动态推导，配置变更后自然刷新。
     subtitle: serialSubtitle,
   },
+  runtimeStore: serialRuntimeStore,
   toolbarItems: [],
   statusBarItems: [
     {
