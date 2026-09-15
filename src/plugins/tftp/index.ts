@@ -1,9 +1,11 @@
 /**
  * TFTP 插件前端注册
  */
+import { createElement } from "react";
+import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
+import TftpSessionView from "../../components/Tftp/TftpSessionView";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/tftp.json";
-import TftpSessionView from "../../components/Tftp/TftpSessionView";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
@@ -16,6 +18,14 @@ registerPlugin({
     },
   },
   customView: TftpSessionView,
+  statusBarItems: [
+    {
+      id: "tftp-type",
+      priority: 850,
+      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      render: () => createElement(StatusBarBadge, null, "TFTP"),
+    },
+  ],
 });
 
 console.log("[Plugin] TFTP plugin registered");

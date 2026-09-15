@@ -29,9 +29,9 @@ registerPlugin({
   statusBarItems: [
     {
       id: "modbus-runtime",
-      align: "left",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.pluginId === "modbus" && (activeTab.state === "connected" || activeTab.state === "transferring"),
+      when: ({ activeTab }) => activeTab?.pluginId === "modbus"
+        && (activeTab.state === "connected" || activeTab.state === "transferring"),
       render: context => <ModbusStatusBarItem context={context} />,
     },
   ],

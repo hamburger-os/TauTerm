@@ -95,6 +95,8 @@ export interface StatusBarContext {
   activeTab: StatusBarTab | null;
 }
 
+export type StatusBarSessionState = "disconnected" | "connecting" | "connected" | "transferring";
+
 /**
  * 状态栏可见性/渲染所需的最小会话信息（结构化子集）。
  * 用独立结构而非直接引用 SessionContext 的 TabInfo，避免 plugin-registry
@@ -103,24 +105,44 @@ export interface StatusBarContext {
 export interface StatusBarTab {
   id: string;
   pluginId: string;
-  state: string;
+  state: StatusBarSessionState;
   endpoint: string;
   params?: Record<string, unknown>;
+  connectedAt?: number | null;
+  stats?: {
+    txBytes: number;
+    rxBytes: number;
+    rxPackets?: number;
+    txPackets?: number;
+  };
   virtualVirtualEndpoints?: Array<{ external_path: string }>;
   virtualPortError?: string;
   virtualPortErrorKind?: string;
 }
 
-/** 状态栏项（声明式描述符） */
+/**
+ * 响应式收缩策略。
+ * - preserve: 核心身份/应用状态，窄窗口仍保留；
+ * - auto: 按 priority 分级收缩；
+ * - early: 辅助信息，在第一档窄屏即隐藏。
+ */
+export type StatusBarOverflow = "preserve" | "auto" | "early";
+
+/**
+ * 协议插件状态栏项。
+ *
+ * 插件只贡献左侧的 Session/协议运行事实；右侧应用级区域由应用壳独占。
+ * 插件应优先复用 StatusBarPrimitives，避免建立协议私有的状态栏视觉语言。
+ */
 export interface StatusBarItem {
   id: string;
-  /** 对齐：左 / 右 */
-  align: "left" | "right";
-  /** 排序优先级：左对齐时数值越大越靠左，右对齐时数值越大越靠右 */
+  /** 排序优先级：数值越大越靠左。 */
   priority: number;
-  /** 可见性谓词：返回 false 则不渲染 */
+  /** 响应式收缩策略；默认 auto。 */
+  overflow?: StatusBarOverflow;
+  /** 可见性谓词：返回 false 则不渲染。 */
   when?: (context: StatusBarContext) => boolean;
-  /** 渲染函数：返回一个 React 元素（可在内部使用 hooks） */
+  /** 渲染函数：返回一个 React 元素（可在内部使用 hooks）。 */
   render: (context: StatusBarContext) => ReactNode;
 }
 
@@ -162,6 +184,19 @@ class PluginRegistry {
     if (this.plugins.has(id)) {
       throw new Error(`[PluginRegistry] 插件 "${id}" 重复注册`);
     }
+
+    const statusIds = new Set<string>();
+    for (const item of registration.statusBarItems ?? []) {
+      const itemId = item.id.trim();
+      if (!itemId) {
+        throw new Error(`[PluginRegistry] 插件 "${id}" 存在空状态栏项 ID`);
+      }
+      if (statusIds.has(itemId)) {
+        throw new Error(`[PluginRegistry] 插件 "${id}" 状态栏项 "${itemId}" 重复注册`);
+      }
+      statusIds.add(itemId);
+    }
+
     this.plugins.set(id, registration);
     setSessionPresentation(id, registration.sessionPresentation);
 

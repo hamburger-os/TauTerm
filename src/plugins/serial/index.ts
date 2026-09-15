@@ -56,22 +56,20 @@ registerPlugin({
   statusBarItems: [
     {
       id: "serial-link",
-      align: "left",
       priority: 880,
       when: connected,
       render: context => createElement(SerialLinkStatus, context),
     },
     {
       id: "serial-type",
-      align: "left",
       priority: 860,
       when: connected,
       render: context => createElement(SerialTypeStatus, context),
     },
     {
       id: "serial-virtual-port",
-      align: "left",
       priority: 300,
+      overflow: "early",
       render: context => createElement(SerialVirtualPortStatus, context),
     },
   ],
