@@ -4,6 +4,8 @@
 //! side channel. Writable and overwrite access default off; validation and
 //! diagnostics remain fail-closed around filesystem and bind errors.
 
+pub const PLUGIN_ID: &str = "tftp";
+
 pub mod client;
 pub mod counting_socket;
 pub mod server;
@@ -280,6 +282,10 @@ fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for TftpAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,

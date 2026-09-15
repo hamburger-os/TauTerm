@@ -5,6 +5,8 @@
 //! 文件服务（SFTP）通过独立的侧通道操作，不中断终端 I/O 循环。
 //! russh Handle 内部线程安全，终端 I/O 与 SFTP 可安全并发。
 
+pub const PLUGIN_ID: &str = "ssh";
+
 mod driver;
 pub mod handler;
 pub mod journald;
@@ -292,11 +294,27 @@ async fn connect_ssh_socket(
 /// - `channel`: `SshChannel`（终端 I/O，async 路径）
 /// - 会话 I/O：由 SessionStore 统一绑定返回的 DataPlaneRuntime 与 SessionIo
 /// - `runtime`: `SshRuntime`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
-pub struct SshAdapter;
+pub struct SshAdapter {
+    host_key_verifier: HostKeyVerifier,
+}
 
 impl SshAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            host_key_verifier: HostKeyVerifier::new(),
+        }
+    }
+
+    pub fn configure_known_hosts(&self, path: std::path::PathBuf) -> Result<(), String> {
+        self.host_key_verifier.configure_known_hosts(path)
+    }
+
+    pub async fn respond_to_host_key_verification(
+        &self,
+        request_id: &str,
+        accepted: bool,
+    ) -> Result<bool, String> {
+        self.host_key_verifier.respond(request_id, accepted).await
     }
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<SshRuntime>> {
@@ -316,10 +334,10 @@ impl SshAdapter {
         &self,
         config: SshConfig,
         app_handle: tauri::AppHandle,
-        verifier: &HostKeyVerifier,
     ) -> Result<ProtocolConnection, SessionError> {
         config.validate()?;
-        let result = build_connection_with_config(config, app_handle, verifier).await?;
+        let result =
+            build_connection_with_config(config, app_handle, &self.host_key_verifier).await?;
         let shared = Arc::new(SshRuntime::new(
             result.session,
             result.host_key_fingerprint,
@@ -344,7 +362,7 @@ impl SshAdapter {
 /// 主机密钥验证器
 ///
 /// 管理 SSH 连接过程中待用户确认的主机密钥验证请求。
-/// 由 AppState 持有，供 `build_connection_with_config`（写入待确认项）
+/// 由 `SshAdapter` 持有，供连接流程（写入待确认项）
 /// 和 `confirm_host_key` Tauri 命令（读取并回传用户决定）双方并发访问。
 /// pending map 使用同步 Mutex，因为临界区只执行短小的 HashMap 操作且绝不跨 await；
 /// 这样取消 guard 可以在 Drop 中同步撤销待确认项，避免迟到响应写入失效连接的信任。
@@ -356,7 +374,7 @@ struct PendingHostKeyVerification {
     fingerprint: String,
 }
 
-pub struct HostKeyVerifier {
+struct HostKeyVerifier {
     pending: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
     known_hosts: KnownHostStore,
 }
@@ -420,10 +438,6 @@ impl HostKeyVerifier {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(request_id);
-    }
-
-    pub async fn cancel(&self, request_id: &str) {
-        self.cancel_now(request_id);
     }
 
     /// 用户确认或拒绝 SSH 主机密钥。接受时先持久化 trust，再放行连接；
@@ -919,6 +933,10 @@ pub async fn open_pty_shell_channel(
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for SshAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,

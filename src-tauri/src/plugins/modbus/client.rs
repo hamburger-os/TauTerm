@@ -100,10 +100,6 @@ impl ModbusClient {
         self.config.mode()
     }
 
-    pub fn default_unit_id(&self) -> u8 {
-        self.config.unit_id
-    }
-
     pub fn execute(&self, unit_id: u8, request: ModbusRequest) -> TransactionResult {
         let _guard = self
             .transaction_guard

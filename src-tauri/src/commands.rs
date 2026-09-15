@@ -12,7 +12,9 @@ use crate::kernel::log_engine::{
     try_send_session_log, try_send_system_event, DataDirection, DataLogEntry, LogConfigResponse,
     LogConfigUpdate, LogEntry, LogHealth, LogStatus,
 };
-use crate::kernel::plugin_adapter::{ChannelOpenMode, ProtocolAdapter, TransferProtocolType};
+use crate::kernel::plugin_adapter::{
+    ChannelOpenMode, PluginId, ProtocolAdapter, TransferProtocolType,
+};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{
@@ -30,6 +32,8 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -106,6 +110,41 @@ pub struct ConnectSessionRequest {
     #[serde(default)]
     pub initial_elevated: bool,
 }
+
+pub(crate) type SessionConnectFuture =
+    Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'static>>;
+pub(crate) type SessionConnectHandler =
+    fn(AppHandle, ConnectSessionRequest) -> SessionConnectFuture;
+
+macro_rules! define_session_connector {
+    ($name:ident, $target:path) => {
+        pub(crate) fn $name(
+            app: AppHandle,
+            request: ConnectSessionRequest,
+        ) -> SessionConnectFuture {
+            Box::pin(async move {
+                let state: State<'_, AppState> = app.state();
+                $target(app.clone(), state, request).await
+            })
+        }
+    };
+}
+
+define_session_connector!(serial_session_connector, connect_session_serial);
+define_session_connector!(ssh_session_connector, connect_session_ssh);
+define_session_connector!(tftp_session_connector, connect_session_tftp);
+define_session_connector!(iperf_session_connector, connect_session_iperf);
+define_session_connector!(telnet_session_connector, connect_session_telnet);
+define_session_connector!(local_shell_session_connector, connect_session_local_shell);
+define_session_connector!(network_session_connector, connect_session_network);
+define_session_connector!(
+    trdp_session_connector,
+    crate::plugins::trdp::connect_session
+);
+define_session_connector!(
+    modbus_session_connector,
+    crate::plugins::modbus::connect_session
+);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -412,17 +451,17 @@ pub struct TftpClientRequest {
 
 #[tauri::command]
 pub fn get_connection_types(state: State<'_, AppState>) -> Vec<ConnectionTypeInfo> {
-    let plugin_host = state.plugin_host.lock().unwrap_or_else(|e| e.into_inner());
-    plugin_host
-        .plugins()
-        .iter()
-        .map(|p| ConnectionTypeInfo {
-            id: p.id.clone(),
-            label: p.name.clone(),
+    state
+        .plugins
+        .manifests()
+        .into_iter()
+        .map(|plugin| ConnectionTypeInfo {
+            id: plugin.id.to_string(),
+            label: plugin.name.clone(),
             available: true,
-            description: format!("{} v{}", p.name, p.version),
-            icon: p.category.clone(),
-            content_type: p.content_type.clone(),
+            description: format!("{} v{}", plugin.name, plugin.version),
+            icon: plugin.category.clone(),
+            content_type: plugin.content_type.clone(),
         })
         .collect()
 }
@@ -434,83 +473,30 @@ pub async fn enumerate_endpoints(
     state: State<'_, AppState>,
     plugin_id: Option<String>,
 ) -> Result<Vec<EndpointItem>, String> {
-    let pid = plugin_id.unwrap_or_else(|| "serial".into());
-    match pid.as_str() {
-        "serial" => {
-            // Windows SetupAPI / 第三方串口驱动枚举可能耗时数秒甚至更久。
-            // discover_endpoints 是同步 API，必须放到 blocking worker，不能占用
-            // Tauri 命令分发线程，否则打开任意会话配置页都会出现 UI 假死。
-            let endpoints = tauri::async_runtime::spawn_blocking(|| {
-                crate::plugins::serial::SerialAdapter::new().discover_endpoints()
-            })
-            .await
-            .map_err(|e| format!("serial endpoint discovery task failed: {e}"))?
-            .map_err(|e| e.to_string())?;
-            Ok(endpoints
-                .into_iter()
-                .map(|ep| EndpointItem {
-                    name: ep.name,
-                    description: ep.description,
-                    connection_type: "serial".to_string(),
-                    params: ep.params,
-                })
-                .collect())
-        }
-        "ssh" => {
-            // 通过适配器调用 discover_endpoints，保持与 serial 一致的插件架构。
-            // SSH 当前返回空列表（无硬件端点），但未来可扩展为发现 mDNS/Bonjour SSH 主机等。
-            let endpoints = state
-                .ssh_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
-            Ok(endpoints
-                .into_iter()
-                .map(|ep| EndpointItem {
-                    name: ep.name,
-                    description: ep.description,
-                    connection_type: "ssh".to_string(),
-                    params: ep.params,
-                })
-                .collect())
-        }
-        "telnet" => {
-            // 通过适配器调用 discover_endpoints，保持与 serial 一致的插件架构。
-            // Telnet 当前返回空列表（无硬件端点），但未来可扩展为发现
-            // 已知设备的 Telnet 服务等。
-            let endpoints = state
-                .telnet_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
-            Ok(endpoints
-                .into_iter()
-                .map(|ep| EndpointItem {
-                    name: ep.name,
-                    description: ep.description,
-                    connection_type: "telnet".to_string(),
-                    params: ep.params,
-                })
-                .collect())
-        }
-        "local-shell" => {
-            // Shell/WSL 探测会启动平台命令，同样属于不可预测的阻塞 I/O。
-            let endpoints = tauri::async_runtime::spawn_blocking(|| {
-                crate::plugins::local_shell::LocalShellAdapter::new().discover_endpoints()
-            })
-            .await
-            .map_err(|e| format!("local shell endpoint discovery task failed: {e}"))?
-            .map_err(|e| e.to_string())?;
-            Ok(endpoints
-                .into_iter()
-                .map(|ep| EndpointItem {
-                    name: ep.name,
-                    description: ep.description,
-                    connection_type: "local-shell".to_string(),
-                    params: ep.params,
-                })
-                .collect())
-        }
-        other => Err(format!("插件 '{}' 暂不支持端点枚举", other)),
-    }
+    let raw_plugin_id = plugin_id.unwrap_or_else(|| crate::plugins::serial::PLUGIN_ID.into());
+    let plugin_id =
+        PluginId::parse(raw_plugin_id).map_err(|error| format!("无效插件 ID: {error}"))?;
+    let adapter = state
+        .plugins
+        .adapter(&plugin_id)
+        .ok_or_else(|| format!("插件 '{plugin_id}' 不提供 ProtocolAdapter"))?;
+
+    // 端点发现可能触发驱动枚举、平台命令或未来的网络发现；统一放入 blocking worker，
+    // 公共命令不再猜测哪些具体协议会阻塞。
+    let endpoints = tauri::async_runtime::spawn_blocking(move || adapter.discover_endpoints())
+        .await
+        .map_err(|error| format!("插件端点发现任务失败: {error}"))?
+        .map_err(|error| error.to_string())?;
+
+    Ok(endpoints
+        .into_iter()
+        .map(|endpoint| EndpointItem {
+            name: endpoint.name,
+            description: endpoint.description,
+            connection_type: plugin_id.to_string(),
+            params: endpoint.params,
+        })
+        .collect())
 }
 
 // ── 命令：会话连接 ──────────────────────────────────
@@ -522,27 +508,18 @@ pub async fn connect_session(
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    let pid = request.plugin_id.clone().unwrap_or_else(|| "serial".into());
+    let raw_plugin_id = request
+        .plugin_id
+        .clone()
+        .unwrap_or_else(|| crate::plugins::serial::PLUGIN_ID.into());
+    let plugin_id =
+        PluginId::parse(raw_plugin_id).map_err(|error| format!("无效插件 ID: {error}"))?;
+    let handler = state
+        .plugins
+        .contribution::<SessionConnectHandler>(&plugin_id)
+        .ok_or_else(|| format!("插件 '{plugin_id}' 未注册 Session 连接 contribution"))?;
 
-    {
-        let plugin_host = state.plugin_host.lock().map_err(|e| e.to_string())?;
-        if plugin_host.get_plugin(&pid).is_none() {
-            return Err(format!("插件 '{}' 未注册", pid));
-        }
-    }
-
-    match pid.as_str() {
-        "serial" => connect_session_serial(app, state, request).await,
-        "ssh" => connect_session_ssh(app, state, request).await,
-        "tftp" => connect_session_tftp(app, state, request).await,
-        "iperf" => connect_session_iperf(app, state, request).await,
-        "telnet" => connect_session_telnet(app, state, request).await,
-        "local-shell" => connect_session_local_shell(app, state, request).await,
-        "network" => connect_session_network(app, state, request).await,
-        "trdp" => crate::plugins::trdp::connect_session(app, state, request).await,
-        "modbus" => crate::plugins::modbus::connect_session(app, state, request).await,
-        other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
-    }
+    (handler.as_ref())(app, request).await
 }
 
 /// 创建共享 on_data 回调（DataBatcher + 日志记录）。
@@ -613,14 +590,18 @@ async fn connect_session_serial(
     } = request;
     // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
     let conn = state
-        .serial_adapter
+        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
-    let content_type = state.serial_adapter.content_type();
-    let transfer_protocols = state.serial_adapter.transfer_protocols();
+    let content_type = state
+        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
+        .content_type();
+    let transfer_protocols = state
+        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
+        .transfer_protocols();
     log::info!(
         "串口连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
@@ -963,14 +944,18 @@ async fn connect_session_telnet(
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
     let conn = state
-        .telnet_adapter
+        .plugin::<crate::plugins::telnet::TelnetAdapter>(crate::plugins::telnet::PLUGIN_ID)
         .connect(&request.endpoint, &request.params)
         .await
         .map_err(|e| e.to_string())?;
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
-    let content_type = state.telnet_adapter.content_type();
-    let transfer_protocols = state.telnet_adapter.transfer_protocols();
+    let content_type = state
+        .plugin::<crate::plugins::telnet::TelnetAdapter>(crate::plugins::telnet::PLUGIN_ID)
+        .content_type();
+    let transfer_protocols = state
+        .plugin::<crate::plugins::telnet::TelnetAdapter>(crate::plugins::telnet::PLUGIN_ID)
+        .transfer_protocols();
     log::info!(
         "Telnet 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
@@ -1001,7 +986,9 @@ async fn connect_session_local_shell(
         ChannelOpenMode::Standard
     };
     let mut conn = state
-        .local_shell_adapter
+        .plugin::<crate::plugins::local_shell::LocalShellAdapter>(
+            crate::plugins::local_shell::PLUGIN_ID,
+        )
         .connect_with_mode(&request.params, initial_mode)
         .await
         .map_err(|e| e.to_string())?;
@@ -1232,17 +1219,16 @@ async fn connect_session_ssh(
         journald_enabled.unwrap_or(false)
     };
 
-    // 通过 SshAdapter::connect_with_config 获取 ProtocolConnection，
-    // 复用已解析的 SshConfig 实例，避免 connect() 内部二次 JSON 反序列化。
-    // 传入 AppHandle 和 HostKeyVerifier 以启用用户确认主机密钥流程。
-    let conn = state
-        .ssh_adapter
-        .connect_with_config(ssh_config.clone(), app.clone(), &state.host_key_verifier)
+    // SSH 插件自己持有 known-host 验证状态；AppState 只通过 PluginRuntime 取得 contribution。
+    let ssh_adapter =
+        state.plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID);
+    let conn = ssh_adapter
+        .connect_with_config(ssh_config.clone(), app.clone())
         .await
         .map_err(|e| e.to_string())?;
 
-    let content_type = state.ssh_adapter.content_type();
-    let transfer_protocols_list = state.ssh_adapter.transfer_protocols();
+    let content_type = ssh_adapter.content_type();
+    let transfer_protocols_list = ssh_adapter.transfer_protocols();
     log::info!(
         "SSH 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
@@ -1292,7 +1278,7 @@ async fn connect_session_ssh(
     };
 
     let host_key_fingerprint = state
-        .ssh_adapter
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
         .runtime(&parent_id)
         .and_then(|runtime| runtime.host_key_fingerprint.clone());
     if let Some(ref fp) = host_key_fingerprint {
@@ -1404,8 +1390,8 @@ pub async fn confirm_host_key(
     accepted: bool,
 ) -> Result<(), String> {
     let ok = state
-        .host_key_verifier
-        .respond(&request_id, accepted)
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+        .respond_to_host_key_verification(&request_id, accepted)
         .await?;
     if !ok {
         return Err("主机密钥验证请求未找到或已过期".into());
@@ -2037,7 +2023,7 @@ pub async fn connect_session_network(
         ..
     } = request;
     let conn = state
-        .network_adapter
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
@@ -2064,7 +2050,7 @@ pub async fn connect_session_network(
 
     // attach 后从 Network 插件 typed registry 获取 runtime，再启动监听/接收线程。
     let network_runtime = state
-        .network_adapter
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .runtime(&sid)
         .ok_or_else(|| "网络调试 runtime 注册失败".to_string())?;
     network_runtime
@@ -2082,7 +2068,7 @@ pub async fn connect_session_network(
     };
     // UDP Client 本地绑定地址（前端展示本机 ip:port 用；其它角色为 null）
     let udp_local_addr = state
-        .network_adapter
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .runtime(&sid)
         .and_then(|net| net.udp_client_local_addr())
         .map(|a| a.to_string());
@@ -2134,7 +2120,7 @@ fn udp_send_impl(
         (encoding, data_mode)
     };
     let net = state
-        .network_adapter
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or("会话不是网络调试会话".to_string())?;
     // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 SessionIo::send_text 一致）；
@@ -2204,7 +2190,7 @@ pub fn set_network_send_target(
     target: Option<String>,
 ) -> Result<(), String> {
     let net = state
-        .network_adapter
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or("会话不是网络调试会话".to_string())?;
     net.set_send_target(target);
@@ -2928,7 +2914,7 @@ fn get_ssh_runtime(
         parent_id
     };
     state
-        .ssh_adapter
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
         .runtime(&parent_id)
         .ok_or_else(|| format!("会话 {} 不包含 SSH runtime（可能不是 SSH 连接）", parent_id))
 }
@@ -3406,10 +3392,14 @@ async fn connect_session_tftp(
     } = request;
     let prev_params = session_id
         .as_deref()
-        .and_then(|id| state.tftp_adapter.runtime(id))
+        .and_then(|id| {
+            state
+                .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
+                .runtime(id)
+        })
         .map(|runtime| runtime.get_params());
     let conn = state
-        .tftp_adapter
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
@@ -3438,7 +3428,7 @@ async fn connect_session_tftp(
         )?
     };
     let runtime = state
-        .tftp_adapter
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
         .runtime(&sid)
         .ok_or_else(|| "TFTP runtime 注册失败".to_string())?;
     if let Some(prev) = prev_params {
@@ -3469,7 +3459,7 @@ pub async fn tftp_server_start(
     session_id: String,
 ) -> Result<(), String> {
     let runtime = state
-        .tftp_adapter
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;
     tftp::try_start_server(&app, &runtime, &session_id)?;
@@ -3489,7 +3479,7 @@ pub async fn tftp_server_stop(
     session_id: String,
 ) -> Result<(), String> {
     let tftp_sc = state
-        .tftp_adapter
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;
 
@@ -3624,7 +3614,10 @@ pub async fn tftp_client_put(
 /// 同步 TFTP 服务端参数到 typed runtime（客户端 GET/PUT 前调用）。
 /// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDynamicParams) {
-    if let Some(runtime) = state.tftp_adapter.runtime(session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
+        .runtime(session_id)
+    {
         match runtime.dynamic_params.lock() {
             Ok(mut value) => *value = params.clone(),
             Err(poisoned) => *poisoned.into_inner() = params.clone(),
@@ -3650,7 +3643,10 @@ pub async fn tftp_update_params(
     let new_params: TftpDynamicParams =
         serde_json::from_value(params).map_err(|e| format!("参数解析失败: {}", e))?;
 
-    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
+        .runtime(&session_id)
+    {
         match runtime.dynamic_params.lock() {
             Ok(mut value) => *value = new_params,
             Err(poisoned) => *poisoned.into_inner() = new_params,
@@ -3671,7 +3667,10 @@ pub async fn tftp_get_status(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<TftpStatus, String> {
-    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
+        .runtime(&session_id)
+    {
         let dynamic_params = runtime.get_params();
         return Ok(TftpStatus {
             server_running: runtime
@@ -3733,9 +3732,11 @@ async fn connect_session_iperf(
         session_id,
         ..
     } = request;
-    let old_runtime = session_id
-        .as_deref()
-        .and_then(|id| state.iperf_adapter.runtime(id));
+    let old_runtime = session_id.as_deref().and_then(|id| {
+        state
+            .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+            .runtime(id)
+    });
     let prev_params = old_runtime.as_ref().map(|runtime| runtime.get_params());
     if let Some(runtime) = old_runtime {
         let handle = runtime.server_handle.clone();
@@ -3752,7 +3753,7 @@ async fn connect_session_iperf(
         serde_json::from_value(params.clone()).map_err(|e| format!("iperf 配置解析失败: {}", e))?;
     let resolved_params = serde_json::to_value(&config).unwrap_or_else(|_| params.clone());
     let conn = state
-        .iperf_adapter
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
@@ -3781,7 +3782,7 @@ async fn connect_session_iperf(
         )?
     };
     let runtime = state
-        .iperf_adapter
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
         .runtime(&sid)
         .ok_or_else(|| "iperf runtime 注册失败".to_string())?;
     if let Some(prev) = prev_params {
@@ -3831,7 +3832,7 @@ pub async fn iperf_server_start(
     session_id: String,
 ) -> Result<(), String> {
     let runtime = state
-        .iperf_adapter
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;
     iperf::try_start_server(&app, &runtime, &session_id).await?;
@@ -3847,7 +3848,7 @@ pub async fn iperf_server_stop(
     session_id: String,
 ) -> Result<(), String> {
     let iperf_sc = state
-        .iperf_adapter
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
         .runtime(&session_id)
         .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;
 
@@ -3895,7 +3896,10 @@ pub async fn iperf_client_run(
     // 注意：客户端中止标志独立于服务端监听标志（client_abort_flag vs
     // server_abort_flag）——客户端测速结束/被停止不得杀死会话内的服务端。
     let (client_abort_flag, client_test_running, last_summary) = {
-        match state.iperf_adapter.runtime(&session_id) {
+        match state
+            .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+            .runtime(&session_id)
+        {
             Some(iperf_sc) => {
                 if let Ok(mut reg) = IPERF_CLIENT_REGISTRY.lock() {
                     reg.remove(&session_id);
@@ -4004,7 +4008,10 @@ fn sanitize_iperf_params(params: &mut IperfDynamicParams) {
 /// 同步 iperf 动态参数到 typed runtime（客户端测速前调用）。
 /// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicParams) {
-    if let Some(runtime) = state.iperf_adapter.runtime(session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+        .runtime(session_id)
+    {
         *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = params.clone();
         log::info!(
             "[iperf] 动态参数已同步 (session={}, duration={}s, port={})",
@@ -4025,7 +4032,10 @@ pub async fn iperf_client_stop(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+        .runtime(&session_id)
+    {
         runtime.client_abort_flag.store(true, Ordering::Relaxed);
         return Ok(());
     }
@@ -4047,7 +4057,10 @@ pub async fn iperf_update_params(
     let mut new_params: IperfDynamicParams =
         serde_json::from_value(params).map_err(|e| format!("参数解析失败: {}", e))?;
     sanitize_iperf_params(&mut new_params);
-    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+        .runtime(&session_id)
+    {
         *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = new_params;
     }
     Ok(())
@@ -4064,7 +4077,10 @@ pub async fn iperf_get_status(
 ) -> Result<IperfStatus, String> {
     // 全局锁只用于取 Arc：dynamic_params/last_summary 在侧通道自有锁下克隆，
     // 长摘要克隆不占用 session_store 锁（其他会话命令无谓排队）
-    if let Some(iperf_sc) = state.iperf_adapter.runtime(&session_id) {
+    if let Some(iperf_sc) = state
+        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+        .runtime(&session_id)
+    {
         let server_running = iperf_sc
             .server_running
             .load(std::sync::atomic::Ordering::Relaxed);

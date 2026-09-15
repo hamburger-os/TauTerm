@@ -5,6 +5,8 @@
 //! datagram transport but feeds received payloads into that aggregate DataPlane so upper layers do
 //! not need a second callback bus.
 
+pub const PLUGIN_ID: &str = "network";
+
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -520,6 +522,10 @@ impl NetworkAdapter {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for NetworkAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         endpoint: &str,

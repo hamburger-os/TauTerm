@@ -2,6 +2,8 @@
 //!
 //! 插件只描述 Raw Serial 会话语义；端口发现/打开和实际字节 I/O 由 transport 层负责。
 
+pub const PLUGIN_ID: &str = "serial";
+
 use crate::kernel::plugin_adapter::{
     ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
@@ -53,6 +55,10 @@ fn normalize_device_label(label: &str, port_name: &str) -> String {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for SerialAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         endpoint: &str,

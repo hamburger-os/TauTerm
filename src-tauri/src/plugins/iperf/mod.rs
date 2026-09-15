@@ -9,6 +9,8 @@
 //!
 //! 注意：iperf2 与 iperf3 协议互不互通，两端的版本必须一致。
 
+pub const PLUGIN_ID: &str = "iperf";
+
 pub mod client;
 pub mod server;
 
@@ -389,6 +391,10 @@ impl IperfAdapter {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for IperfAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,

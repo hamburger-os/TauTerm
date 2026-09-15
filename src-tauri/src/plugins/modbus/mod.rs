@@ -1,3 +1,5 @@
+pub const PLUGIN_ID: &str = "modbus";
+
 pub mod capability;
 pub mod client;
 pub mod codec;
@@ -93,14 +95,14 @@ impl ModbusAdapter {
     pub fn new() -> Self {
         Self
     }
-
-    pub fn runtime(&self, session_id: &str) -> Option<Arc<ModbusRuntime>> {
-        runtime(session_id)
-    }
 }
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for ModbusAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,
@@ -229,7 +231,7 @@ pub async fn connect_session(
         ..
     } = request;
     let conn = state
-        .modbus_adapter
+        .plugin::<ModbusAdapter>(PLUGIN_ID)
         .connect(&endpoint, &params)
         .await
         .map_err(|error| error.to_string())?;
