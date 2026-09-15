@@ -1697,7 +1697,10 @@ mod tests {
 
     fn scripted_io(
         reads: impl IntoIterator<Item = u8>,
-    ) -> (Box<dyn crate::transfer::protocol::TransferIo>, CapturedWrites) {
+    ) -> (
+        Box<dyn crate::transfer::protocol::TransferIo>,
+        CapturedWrites,
+    ) {
         let writes = Arc::new(Mutex::new(Vec::new()));
         (
             Box::new(ScriptedIo {
