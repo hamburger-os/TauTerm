@@ -2,12 +2,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 10px;
   height: 28px;
+  padding: 2px 10px;
   flex-shrink: 0;
+  overflow: hidden;
   font-size: 11px;
   color: var(--text-secondary);
-  overflow: hidden;
   border-radius: 0 0 var(--radius-window) var(--radius-window);
 }
 
@@ -15,258 +15,204 @@
 .right {
   display: flex;
   align-items: center;
-  gap: 6px;
-  overflow: hidden;
   white-space: nowrap;
 }
 
 .left {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .right {
   flex: 0 0 auto;
+  margin-left: 8px;
 }
 
-/* 连接指示器 */
-.indicator {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  min-width: 0;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.dot.connected {
-  background: var(--color-success);
-}
-
-.dot.transferring {
-  background: var(--color-warning);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--color-warning) 45%, transparent);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.text {
-  max-width: min(32vw, 320px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-secondary);
-}
-
-/* 信息分段 */
 .segment {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 0 4px;
-  border-left: 1px solid var(--glass-border-default);
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0 5px;
 }
 
 .segment:first-child {
-  border-left: none;
+  padding-left: 0;
 }
 
-/* 串口参数 */
-.paramText {
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
+.segment + .segment {
+  border-left: 1px solid var(--glass-border-default);
 }
 
-/* 硬件信号线 */
-.signalDot {
-  font-size: 9px;
-  padding: 0 2px;
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.signalActive {
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-}
-
-.signalInactive {
-  color: var(--text-secondary);
-  opacity: 0.5;
-}
-
-.signalUnknown {
-  color: var(--text-secondary);
-  opacity: 0.5;
-  font-style: italic;
-}
-
-/* 运行时间 */
-.uptimeText {
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-/* 数据模式标签 */
-.modeBadge {
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
-  border-radius: var(--radius-xs);
-  padding: 0 3px;
-  font-size: 9px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-}
-
-/* TX/RX 统计 */
-.stats {
-  display: flex;
+.primitiveGroup {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  min-width: 0;
+  gap: 5px;
 }
 
-.statItem {
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-/* 插件状态项 */
-.pluginItem {
-  display: flex;
+.primitiveText {
+  display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
+  min-width: 0;
+  max-width: min(32vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
-/* 会话类型标签 */
-.typeBadge {
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+.mono {
+  font-family: var(--font-mono);
+}
+
+.primitiveBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
   border-radius: var(--radius-xs);
-  padding: 0 3px;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
-  font-family: var(--font-mono);
+  line-height: 1;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
-/* SSH 认证方式标签 */
-.sshAuthBadge {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-secondary) 15%, transparent);
-  border-radius: var(--radius-xs);
+.primitiveAction {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
   padding: 0 3px;
-  font-size: 9px;
-  font-family: var(--font-mono);
-}
-
-/* SSH 文件服务标签 */
-.sshFsBadge {
-  color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
+  border: 0;
   border-radius: var(--radius-xs);
-  padding: 0 3px;
-  font-size: 9px;
+  background: transparent;
+  font: inherit;
   font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
-/* 日志状态指示器 */
-.logDot {
-  width: 7px;
-  height: 7px;
+.primitiveAction:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.primitiveAction:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.primitiveAction:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primitiveIndicator {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
   border-radius: var(--radius-full);
-  background: var(--color-error);
-  animation: logPulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
+  background: var(--text-muted);
 }
 
-@keyframes logPulse {
+.indicatorNeutral {
+  background: var(--text-secondary);
+}
+
+.indicatorMuted {
+  background: var(--text-muted);
+}
+
+.indicatorAccent {
+  background: var(--accent-primary);
+}
+
+.indicatorSuccess {
+  background: var(--color-success);
+}
+
+.indicatorWarning {
+  background: var(--color-warning);
+}
+
+.indicatorDanger {
+  background: var(--color-error);
+}
+
+.indicatorPulse {
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
 
-.logText {
+.toneNeutral {
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 300px;
 }
 
-.logFileInfo {
-  margin-right: 8px;
-}
-
-.version {
+.toneMuted {
   color: var(--text-muted);
-  cursor: pointer;
-  transition: color var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
-.version:hover {
-  color: var(--text-primary);
-}
-
-.versionHasUpdate {
-  color: var(--color-success) !important;
-  animation: updatePulse 2s ease-in-out infinite;
-}
-
-.versionReady {
-  color: var(--color-success) !important;
-  font-weight: 600;
-}
-
-.versionChecking {
-  color: var(--text-secondary) !important;
-  opacity: 0.6;
-}
-
-@keyframes updatePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.downloadProgress {
+.toneAccent {
   color: var(--accent-primary);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  margin-right: 6px;
 }
 
-.vportWarning {
+.toneSuccess {
+  color: var(--color-success);
+}
+
+.toneWarning {
   color: var(--color-warning);
 }
 
-.vportAction {
-  cursor: pointer;
-  text-decoration: underline;
-  margin-left: 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-secondary);
+.toneDanger {
+  color: var(--color-error);
 }
 
-.vportAction:hover {
-  color: var(--text-primary);
+/* priority / overflow classes are semantic hooks for responsive collapse. */
+.priorityHigh,
+.priorityMedium,
+.priorityLow,
+.overflowPreserve,
+.overflowAuto,
+.overflowEarly {
+}
+
+@media (max-width: 1100px) {
+  .overflowEarly,
+  .priorityLow:not(.overflowPreserve) {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .priorityMedium:not(.overflowPreserve) {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .priorityHigh:not(.overflowPreserve) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indicatorPulse {
+    animation: none;
+  }
 }
