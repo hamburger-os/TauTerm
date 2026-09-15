@@ -1,0 +1,33 @@
+name: Backend Boundary Audit
+on:
+  push:
+    branches: [refactor/plugin-boundary-cleanup]
+permissions:
+  contents: write
+jobs:
+  audit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - name: Locate common-layer protocol semantics
+        run: |
+          echo '===== commands connectors ====='
+          rg -n 'connect_session_(serial|ssh|tftp|iperf|telnet|local_shell|network)|session_connector' src-tauri/src/commands.rs || true
+          echo '===== commands SSH ownership ====='
+          rg -n 'SSH_CREDENTIAL|ssh_credential|PendingSsh|prepare_ssh|commit_ssh|apply_ssh|hydrate_ssh|Journald|journald_enabled|plugins::ssh' src-tauri/src/commands.rs || true
+          echo '===== commands other built-in semantics ====='
+          rg -n 'plugins::(serial|telnet|tftp|iperf|network)|Serial|Telnet|Tftp|Iperf|Network|netdbg|virtual_port' src-tauri/src/commands.rs || true
+          echo '===== SessionStore residue ====='
+          rg -n 'VirtualPort|VirtualEndpoint|PeerInfo|PeerChannel|netdbg|network|serial|ssh|trdp|modbus' src-tauri/src/kernel/session_store.rs || true
+          echo '===== frontend shared built-in ids ====='
+          rg -n '"(serial|ssh|telnet|tftp|iperf|network|trdp|modbus|local-shell)"' src/context/SessionContext.tsx src/components/Layout/SessionSidebar.tsx src/components/Layout/SplitView.tsx src/components/SendBar/SendBar.tsx src/components/Layout/sessionPresentation.ts || true
+      - name: Remove audit workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/backend-boundary-audit.yml
+          git commit -m "chore: remove backend boundary audit workflow"
+          git push origin HEAD:refactor/plugin-boundary-cleanup
