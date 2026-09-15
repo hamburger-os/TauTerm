@@ -37,7 +37,7 @@ Transport Runtime
 
 Transport 不知道 Unit ID、功能码、CRC/LRC、MBAP、异常码或寄存器模型；这些全部属于 Modbus 模块。UI 只负责编辑和展示，不负责决定某个标准功能在特定传输上是否合法，也不重新解析已经由 Rust 验证过的 PDU。
 
-Session JSON 中的 `ModbusConfig` 只是边界 DTO。连接开始后立即通过 `validated()` 转成 tagged runtime domain：endpoint 明确为 Serial 或 TCP，role 明确为 Client 或 Server。Client timeout/retry 与 Server max-clients/fault 分别只存在于对应角色语义中。
+Session JSON 中的 `ModbusConfig` 只是边界 DTO。连接开始后立即通过 `validated()` 转成 tagged runtime domain：endpoint 明确为 Serial 或 TCP，role 明确为 Client 或 Server。Client timeout/retry 与 Server max-clients/fault 分别只存在于对应角色语义中。 `ModbusAdapter` 作为 `PluginRuntime` 中唯一注册的插件实例持有 `SessionRuntimeRegistry<ModbusRuntime>` 弱索引，命令层通过该 Adapter 查找已连接 runtime；强生命周期仍由 SessionStore 的 SessionService capability 管理，不使用模块级静态 runtime registry。
 
 ## Target 与 Unit ID
 

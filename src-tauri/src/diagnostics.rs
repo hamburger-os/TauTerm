@@ -71,15 +71,12 @@ pub async fn export_diagnostics(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let plugins = {
-        let host = state
-            .plugin_host
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let mut plugins = host
-            .plugins()
+        let mut plugins = state
+            .plugins
+            .manifests()
             .into_iter()
             .map(|manifest| PluginDiagnostic {
-                id: manifest.id.clone(),
+                id: manifest.id.to_string(),
                 version: manifest.version.clone(),
                 category: manifest.category.clone(),
             })

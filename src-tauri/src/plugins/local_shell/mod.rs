@@ -3,13 +3,15 @@
 //! 负责配置验证、系统 Shell 探测与 PTY 通道创建。平台 PTY/进程生命周期
 //! 细节封装在 `LocalShellChannel`，调用方只接触 `ProtocolAdapter` interface。
 
+pub const PLUGIN_ID: &str = "local-shell";
+
 mod driver;
 #[cfg(windows)]
 pub(crate) mod elevated;
 
 use crate::kernel::plugin_adapter::{
     ChannelOpenMode, ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
-    SessionChannelFactory, TransferProtocolType,
+    SessionChannelFactory,
 };
 use crate::session::SessionError;
 use crate::transport::DataPlaneRuntime;
@@ -333,6 +335,10 @@ impl SessionChannelFactory for LocalShellFactory {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for LocalShellAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,
@@ -351,10 +357,6 @@ impl ProtocolAdapter for LocalShellAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![]
     }
 }
 

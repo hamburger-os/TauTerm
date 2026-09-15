@@ -5,6 +5,8 @@
 //! datagram transport but feeds received payloads into that aggregate DataPlane so upper layers do
 //! not need a second callback bus.
 
+pub const PLUGIN_ID: &str = "network";
+
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +21,7 @@ use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
+use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::PeerChannelRegistration;
 use crate::session::SessionError;
 use crate::transport::tcp::{connect_tcp, TcpConnectConfig, TcpDriver, TcpListenerTransport};
@@ -225,31 +228,16 @@ pub struct NetworkRuntime {
     udp_client_local_addr: Mutex<Option<SocketAddr>>,
 }
 
-fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkRuntime>>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkRuntime>>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-pub fn runtime(session_id: &str) -> Option<Arc<NetworkRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
-}
-
 struct RuntimeAttach {
     runtime: Arc<NetworkRuntime>,
+    runtimes: SessionRuntimeRegistry<NetworkRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
-        }
+        self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
-        }
+        self.runtimes.detach(session_id);
     }
 }
 
@@ -506,20 +494,28 @@ fn emit_udp_datagram(
     }
 }
 
-pub struct NetworkAdapter;
+pub struct NetworkAdapter {
+    runtimes: SessionRuntimeRegistry<NetworkRuntime>,
+}
 
 impl NetworkAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            runtimes: SessionRuntimeRegistry::new(),
+        }
     }
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<NetworkRuntime>> {
-        runtime(session_id)
+        self.runtimes.get(session_id)
     }
 }
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for NetworkAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         endpoint: &str,
@@ -707,7 +703,10 @@ impl ProtocolAdapter for NetworkAdapter {
             service: Some(side.clone()),
             file_transfer: None,
             channel_factory: None,
-            on_attached: Some(Arc::new(RuntimeAttach { runtime: side })),
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime: side,
+                runtimes: self.runtimes.clone(),
+            })),
             teardown_delay: Duration::ZERO,
         })
     }

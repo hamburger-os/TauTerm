@@ -67,128 +67,15 @@ pub struct ProtocolConnection {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TransferProtocolType(String);
 
-/// 文件传输协议如何取得 I/O 所有权。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransferExecutionMode {
-    /// 临时独占 Session 主 DataPlane，例如 X/Y/ZModem。
-    Inline,
-    /// 使用 Session 的独立 capability/channel，不阻塞主终端 I/O，例如 SFTP。
-    Auxiliary,
-    /// 建立独立连接执行传输，例如未来 FTP/FTPS provider。
-    SeparateConnection,
-}
-
-/// 协议能力描述。执行策略与能力在一个注册表中声明，编排器不再按协议名分支。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TransferProtocolDescriptor {
-    pub execution_mode: TransferExecutionMode,
-    pub can_send: bool,
-    pub can_receive: bool,
-    pub batch: bool,
-    pub directories: bool,
-    pub overwrite_policy: bool,
-    pub resume: bool,
-}
-
-impl TransferProtocolDescriptor {
-    const fn serial_batch() -> Self {
-        Self {
-            execution_mode: TransferExecutionMode::Inline,
-            can_send: true,
-            can_receive: true,
-            batch: true,
-            directories: false,
-            overwrite_policy: false,
-            resume: false,
-        }
-    }
-
-    const fn serial_single() -> Self {
-        Self {
-            batch: false,
-            ..Self::serial_batch()
-        }
-    }
-
-    const fn sftp() -> Self {
-        Self {
-            execution_mode: TransferExecutionMode::Auxiliary,
-            can_send: true,
-            can_receive: true,
-            batch: true,
-            directories: true,
-            overwrite_policy: true,
-            resume: false,
-        }
-    }
-
-    const fn ftp() -> Self {
-        Self {
-            execution_mode: TransferExecutionMode::SeparateConnection,
-            can_send: true,
-            can_receive: true,
-            batch: true,
-            directories: true,
-            overwrite_policy: true,
-            resume: false,
-        }
-    }
-}
-
 impl TransferProtocolType {
-    pub fn new(s: impl AsRef<str>) -> Self {
-        Self(s.as_ref().to_lowercase())
+    /// 构造规范化的传输协议标识。
+    pub fn new(value: impl AsRef<str>) -> Self {
+        Self(value.as_ref().to_lowercase())
     }
 
+    /// 返回规范化后的传输协议标识。
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    pub fn ymodem() -> Self {
-        Self("ymodem".into())
-    }
-    pub fn xmodem() -> Self {
-        Self("xmodem".into())
-    }
-    pub fn zmodem() -> Self {
-        Self("zmodem".into())
-    }
-    pub fn sftp() -> Self {
-        Self("sftp".into())
-    }
-    pub fn ftp() -> Self {
-        Self("ftp".into())
-    }
-
-    /// 当前内建 provider 的单一能力注册表。
-    ///
-    /// 新传输协议在这里声明执行模式与能力；调用方只消费 descriptor，不应再次根据
-    /// 协议字符串推导 Inline/Auxiliary/SeparateConnection。
-    pub fn descriptor(&self) -> Option<TransferProtocolDescriptor> {
-        match self.0.as_str() {
-            "ymodem" => Some(TransferProtocolDescriptor::serial_batch()),
-            "xmodem" => Some(TransferProtocolDescriptor::serial_single()),
-            "zmodem" => Some(TransferProtocolDescriptor::serial_batch()),
-            "sftp" => Some(TransferProtocolDescriptor::sftp()),
-            "ftp" => Some(TransferProtocolDescriptor::ftp()),
-            _ => None,
-        }
-    }
-
-    /// 兼容现有调用点的能力查询；语义由 descriptor 单一来源决定。
-    pub fn is_serial_inline(&self) -> bool {
-        self.descriptor()
-            .is_some_and(|value| value.execution_mode == TransferExecutionMode::Inline)
-    }
-
-    pub fn is_auxiliary_transfer(&self) -> bool {
-        self.descriptor()
-            .is_some_and(|value| value.execution_mode == TransferExecutionMode::Auxiliary)
-    }
-
-    pub fn is_separate_connection(&self) -> bool {
-        self.descriptor()
-            .is_some_and(|value| value.execution_mode == TransferExecutionMode::SeparateConnection)
     }
 }
 
@@ -216,9 +103,67 @@ impl std::fmt::Display for TransferProtocolType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PluginId(String);
+
+impl PluginId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.is_empty()
+            || !value
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+        {
+            return Err(format!("'{value}'（仅允许小写 a-z、0-9、-、_）"));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for PluginId {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for PluginId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for PluginId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for PluginId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PluginId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
-    pub id: String,
+    pub id: PluginId,
     pub name: String,
     pub version: String,
     pub category: String,
@@ -232,6 +177,11 @@ pub struct PluginManifest {
 
 #[async_trait::async_trait]
 pub trait ProtocolAdapter: Send + Sync {
+    /// Adapter 自己声明稳定插件身份；PluginRuntime 在 bootstrap 时校验它与 manifest 一致。
+    fn plugin_id(&self) -> Option<&'static str> {
+        None
+    }
+
     async fn connect(
         &self,
         endpoint: &str,
@@ -244,10 +194,6 @@ pub trait ProtocolAdapter: Send + Sync {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        Vec::new()
     }
 
     fn teardown_delay(&self) -> std::time::Duration {

@@ -6,7 +6,7 @@
 
 ## 当前方案
 
-后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。
+后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。`PluginRuntime` 是插件身份、canonical manifest、通用 `ProtocolAdapter` 与类型化 contribution 的唯一后端目录；只有应用 composition root 知道有哪些具体内建插件，`AppState` 不再为 Serial、SSH、Telnet 等维护平行 adapter 字段。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。
 
 Transport、Protocol、Session Runtime 三层职责固定：Transport 只拥有串口/TCP/UDP/PTY 等物理或系统资源；Protocol 解释 Telnet、Modbus、SSH 等协议语义；Session Runtime 负责生命周期、事件、日志、脚本、统计、子连接和取消。协议不得复制公共 Session 生命周期，Session Runtime 也不得解析协议字段。
 
@@ -38,13 +38,14 @@ stateDiagram-v2
 
 ## 设计边界
 
-- 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断。
-- 协议连接入口最终由统一内核路由分发，避免前端入口各自实现连接生命周期。
+- 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断；`kernel/` 不允许依赖 `crate::plugins::*`。
+- 协议连接入口由 `PluginRuntime` 中注册的类型化 Session connector contribution 分发；公共 `connect_session` 不按插件 ID `match`。新增内建插件只在 composition root 注册 manifest、Adapter/能力和 connector。 `connect_session`、端点枚举和保存配置都要求显式 `plugin_id`，公共层不提供 Serial 等具体插件的兼容默认值。
+- 插件专属运行态必须由插件对象或 Session capability 持有，不把 SSH known-host verifier、协议 runtime registry 等字段泄漏到 `AppState`。 Adapter 需要按 `session_id` 查找专属 runtime 时使用 `SessionRuntimeRegistry<T>`：索引实例由 Adapter 持有且只保存 `Weak<T>`，SessionStore capability graph 仍是唯一强生命周期 owner；禁止模块级 `OnceLock`/静态 runtime registry。
 - UI 能力由插件 manifest/registration 声明；SendBar、自定义视图、连接配置合法性等不由页面临时猜测。
 - 运行时对象不能被持久化为 Session 配置。
 - 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
-- PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。
+- PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。 文件传输 provider 的具体执行策略只存在于 `transfer/`；Kernel 仅传递不透明传输协议 ID，不维护 X/Y/ZModem、SFTP 等 provider 名称或执行模式。
 - 异常断开必须保留足够信息供 UI 呈现，同时后端负责确定性资源清理。
 - 新协议优先组合 Transport + Protocol + Session Runtime 现有能力；只有稳定需求无法表达时才扩展公共契约。
 
@@ -52,7 +53,7 @@ stateDiagram-v2
 
 - `src-tauri/src/kernel/session_store.rs`
 - `src-tauri/src/kernel/plugin_adapter.rs`
-- `src-tauri/src/kernel/plugin_host.rs`
+- `src-tauri/src/kernel/plugin_runtime.rs`
 - `src-tauri/src/session/io.rs`
 - `src-tauri/src/session/runtime.rs`
 - `src-tauri/src/transport/runtime.rs`
@@ -65,7 +66,7 @@ stateDiagram-v2
 
 ## 单一来源约束
 
-内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript PluginRegistry 与 Rust PluginHost 都消费这组 canonical manifest。PluginHost 不维护平行生命周期 descriptor；Session 运行时生命周期由 SessionStore 负责。
+内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript `PluginRegistry` 与 Rust `PluginRuntime` 都消费这组 canonical manifest。前端 registry 只叠加 React/UI contribution，重复插件 ID 直接失败；后端 runtime 将 manifest、可选 `ProtocolAdapter` 与类型化 contribution 收敛为单一注册记录，并在启动时校验 Adapter 自声明 ID 与 manifest ID 一致。Session 运行时生命周期仍只由 `SessionStore` 负责。
 
 分屏/Workspace Layout 的真实 owner 是前端 SplitLayoutContext + `core/split-layout.ts`；不保留未接入运行时的平行 WindowManager/TabHost/IPC 骨架。通用 Tauri invoke/event 是当前 IPC 边界。
 

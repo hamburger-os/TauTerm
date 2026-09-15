@@ -4,7 +4,7 @@
 //!
 //! ## 架构
 //!
-//! - **Plugin Host**: 插件注册与发现（`kernel/plugin_host`）
+//! - **Plugin Runtime**: canonical manifest、Adapter 与类型化 contribution 的唯一注册目录（`kernel/plugin_runtime`）
 //! - **Protocol Adapter**: 协议插件通过 `ProtocolAdapter` trait 管理连接
 //! - **Transport Runtime**: 协议无关的物理 I/O、DataPlane 与独占租约（`transport`）
 //! - **Session Runtime**: 会话生命周期、脚本 I/O 与断开语义（`session`）
@@ -14,6 +14,8 @@
 //! - **Theme Engine**: CSS 变量主题切换（`kernel/theme_engine`）
 //! - **Content Renderers**: content_type 驱动的渲染器系统（前端 `renderers/`）
 
+#[cfg(test)]
+mod architecture_contract;
 mod commands;
 mod diagnostics;
 mod ipc_transport;
@@ -35,7 +37,7 @@ pub fn maybe_run_elevated_shell_helper() -> bool {
 use kernel::config_store::ConfigStore;
 use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
 use kernel::plugin_adapter::PluginManifest;
-use kernel::plugin_host::PluginHost;
+use kernel::plugin_runtime::PluginRuntime;
 use kernel::session_store::SessionStore;
 use kernel::theme_engine::ThemeEngine;
 use plugins::iperf::IperfAdapter;
@@ -43,12 +45,12 @@ use plugins::local_shell::LocalShellAdapter;
 use plugins::modbus::ModbusAdapter;
 use plugins::network::NetworkAdapter;
 use plugins::serial::SerialAdapter;
-use plugins::ssh::HostKeyVerifier;
 use plugins::ssh::SshAdapter;
 use plugins::telnet::TelnetAdapter;
 use plugins::tftp::TftpAdapter;
 use security::CredentialStore;
-use std::sync::Mutex;
+use std::any::Any;
+use std::sync::{Arc, Mutex};
 use tauri::image::Image;
 use tauri::{Emitter, Manager};
 use virtual_port::backend::VirtualPortBackend;
@@ -61,40 +63,115 @@ use virtual_port::pty::PtyBackend;
 /// 全局应用状态
 pub struct AppState {
     pub session_store: Mutex<SessionStore>,
-    pub serial_adapter: SerialAdapter,
-    pub ssh_adapter: SshAdapter,
-    pub tftp_adapter: TftpAdapter,
-    pub telnet_adapter: TelnetAdapter,
-    pub local_shell_adapter: LocalShellAdapter,
-    pub iperf_adapter: IperfAdapter,
-    pub network_adapter: NetworkAdapter,
-    pub modbus_adapter: ModbusAdapter,
-    pub host_key_verifier: HostKeyVerifier,
+    pub plugins: PluginRuntime,
     pub config_store: ConfigStore,
-    pub plugin_host: Mutex<PluginHost>,
     pub theme_engine: ThemeEngine,
     pub credential_store: CredentialStore,
     pub log_engine: Mutex<LogEngine>,
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
-fn built_in_plugin_manifests() -> Vec<PluginManifest> {
-    const MANIFESTS: [&str; 9] = [
-        include_str!("../../src/plugin-manifests/serial.json"),
-        include_str!("../../src/plugin-manifests/ssh.json"),
-        include_str!("../../src/plugin-manifests/telnet.json"),
-        include_str!("../../src/plugin-manifests/local-shell.json"),
-        include_str!("../../src/plugin-manifests/tftp.json"),
-        include_str!("../../src/plugin-manifests/iperf.json"),
-        include_str!("../../src/plugin-manifests/network.json"),
-        include_str!("../../src/plugin-manifests/trdp.json"),
-        include_str!("../../src/plugin-manifests/modbus.json"),
-    ];
+impl AppState {
+    /// 获取 bootstrap 已注册的类型化插件 contribution。
+    ///
+    /// 这是应用 composition 层的编程不变量：缺失表示内建插件注册与调用点不一致，
+    /// 不属于可由用户输入恢复的运行时错误。
+    pub fn plugin<T>(&self, plugin_id: &str) -> Arc<T>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.plugins
+            .contribution_by_str::<T>(plugin_id)
+            .unwrap_or_else(|| {
+                panic!("built-in plugin contribution '{plugin_id}' is not registered")
+            })
+    }
+}
 
-    MANIFESTS
-        .into_iter()
-        .map(|raw| serde_json::from_str::<PluginManifest>(raw).expect("canonical plugin manifest"))
-        .collect()
+fn parse_builtin_manifest(raw: &'static str) -> PluginManifest {
+    serde_json::from_str::<PluginManifest>(raw).expect("canonical plugin manifest")
+}
+
+fn register_builtin_adapter<T>(
+    runtime: &mut PluginRuntime,
+    raw_manifest: &'static str,
+    adapter: T,
+    connector: commands::SessionConnectHandler,
+) where
+    T: kernel::plugin_adapter::ProtocolAdapter + Any + Send + Sync + 'static,
+{
+    let plugin_id = runtime
+        .register_adapter(parse_builtin_manifest(raw_manifest), adapter)
+        .unwrap_or_else(|error| panic!("注册内建协议插件失败: {error}"));
+    runtime
+        .register_contribution(&plugin_id, connector)
+        .unwrap_or_else(|error| panic!("注册内建插件连接 contribution 失败: {error}"));
+}
+
+fn build_plugin_runtime() -> PluginRuntime {
+    let mut runtime = PluginRuntime::new();
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/serial.json"),
+        SerialAdapter::new(),
+        commands::serial_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/ssh.json"),
+        SshAdapter::new(),
+        commands::ssh_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/telnet.json"),
+        TelnetAdapter::new(),
+        commands::telnet_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/local-shell.json"),
+        LocalShellAdapter::new(),
+        commands::local_shell_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/tftp.json"),
+        TftpAdapter::new(),
+        commands::tftp_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/iperf.json"),
+        IperfAdapter::new(),
+        commands::iperf_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/network.json"),
+        NetworkAdapter::new(),
+        commands::network_session_connector,
+    );
+    register_builtin_adapter(
+        &mut runtime,
+        include_str!("../../src/plugin-manifests/modbus.json"),
+        ModbusAdapter::new(),
+        commands::modbus_session_connector,
+    );
+
+    let trdp_id = runtime
+        .register_manifest(parse_builtin_manifest(include_str!(
+            "../../src/plugin-manifests/trdp.json"
+        )))
+        .unwrap_or_else(|error| panic!("注册 TRDP 插件失败: {error}"));
+    runtime
+        .register_contribution(
+            &trdp_id,
+            commands::trdp_session_connector as commands::SessionConnectHandler,
+        )
+        .unwrap_or_else(|error| panic!("注册 TRDP 连接 contribution 失败: {error}"));
+
+    runtime
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -103,13 +180,7 @@ pub fn run() {
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .ok();
 
-    let mut plugin_host = PluginHost::new();
-    for manifest in built_in_plugin_manifests() {
-        let plugin_id = manifest.id.clone();
-        plugin_host
-            .register_plugin(manifest)
-            .unwrap_or_else(|error| panic!("注册插件 {plugin_id} 失败: {error}"));
-    }
+    let plugin_runtime = build_plugin_runtime();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -212,7 +283,7 @@ pub fn run() {
                         }
 
                         if let Err(error) = state
-                            .host_key_verifier
+                            .plugin::<SshAdapter>(plugins::ssh::PLUGIN_ID)
                             .configure_known_hosts(config_dir.join("known_hosts.json"))
                         {
                             log::warn!("SSH known-host 存储初始化失败: {}", error);
@@ -284,7 +355,9 @@ pub fn run() {
             log::info!("日志目录: {:?}", log_dir);
 
             if let Some(state) = app.try_state::<AppState>() {
-                state.telnet_adapter.inject_app_handle(app.handle().clone());
+                state
+                    .plugin::<TelnetAdapter>(plugins::telnet::PLUGIN_ID)
+                    .inject_app_handle(app.handle().clone());
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
@@ -422,17 +495,8 @@ pub fn run() {
         })
         .manage(AppState {
             session_store: Mutex::new(SessionStore::new()),
-            serial_adapter: SerialAdapter::new(),
-            ssh_adapter: SshAdapter::new(),
-            tftp_adapter: TftpAdapter::new(),
-            telnet_adapter: TelnetAdapter::new(),
-            local_shell_adapter: LocalShellAdapter::new(),
-            iperf_adapter: IperfAdapter::new(),
-            network_adapter: NetworkAdapter::new(),
-            modbus_adapter: ModbusAdapter::new(),
-            host_key_verifier: HostKeyVerifier::new(),
+            plugins: plugin_runtime,
             config_store: ConfigStore::new(),
-            plugin_host: Mutex::new(plugin_host),
             theme_engine: ThemeEngine::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),

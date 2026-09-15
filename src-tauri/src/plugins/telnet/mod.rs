@@ -3,6 +3,8 @@
 //! 实现 `ProtocolAdapter` trait，提供 RFC 854 Telnet 终端会话。
 //! 协议状态机由 `telnet` crate 处理，本插件负责协商策略与连接管理。
 
+pub const PLUGIN_ID: &str = "telnet";
+
 pub mod channel;
 
 use std::net::ToSocketAddrs;
@@ -15,7 +17,7 @@ use telnet::{Action, Telnet, TelnetOption};
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, TransferProtocolType,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
 };
 use crate::session::SessionError;
 use crate::transport::DataPlaneRuntime;
@@ -152,6 +154,10 @@ impl TelnetAdapter {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for TelnetAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         _endpoint: &str,
@@ -214,10 +220,6 @@ impl ProtocolAdapter for TelnetAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![]
     }
 
     fn teardown_delay(&self) -> std::time::Duration {

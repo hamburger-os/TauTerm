@@ -160,7 +160,7 @@ class PluginRegistry {
   register(registration: PluginRegistration): void {
     const id = registration.manifest.id;
     if (this.plugins.has(id)) {
-      console.warn(`[PluginRegistry] 插件 "${id}" 已注册，将被覆盖`);
+      throw new Error(`[PluginRegistry] 插件 "${id}" 重复注册`);
     }
     this.plugins.set(id, registration);
     setSessionPresentation(id, registration.sessionPresentation);

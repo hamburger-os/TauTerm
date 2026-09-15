@@ -142,28 +142,6 @@ impl ValidatedModbusConfig {
         }
     }
 
-    pub fn serial(&self) -> Option<(SerialMode, &str, &SerialTransportConfig)> {
-        match &self.endpoint {
-            ModbusEndpointConfig::Serial {
-                mode,
-                port,
-                transport,
-            } => Some((*mode, port.as_str(), transport)),
-            ModbusEndpointConfig::Tcp { .. } => None,
-        }
-    }
-
-    pub fn tcp(&self) -> Option<(&str, u16, &TcpConnectConfig)> {
-        match &self.endpoint {
-            ModbusEndpointConfig::Tcp {
-                host,
-                port,
-                transport,
-            } => Some((host.as_str(), *port, transport)),
-            ModbusEndpointConfig::Serial { .. } => None,
-        }
-    }
-
     pub fn rtu_inter_char_gap(&self) -> Duration {
         match &self.endpoint {
             ModbusEndpointConfig::Serial { transport, .. } => serial_gap(transport, 1.5, 750),

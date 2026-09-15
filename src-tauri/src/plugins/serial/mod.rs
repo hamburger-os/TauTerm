@@ -2,8 +2,10 @@
 //!
 //! 插件只描述 Raw Serial 会话语义；端口发现/打开和实际字节 I/O 由 transport 层负责。
 
+pub const PLUGIN_ID: &str = "serial";
+
 use crate::kernel::plugin_adapter::{
-    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
 };
 use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
@@ -53,6 +55,10 @@ fn normalize_device_label(label: &str, port_name: &str) -> String {
 
 #[async_trait::async_trait]
 impl ProtocolAdapter for SerialAdapter {
+    fn plugin_id(&self) -> Option<&'static str> {
+        Some(PLUGIN_ID)
+    }
+
     async fn connect(
         &self,
         endpoint: &str,
@@ -138,14 +144,6 @@ impl ProtocolAdapter for SerialAdapter {
         ContentType::Terminal
     }
 
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![
-            TransferProtocolType::ymodem(),
-            TransferProtocolType::xmodem(),
-            TransferProtocolType::zmodem(),
-        ]
-    }
-
     fn teardown_delay(&self) -> std::time::Duration {
         #[cfg(target_os = "windows")]
         {
@@ -222,14 +220,8 @@ mod tests {
     }
 
     #[test]
-    fn serial_adapter_contract_exposes_expected_shared_capabilities() {
+    fn serial_adapter_contract_exposes_terminal_content_type() {
         let adapter = SerialAdapter::new();
-        let protocols = adapter
-            .transfer_protocols()
-            .into_iter()
-            .map(|protocol| protocol.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(protocols, vec!["ymodem", "xmodem", "zmodem"]);
         assert_eq!(adapter.content_type(), ContentType::Terminal);
     }
 }

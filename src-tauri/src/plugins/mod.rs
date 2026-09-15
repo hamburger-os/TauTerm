@@ -1,7 +1,7 @@
 //! TauTerm 内建协议插件
 //!
-//! 每个插件实现 `ProtocolAdapter` trait并注册到 Plugin Host。
-//! 未来可支持动态加载第三方插件。
+//! 内建插件在应用 composition root 显式注册到 `PluginRuntime`。通用会话插件实现
+//! `ProtocolAdapter`，专属能力通过类型化 contribution 注册；本模块不维护第二套插件目录。
 
 pub mod iperf;
 pub mod local_shell;
