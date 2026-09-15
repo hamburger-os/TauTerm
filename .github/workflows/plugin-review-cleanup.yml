@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: plugin-architecture-final-review
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   review-cleanup-and-validate:
@@ -51,7 +51,11 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Apply final review cleanup
-        run: python3 .github/scripts/plugin_review_cleanup.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/let manifest_dir = Path::new/let manifest_dir = std::path::Path::new/' .github/scripts/plugin_review_cleanup.py
+          python3 .github/scripts/plugin_review_cleanup.py
 
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
