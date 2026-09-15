@@ -15,6 +15,8 @@ const LOG_LEVELS = [
   { value: "debug", labelKey: "logging.levelDebug" },
 ];
 
+const SESSION_CONFIG_DEBOUNCE_MS = 350;
+
 interface LogHealth {
   dropped_session_entries: number;
   dropped_system_entries: number;
@@ -188,9 +190,16 @@ export default function LoggingSettings() {
       }
     };
 
-    sessionPersistQueueRef.current = sessionPersistQueueRef.current
-      .catch(() => undefined)
-      .then(persist);
+    // Sliders can dispatch dozens of change events while the user drags them. ConfigStore writes an
+    // atomic snapshot, so coalesce a gesture into one durable update instead of rewriting the same
+    // settings file for every pixel of movement. The revision guard still protects late failures.
+    const timer = window.setTimeout(() => {
+      sessionPersistQueueRef.current = sessionPersistQueueRef.current
+        .catch(() => undefined)
+        .then(persist);
+    }, SESSION_CONFIG_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
   }, [hydrated, enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
 
   useEffect(() => {
@@ -248,7 +257,7 @@ export default function LoggingSettings() {
       <h4 className={styles.categoryTitle}>{t("logging.systemLog") || "System Log"}</h4>
       <div className={styles.settingGroup}>
         <p className={styles.settingDesc}>
-          {t("logging.systemLogDesc") || "Automatically records app events (connection, disconnection, errors, warnings). File: TauTerm_YYYYMMDD.log"}
+          {t("logging.systemLogDesc") || "Automatically records app events (connection, disconnection, errors, warnings)."}
         </p>
 
         <span className={styles.settingLabel}>{t("logging.systemLogStatus") || "Status"}</span>
