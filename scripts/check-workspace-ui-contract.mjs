@@ -5,7 +5,7 @@ import {
   getPaneDisplayLabel,
   getSessionSubtitle,
 } from "../src/components/Layout/sessionPresentation.ts";
-import { setSessionPresentation } from "../src/core/session-presentation-registry.ts";
+import { pluginRegistry, registerPlugin } from "../src/core/plugin-registry.ts";
 
 const ROOT = process.cwd();
 const splitView = await readFile(
@@ -18,6 +18,10 @@ const sidebar = await readFile(
 );
 const customRenderer = await readFile(
   path.join(ROOT, "src", "renderers", "CustomRenderer.tsx"),
+  "utf8",
+);
+const presentationHelper = await readFile(
+  path.join(ROOT, "src", "components", "Layout", "sessionPresentation.ts"),
   "utf8",
 );
 
@@ -41,12 +45,12 @@ assert.match(
   /key=\{`\$\{tab\.pluginId\}:\$\{tab\.id\}`\}/,
   "Custom renderer views must be keyed by plugin and Session identity so Pane reuse cannot leak component-local state across Sessions",
 );
+assert.doesNotMatch(
+  presentationHelper,
+  /pluginId\s*===\s*["'](?:ssh|iperf|trdp|network|serial|modbus)["']/,
+  "Common Session presentation must not contain built-in protocol branches",
+);
 
-const labels = {
-  trdpCapture: "Capture",
-  trdpUnconfigured: "Unconfigured",
-  trdpDisabled: "Disabled",
-};
 const baseTab = {
   id: "session-a",
   name: "Serial @ Text",
@@ -59,9 +63,9 @@ const baseTab = {
   connectedAt: null,
 };
 
-assert.equal(getSessionSubtitle(baseTab, labels), "COM1");
+assert.equal(getSessionSubtitle(baseTab), "COM1");
 assert.equal(
-  getPaneDisplayLabel(baseTab, new Map([[baseTab.id, baseTab]]), labels),
+  getPaneDisplayLabel(baseTab, new Map([[baseTab.id, baseTab]])),
   "Serial @ Text · COM1",
 );
 
@@ -74,73 +78,42 @@ const pluginTab = {
   endpoint: "internal-endpoint",
   params: { target: "192.0.2.10:1234" },
 };
-setSessionPresentation(pluginTab.pluginId, {
-  subtitle: params => String(params.target ?? ""),
+registerPlugin({
+  manifest: {
+    id: pluginTab.pluginId,
+    name: "Presentation Contract Test",
+    version: "1",
+    category: "test",
+    description: "",
+    icon: "connection",
+    content_type: "custom",
+    send_bar: false,
+    capabilities: [],
+    transfer_protocols: [],
+  },
+  sessionPresentation: {
+    subtitle: params => String(params.target ?? ""),
+  },
 });
 assert.equal(
-  getSessionSubtitle(pluginTab, labels),
+  getSessionSubtitle(pluginTab),
   "192.0.2.10:1234",
   "Plugin-owned dynamic subtitle must override the internal endpoint",
 );
-setSessionPresentation(pluginTab.pluginId);
+pluginRegistry.unregister(pluginTab.pluginId);
 
-const sshTab = {
-  ...baseTab,
-  id: "ssh-a",
-  name: "SSH @ root",
-  pluginId: "ssh",
-  connection_type: "ssh",
-  endpoint: "2001:db8::10",
-  params: { host: "2001:db8::10", port: 2222 },
-};
-assert.equal(getSessionSubtitle(sshTab, labels), "[2001:db8::10]:2222");
-
-const trdpTab = {
-  ...baseTab,
-  id: "trdp-a",
-  name: "TRDP Monitor",
-  pluginId: "trdp",
-  connection_type: "trdp",
-  endpoint: "",
-  params: {
-    mode: "monitor",
-    capture_interface: "eth0",
-    capture_interface_b_enabled: true,
-    capture_interface_b: "",
-  },
-};
-assert.equal(
-  getSessionSubtitle(trdpTab, labels),
-  "A: eth0 · B: Unconfigured",
-);
-
-const networkTab = {
-  ...baseTab,
-  id: "network-a",
-  name: "Network Debug @ TCP Client",
-  pluginId: "network",
-  connection_type: "network",
-  endpoint: "tcp://127.0.0.1:8080",
-  params: { role: "client", transport: "tcp" },
-};
-const networkState = {
-  networkLocalAddrs: {},
-  networkPeers: {
-    "network-a": [{
-      peerId: "peer-a",
-      name: "Peer 1",
-      addr: "127.0.0.1:8080",
-      localAddr: "127.0.0.1:51000",
-      state: "connected",
-      txBytes: 0,
-      rxBytes: 0,
-    }],
-  },
-};
-assert.equal(
-  getSessionSubtitle(networkTab, labels, networkState),
-  "tcp://127.0.0.1:8080 · 127.0.0.1:51000",
-);
+for (const plugin of ["ssh", "iperf", "trdp", "network", "serial", "modbus"]) {
+  const extension = plugin === "modbus" || plugin === "trdp" || plugin === "network" ? "tsx" : "ts";
+  const source = await readFile(
+    path.join(ROOT, "src", "plugins", plugin, `index.${extension}`),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /sessionPresentation\s*:/,
+    `${plugin} must own its Session presentation contribution`,
+  );
+}
 
 const parentTab = {
   ...baseTab,
@@ -161,10 +134,10 @@ const tabsById = new Map([
   [parentTab.id, parentTab],
   [childTab.id, childTab],
 ]);
-assert.equal(getSessionSubtitle(childTab, labels), "Windows PowerShell");
+assert.equal(getSessionSubtitle(childTab), "Windows PowerShell");
 assert.equal(
-  getPaneDisplayLabel(childTab, tabsById, labels),
+  getPaneDisplayLabel(childTab, tabsById),
   "Shell @ Windows PowerShell › Shell 1 · Windows PowerShell",
 );
 
-console.log("workspace-ui: context-menu, Session presentation and custom-view identity contracts preserved");
+console.log("workspace-ui: context-menu, plugin-owned Session presentation and custom-view identity contracts preserved");
