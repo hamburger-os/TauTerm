@@ -311,7 +311,9 @@ mod tests {
             .saturating_mul(1000)
             .div_ceil(u64::from(config.baud_rate));
 
-        assert!(timeout_ms >= wire_ms.saturating_mul(SERIAL_WRITE_WIRE_TIME_FACTOR));
+        assert!(
+            timeout_ms >= wire_ms.saturating_mul(SERIAL_WRITE_WIRE_TIME_FACTOR)
+        );
         assert!(timeout_ms > SERIAL_READ_TIMEOUT.as_millis() as u64);
     }
 
