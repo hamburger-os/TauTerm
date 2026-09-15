@@ -180,6 +180,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const fitRafRef = useRef<number | null>(null);
   // PTY resize 防抖定时器：避免拖拽 resize 时 IPC 风暴
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 使用 ref 持有最新的回调，避免初始化 effect 中的闭包过期问题
@@ -265,6 +266,12 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         ? OBSIDIAN_TERMINAL_THEME
         : createSpectrumTerminalTheme()
   ), [theme]);
+  const terminalThemeRef = useRef(terminalTheme);
+  terminalThemeRef.current = terminalTheme;
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+  const bufferLinesRef = useRef(bufferLines);
+  bufferLinesRef.current = bufferLines;
 
   // 右键上下文菜单状态
   // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用
@@ -274,22 +281,6 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   onShowSearchRef.current = onShowSearch;
   const onDisconnectSessionRef = useRef(onDisconnectSession);
   onDisconnectSessionRef.current = onDisconnectSession;
-
-  // 暴露 xterm 实例和 write 方法
-  useImperativeHandle(ref, () => ({
-    write: (data: Uint8Array | string) => {
-      xtermRef.current?.write(data);
-    },
-    fit: () => {
-      fitAddonRef.current?.fit();
-    },
-    copySelection: () => copySelectionRef.current(),
-    requestPaste: () => requestClipboardPasteRef.current(),
-    focus: () => xtermRef.current?.focus(),
-    get terminal() {
-      return xtermRef.current;
-    },
-  }));
 
   /** 通知后端 PTY 窗口尺寸已变更（带 150ms 防抖） */
   const notifyResize = useCallback(() => {
@@ -304,122 +295,210 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }, RESIZE_DEBOUNCE_MS);
   }, [sessionId]);
 
-  // 初始化 xterm.js
-  useEffect(() => {
-    if (!containerRef.current || xtermRef.current) return;
-
-    const term = new XTerm({
-      convertEol: true,
-      fontSize: fontSize ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
-      fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
-      theme: terminalTheme,
-      // xterm strips background alpha unless allowTransparency is enabled.
-      // The terminal should reveal TauTerm's stable content surface, never the raw window.
-      allowTransparency: true,
-      cursorBlink: true,
-      cursorStyle: "underline", // 下划线光标：不遮挡字符内容，串口/TUI 场景可读性优于 bar/block
-      allowProposedApi: true,
-      scrollback: bufferLines ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
-      cols: 80,
-      rows: 24,
-    });
-
-    const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
-
-    term.loadAddon(fitAddon);
-    term.loadAddon(webLinksAddon);
-
-    // 拦截终端内键盘事件：可配置 action 穿透到全局 Shortcut Registry；
-    // 兼容剪贴板别名由终端宿主直接处理，其余按键（特别是 Ctrl+C / Ctrl+V）
-    // 保持原始终端语义并继续送往 PTY。
-    term.attachCustomKeyEventHandler((e) => {
-      const isKeyDown = e.type === "keydown";
-      const lowerKey = e.key.toLowerCase();
-
-      // Ctrl+Insert / Shift+Insert：传统终端兼容别名。
-      const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
-      const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
-      // Meta+C / Meta+V：使用 Meta 修饰键的平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
-      const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
-      const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
-
-      if (compatibilityCopy || macCopy) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (isKeyDown) copySelectionRef.current();
-        return false;
+  /**
+   * 所有 xterm fit 统一经过一个 RAF 调度器。
+   *
+   * xterm.open()/FitAddon 需要一个仍在文档中、且已经具有可测量尺寸的宿主。
+   * Pane 显隐、拖拽、字体变化和外部 imperative fit 都只请求一次调度，避免
+   * ResizeObserver 与 React cleanup 交叉时继续触碰已销毁的 renderer dimensions。
+   */
+  const scheduleFit = useCallback(() => {
+    if (fitRafRef.current !== null) {
+      cancelAnimationFrame(fitRafRef.current);
+    }
+    fitRafRef.current = requestAnimationFrame(() => {
+      fitRafRef.current = null;
+      const container = containerRef.current;
+      const term = xtermRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (
+        !container ||
+        !container.isConnected ||
+        container.clientWidth <= 0 ||
+        container.clientHeight <= 0 ||
+        !term ||
+        !fitAddon
+      ) {
+        return;
       }
-      if (compatibilityPaste || macPaste) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (isKeyDown) void requestClipboardPasteRef.current();
-        return false;
+      try {
+        fitAddon.fit();
+      } catch {
+        return;
       }
-
-      const matched = shortcutRegistry.match(e);
-      if (matched) return false; // 穿透 → document keydown → useKeyboard hook
-      return true;               // xterm 正常处理（→ onData → PTY）
-    });
-
-    term.open(containerRef.current);
-    fitAddon.fit();
-
-    xtermRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // 必须先订阅 xterm 输入，再向父层暴露 write。
-    // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；某些本地 Shell
-    // 启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
-    // 注册，xterm 生成的 ESC[row;colR 响应会被丢掉，表现为“连接成功但终端空白、回车无反应”。
-    const inputDisposable = term.onData((data) => {
-      onDataRef.current?.(data);
-    });
-
-    // 终端初始化完成后立即注册写函数，不依赖外部重渲染触发
-    onTermReadyRef.current?.((data: Uint8Array | string) => {
-      term.write(data);
-    });
-
-    const handleResize = () => {
-      try { fitAddon.fit(); } catch { /* ignore */ }
       notifyResize();
+    });
+  }, [notifyResize]);
+
+  // 暴露 xterm 实例和 write 方法
+  useImperativeHandle(ref, () => ({
+    write: (data: Uint8Array | string) => {
+      xtermRef.current?.write(data);
+    },
+    fit: scheduleFit,
+    copySelection: () => copySelectionRef.current(),
+    requestPaste: () => requestClipboardPasteRef.current(),
+    focus: () => xtermRef.current?.focus(),
+    get terminal() {
+      return xtermRef.current;
+    },
+  }), [scheduleFit]);
+
+  // 初始化 xterm.js。实际 open 延迟到下一帧并要求宿主已有非零尺寸：
+  // - React StrictMode 的开发期 mount→cleanup→mount 探测会在首个 RAF 前取消第一次初始化；
+  // - 隐藏 Pane 不会以 0×0 尺寸创建 renderer，而是由 bootstrap observer 等待可见布局。
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || xtermRef.current) return;
+
+    let disposed = false;
+    let initRaf: number | null = null;
+    let bootstrapObserver: ResizeObserver | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let term: XTerm | null = null;
+    let fitAddon: FitAddon | null = null;
+    let inputDisposable: { dispose(): void } | null = null;
+    let scrollDisposable: { dispose(): void } | null = null;
+
+    const initialize = () => {
+      initRaf = null;
+      if (
+        disposed ||
+        xtermRef.current ||
+        !container.isConnected ||
+        container.clientWidth <= 0 ||
+        container.clientHeight <= 0
+      ) {
+        return;
+      }
+
+      const nextTerm = new XTerm({
+        convertEol: true,
+        fontSize: fontSizeRef.current ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
+        fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
+        theme: terminalThemeRef.current,
+        // xterm strips background alpha unless allowTransparency is enabled.
+        // The terminal should reveal TauTerm's stable content surface, never the raw window.
+        allowTransparency: true,
+        cursorBlink: true,
+        cursorStyle: "underline", // 下划线光标：不遮挡字符内容，串口/TUI 场景可读性优于 bar/block
+        allowProposedApi: true,
+        scrollback: bufferLinesRef.current ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
+        cols: 80,
+        rows: 24,
+      });
+      const nextFitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon();
+      nextTerm.loadAddon(nextFitAddon);
+      nextTerm.loadAddon(webLinksAddon);
+
+      // 拦截终端内键盘事件：可配置 action 穿透到全局 Shortcut Registry；
+      // 兼容剪贴板别名由终端宿主直接处理，其余按键（特别是 Ctrl+C / Ctrl+V）
+      // 保持原始终端语义并继续送往 PTY。
+      nextTerm.attachCustomKeyEventHandler((e) => {
+        const isKeyDown = e.type === "keydown";
+        const lowerKey = e.key.toLowerCase();
+
+        // Ctrl+Insert / Shift+Insert：传统终端兼容别名。
+        const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
+        const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
+        // Meta+C / Meta+V：使用 Meta 修饰键的平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
+        const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
+        const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
+
+        if (compatibilityCopy || macCopy) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isKeyDown) copySelectionRef.current();
+          return false;
+        }
+        if (compatibilityPaste || macPaste) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isKeyDown) void requestClipboardPasteRef.current();
+          return false;
+        }
+
+        const matched = shortcutRegistry.match(e);
+        if (matched) return false; // 穿透 → document keydown → useKeyboard hook
+        return true;               // xterm 正常处理（→ onData → PTY）
+      });
+
+      nextTerm.open(container);
+      if (disposed) {
+        nextTerm.dispose();
+        return;
+      }
+
+      term = nextTerm;
+      fitAddon = nextFitAddon;
+      xtermRef.current = nextTerm;
+      fitAddonRef.current = nextFitAddon;
+
+      // 必须先订阅 xterm 输入，再向父层暴露 write。
+      // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；某些本地 Shell
+      // 启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
+      // 注册，xterm 生成的 ESC[row;colR 响应会被丢掉，表现为“连接成功但终端空白、回车无反应”。
+      inputDisposable = nextTerm.onData((data) => {
+        onDataRef.current?.(data);
+      });
+      scrollDisposable = nextTerm.onScroll((viewportY: number) => {
+        const buffer = nextTerm.buffer.active;
+        const viewportBottom = viewportY + nextTerm.rows;
+        setIsAtBottom(viewportBottom >= buffer.baseY - SCROLL_BOTTOM_TOLERANCE);
+      });
+
+      // 终端初始化完成后立即注册写函数，不依赖外部重渲染触发。
+      // write closure 也受当前实例身份保护，cleanup 后不会写入已销毁 term。
+      onTermReadyRef.current?.((data: Uint8Array | string) => {
+        if (!disposed && xtermRef.current === nextTerm) {
+          nextTerm.write(data);
+        }
+      });
+
+      resizeObserver = new ResizeObserver(scheduleFit);
+      resizeObserver.observe(container);
+      bootstrapObserver?.disconnect();
+      bootstrapObserver = null;
+      scheduleFit();
     };
 
-    const observer = new ResizeObserver(handleResize);
-    observer.observe(containerRef.current);
+    const scheduleInitialize = () => {
+      if (disposed || initRaf !== null || xtermRef.current) return;
+      initRaf = requestAnimationFrame(initialize);
+    };
+
+    bootstrapObserver = new ResizeObserver(scheduleInitialize);
+    bootstrapObserver.observe(container);
+    scheduleInitialize();
 
     return () => {
-      observer.disconnect();
-      inputDisposable.dispose();
+      disposed = true;
+      bootstrapObserver?.disconnect();
+      resizeObserver?.disconnect();
+      if (initRaf !== null) {
+        cancelAnimationFrame(initRaf);
+        initRaf = null;
+      }
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current);
+        fitRafRef.current = null;
+      }
+      inputDisposable?.dispose();
+      scrollDisposable?.dispose();
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
       }
-      term.dispose();
-      xtermRef.current = null;
-      fitAddonRef.current = null;
+      if (xtermRef.current === term) {
+        xtermRef.current = null;
+      }
+      if (fitAddonRef.current === fitAddon) {
+        fitAddonRef.current = null;
+      }
+      term?.dispose();
       // 通知父组件清理此会话的 writeRefs 条目
       onCleanupRef.current?.(sessionId);
-    };
-  }, []);
-
-  // 跟踪 xterm.js 视口滚动位置，用于自动滚动检测和浮动按钮
-  useEffect(() => {
-    const term = xtermRef.current;
-    if (!term) return;
-
-    const disposable = term.onScroll((viewportY: number) => {
-      const buffer = term.buffer.active;
-      // 视口底部行号 = 视口顶部行号 + 可见行数
-      // baseY 是缓冲区历史底部（最大行号），视口底部 >= baseY - 5 即视为"在底部"
-      const viewportBottom = viewportY + term.rows;
-      const atBottom = viewportBottom >= buffer.baseY - SCROLL_BOTTOM_TOLERANCE;
-      setIsAtBottom(atBottom);
-    });
-
-    return () => {
-      disposable.dispose();
     };
   }, []);
 
@@ -427,41 +506,30 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   useEffect(() => {
     if (!xtermRef.current) return;
     xtermRef.current.options.theme = terminalTheme;
-  }, [theme, terminalTheme]);
+  }, [terminalTheme]);
 
   // 字体大小 / 行缓冲实时更新：通过 context 驱动，设置页滑块拖动时即时生效
   useEffect(() => {
-    if (!xtermRef.current) return;
+    const term = xtermRef.current;
+    if (!term) return;
     if (fontSize !== undefined) {
-      xtermRef.current.options.fontSize = fontSize;
+      term.options.fontSize = fontSize;
     }
     if (bufferLines !== undefined) {
-      xtermRef.current.options.scrollback = bufferLines;
+      term.options.scrollback = bufferLines;
     }
-    // 字体变化后重新 fit 以适配新的单元格尺寸
     if (fontSize !== undefined) {
-      try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
-      notifyResize();
+      scheduleFit();
     }
-  }, [fontSize, bufferLines]);
+  }, [fontSize, bufferLines, scheduleFit]);
 
-  // 当标签页变为活跃时重新调整终端尺寸
-  // 使用双 rAF 确保 DOM 已完成 opacity 过渡和布局计算
+  // 当标签页变为活跃时重新调整终端尺寸。
+  // 外层 rAF 等待 Pane 布局提交，scheduleFit 再合并到统一的下一帧 fit。
   useEffect(() => {
-    if (!isActive || !containerRef.current || !fitAddonRef.current) return;
-    let raf1: number;
-    let raf2: number;
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
-        notifyResize();
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [isActive]);
+    if (!isActive) return;
+    const raf = requestAnimationFrame(scheduleFit);
+    return () => cancelAnimationFrame(raf);
+  }, [isActive, scheduleFit]);
 
   // 接管系统 paste 事件的 capture 阶段，确保不会先被 xterm 默认处理后再重复发送。
   // 所有入口（系统 paste / 快捷键 / 右键菜单）最终统一进入 requestPasteText → term.paste。
