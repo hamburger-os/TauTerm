@@ -73,10 +73,11 @@ impl FileTransfer for SerialFileTransfer {
             let proto = proto;
             let aggregate_total = aggregate_total;
             let aggregate_completed = aggregate_completed;
-            let rate_meter = std::sync::Mutex::new(TransferRateMeter::default());
+            let rate_meter = Arc::new(std::sync::Mutex::new(TransferRateMeter::default()));
+            let progress_rate_meter = rate_meter.clone();
 
             let on_progress = |p: TransferProgress| {
-                let speed = rate_meter
+                let speed = progress_rate_meter
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .sample(p.aggregate_bytes_transferred);
@@ -101,6 +102,7 @@ impl FileTransfer for SerialFileTransfer {
             let ac_start = aggregate_completed.clone();
             let ac_complete = aggregate_completed.clone();
             let file_totals = file_totals.clone();
+            let event_rate_meter = rate_meter.clone();
             let on_file_event = move |e: FileTransferEvent| match e {
                 FileTransferEvent::FileStart {
                     file_name,
@@ -108,6 +110,10 @@ impl FileTransfer for SerialFileTransfer {
                     total_files,
                     file_size,
                 } => {
+                    event_rate_meter
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reset();
                     let ac = ac_start.load(Ordering::SeqCst);
                     let _ = progress2.send(UnifiedProgress::file_start(
                         &proto2,
@@ -258,11 +264,12 @@ impl FileTransfer for SerialFileTransfer {
             let proto = proto;
             let download_dir = download_dir;
             let aggregate_completed = aggregate_completed;
-            let rate_meter = std::sync::Mutex::new(TransferRateMeter::default());
+            let rate_meter = Arc::new(std::sync::Mutex::new(TransferRateMeter::default()));
+            let progress_rate_meter = rate_meter.clone();
             let file_totals = Arc::new(std::sync::Mutex::new(HashMap::<u32, u64>::new()));
 
             let on_progress = |p: TransferProgress| {
-                let speed = rate_meter
+                let speed = progress_rate_meter
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .sample(p.aggregate_bytes_transferred);
@@ -287,6 +294,7 @@ impl FileTransfer for SerialFileTransfer {
             let ac_start = aggregate_completed.clone();
             let ac_complete = aggregate_completed.clone();
             let file_totals2 = file_totals.clone();
+            let event_rate_meter = rate_meter.clone();
             let on_file_event = move |e: FileTransferEvent| match e {
                 FileTransferEvent::FileStart {
                     file_name,
@@ -294,6 +302,10 @@ impl FileTransfer for SerialFileTransfer {
                     total_files,
                     file_size,
                 } => {
+                    event_rate_meter
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reset();
                     file_totals2
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
