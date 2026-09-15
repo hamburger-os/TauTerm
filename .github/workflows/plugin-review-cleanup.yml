@@ -153,7 +153,10 @@ jobs:
           text = path.read_text(encoding='utf-8')
           anchor = '''    ) -> Result<TransferStartAck, String> {\n        let transfer_id = uuid::Uuid::new_v4().to_string();\n'''
           replacement = '''    ) -> Result<TransferStartAck, String> {\n        if ctx.files.iter().any(|file| file.is_dir) {\n            return Err(format!("传输协议 '{}' 只支持普通文件", self.pt));\n        }\n        let transfer_id = uuid::Uuid::new_v4().to_string();\n'''
-          text = replace_once(text, anchor, replacement, 'inline directory validation')
+          count = text.count(anchor)
+          if count < 1:
+              raise SystemExit('inline directory validation anchor missing')
+          text = text.replace(anchor, replacement, 1)
           path.write_text(text, encoding='utf-8')
 
           # Fix architecture-contract string literals produced by the migration script.
