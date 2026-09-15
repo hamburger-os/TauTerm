@@ -57,6 +57,22 @@ jobs:
           sed -i 's/let manifest_dir = Path::new/let manifest_dir = std::path::Path::new/' .github/scripts/plugin_review_cleanup.py
           sed -i 's/text = replace_once(text, old, "", label)/text = text.replace(old, "", 1)/' .github/scripts/plugin_review_cleanup.py
           python3 .github/scripts/plugin_review_cleanup.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src-tauri/src/architecture_contract.rs')
+          text = path.read_text(encoding='utf-8')
+          marker = 'fn read_workspace_source(relative: &str) -> String {'
+          helper = '''fn read_source(relative: &str) -> String {
+              let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+              std::fs::read_to_string(manifest_dir.join("src").join(relative))
+                  .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
+          }
+
+          '''
+          if 'fn read_source(relative: &str)' not in text:
+              text = text.replace(marker, helper + marker, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
 
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
