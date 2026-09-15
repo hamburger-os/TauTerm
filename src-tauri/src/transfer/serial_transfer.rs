@@ -12,8 +12,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::kernel::file_transfer::{
-    FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
-    TransferRateMeter, UnifiedProgress,
+    FileProgressBytes, FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition,
+    TransferDirection, TransferRateMeter, UnifiedProgress,
 };
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -148,8 +148,10 @@ impl FileTransfer for SerialFileTransfer {
                     let _ = progress2.send(UnifiedProgress::file_complete_with_total(
                         &proto2,
                         &file_name,
-                        bytes_transferred,
-                        bytes_total,
+                        FileProgressBytes {
+                            transferred: bytes_transferred,
+                            total: bytes_total,
+                        },
                         ProgressPosition {
                             file_index: file_index as usize,
                             total_files: total_files as usize,
@@ -345,8 +347,10 @@ impl FileTransfer for SerialFileTransfer {
                     let _ = progress2.send(UnifiedProgress::file_complete_with_total(
                         &proto2,
                         &file_name,
-                        bytes_transferred,
-                        bytes_total,
+                        FileProgressBytes {
+                            transferred: bytes_transferred,
+                            total: bytes_total,
+                        },
                         ProgressPosition {
                             file_index: file_index as usize,
                             total_files: total_files as usize,
