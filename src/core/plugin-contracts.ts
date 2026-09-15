@@ -14,6 +14,29 @@ export interface SessionPresentation {
   subtitle?: (params: Record<string, unknown>, endpoint: string) => string;
 }
 
+/** Minimal dependency-free input for resolving the common Session subtitle fallback. */
+export interface SessionPresentationSnapshot {
+  endpoint: string;
+  params?: Record<string, unknown>;
+  parentId?: string | null;
+}
+
+/**
+ * Resolve a Session subtitle without importing the runtime registry or any UI dependency.
+ * Runtime UI code supplies the plugin-owned descriptor from PluginRegistry; architecture/product
+ * tests can exercise the same resolution contract directly under Node.
+ */
+export function resolveSessionSubtitle(
+  presentation: SessionPresentation | undefined,
+  session: SessionPresentationSnapshot,
+): string {
+  if (session.parentId) return session.endpoint;
+  const subtitle = presentation
+    ?.subtitle?.(session.params ?? {}, session.endpoint)
+    ?.trim();
+  return subtitle || session.endpoint;
+}
+
 /**
  * Result of a plugin-owned reconnect preflight. The common Session layer only consumes the
  * decision and message; protocol-specific safety checks stay inside the plugin.
