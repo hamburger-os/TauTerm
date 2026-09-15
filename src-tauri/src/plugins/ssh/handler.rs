@@ -2,8 +2,8 @@
 //!
 //! russh 要求实现 `client::Handler` trait 以处理服务器推送的消息。
 //! 主机密钥验证通过 `tokio::sync::oneshot` 通道与 `build_connection` 协程
-//! 协同工作——`check_server_key` 计算 SHA256 指纹后阻塞等待用户确认，
-//! `build_connection` 在另一个 select 分支中接收指纹并通知前端。
+//! 协同工作——`check_server_key` 计算 SHA256 指纹后阻塞等待验证结果，
+//! `build_connection` 在另一个 select 分支中完成信任判断或通知前端。
 
 use russh::client::Handler;
 use russh::keys::HashAlg;
@@ -12,13 +12,13 @@ use tokio::sync::oneshot;
 /// 主机密钥验证请求
 ///
 /// `check_server_key` 被调用时，记录服务器主机密钥算法并计算 SHA256 指纹，
-/// 通过 `verifier_tx` 发送给 `build_connection`，然后阻塞等待用户确认。
+/// 通过 `verifier_tx` 发送给 `build_connection`，然后阻塞等待验证结果。
 pub(crate) struct HostKeyVerification {
     /// 主机密钥算法（如 `ssh-ed25519` / `ecdsa-sha2-nistp256` / `ssh-rsa`）
     pub algorithm: String,
     /// 主机密钥 SHA256 指纹（Base64 编码，如 "SHA256:xxxx"）
     pub fingerprint: String,
-    /// 响应通道——`true` 表示用户接受，`false` 表示拒绝
+    /// 响应通道——`true` 表示验证通过，`false` 表示验证未通过
     pub response: oneshot::Sender<bool>,
 }
 
@@ -30,7 +30,7 @@ pub(crate) struct HostKeyVerification {
 pub struct SshHandler {
     /// 主机密钥验证请求通道。
     /// `check_server_key` 被调用时创建 `HostKeyVerification` 并通过此通道发送，
-    /// 随后阻塞在 response oneshot 上等待用户确认。
+    /// 随后阻塞在 response oneshot 上等待验证结果。
     verifier_tx: Option<tokio::sync::mpsc::Sender<HostKeyVerification>>,
 }
 
@@ -67,10 +67,10 @@ impl Handler for SshHandler {
                 Ok(()) => match response_rx.await {
                     Ok(accepted) => {
                         if accepted {
-                            log::info!("用户接受主机密钥");
+                            log::info!("SSH 主机密钥验证通过");
                             Ok(true)
                         } else {
-                            log::warn!("用户拒绝主机密钥");
+                            log::warn!("SSH 主机密钥验证未通过");
                             Ok(false)
                         }
                     }
