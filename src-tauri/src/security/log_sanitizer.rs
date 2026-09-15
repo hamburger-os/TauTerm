@@ -1,77 +1,56 @@
-//! 日志脱敏
+//! System log redaction boundary.
 //!
-//! 自动过滤日志中的密码、密钥、Token 等敏感信息。
+//! System events are free-form diagnostics, so the sink applies a final defensive scrub before
+//! persistence. Callers must still avoid formatting credentials in the first place; this module is
+//! a last line of defence, not a credential transport mechanism.
 
-/// 脱敏日志消息中的敏感信息
-/// 在 LogEngine 消费者线程中自动应用于所有系统事件日志。
+use regex::Regex;
+use std::sync::LazyLock;
+
+static JSON_SECRET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)("(?:password|passphrase|secret|private_key|token|access_token|refresh_token|api_key|authorization|cookie|set-cookie)"\s*:\s*)"(?:\\.|[^"\\])*""#,
+    )
+    .expect("valid system log JSON-secret regex")
+});
+
+static ASSIGNMENT_SECRET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(password|passphrase|secret|private_key|token|access_token|refresh_token|api_key|authorization|cookie)\b\s*=\s*[^\s,;]+",
+    )
+    .expect("valid system log assignment-secret regex")
+});
+
+static AUTH_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+        .expect("valid system log authorization regex")
+});
+
+static PRIVATE_KEY_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
+    )
+    .expect("valid private-key block regex")
+});
+
+/// Redact common credential forms and force one physical line per event.
+///
+/// Escaping CR/LF prevents an untrusted frontend event or remote error string from forging extra
+/// system-log records while keeping the original control characters visible to diagnostics.
 pub fn sanitize_log(message: &str) -> String {
-    let mut result = message.to_string();
-
-    // 过滤 "password": "..." 模式（JSON 格式）
-    result = sanitize_json_field(&result, "password");
-    result = sanitize_json_field(&result, "passphrase");
-    result = sanitize_json_field(&result, "secret");
-    result = sanitize_json_field(&result, "private_key");
-
-    // 过滤 PRIVATE KEY 块
-    if let Some(start) = result.find("-----BEGIN") {
-        if let Some(end) = result.rfind("-----") {
-            if end > start {
-                let end_idx = end + 5;
-                if end_idx <= result.len() {
-                    result.replace_range(start..end_idx, "[REDACTED PRIVATE KEY]");
-                }
-            }
-        }
-    }
-
-    // 过滤 Bearer token
-    if let Some(start) = result.find("Bearer ") {
-        let after = &result[start + 7..];
-        if let Some(end) = after.find(|c: char| c.is_whitespace() || c == ',') {
-            result.replace_range(start..start + 7 + end, "Bearer [REDACTED]");
-        } else {
-            result.replace_range(start.., "Bearer [REDACTED]");
-        }
-    }
-
-    result
-}
-
-fn sanitize_json_field(text: &str, field: &str) -> String {
-    let pattern = format!("\"{}\"", field);
-    let mut result = text.to_string();
-    let mut search_from = 0;
-
-    while let Some(pos) = result[search_from..].find(&pattern) {
-        let abs_pos = search_from + pos;
-        // 查找后面的 ": "
-        if let Some(colon_pos) = result[abs_pos..].find(':') {
-            let value_start = abs_pos + colon_pos + 1;
-            let after_colon = &result[value_start..];
-            // 跳过空白
-            let trimmed = after_colon.trim_start();
-            let trim_offset = after_colon.len() - trimmed.len();
-            let actual_start = value_start + trim_offset;
-
-            if let Some(stripped) = trimmed.strip_prefix('"') {
-                // 查找闭合引号
-                if let Some(close_quote) = stripped.find('"') {
-                    let end = actual_start + 1 + close_quote + 1;
-                    result.replace_range(actual_start..end, "\"[REDACTED]\"");
-                    search_from = actual_start + 12;
-                } else {
-                    search_from = abs_pos + 1;
-                }
-            } else {
-                search_from = abs_pos + 1;
-            }
-        } else {
-            search_from = abs_pos + 1;
-        }
-    }
-
-    result
+    let mut result = PRIVATE_KEY_BLOCK
+        .replace_all(message, "[REDACTED PRIVATE KEY]")
+        .into_owned();
+    result = JSON_SECRET
+        .replace_all(&result, "${1}\"[REDACTED]\"")
+        .into_owned();
+    result = ASSIGNMENT_SECRET
+        .replace_all(&result, "${1}=[REDACTED]")
+        .into_owned();
+    result = AUTH_SCHEME
+        .replace_all(&result, "${1} [REDACTED]")
+        .into_owned();
+    result.replace('\r', "\\r").replace('\n', "\\n")
 }
 
 #[cfg(test)]
@@ -79,25 +58,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sanitize_password_field() {
-        let input = r#"{"username": "root", "password": "secret123"}"#;
+    fn redacts_json_credentials_case_insensitively() {
+        let input = r#"{"username":"root","PASSWORD":"secret123","access_token":"abc.def"}"#;
         let output = sanitize_log(input);
         assert!(!output.contains("secret123"));
+        assert!(!output.contains("abc.def"));
         assert!(output.contains("[REDACTED]"));
     }
 
     #[test]
-    fn test_sanitize_bearer_token() {
-        let input = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.token.payload";
+    fn redacts_assignment_and_authorization_credentials() {
+        let input = "api_key=abc123 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.token.payload";
         let output = sanitize_log(input);
+        assert!(!output.contains("abc123"));
         assert!(!output.contains("eyJhbGci"));
-        assert!(output.contains("[REDACTED]"));
+        assert!(output.contains("api_key=[REDACTED]"));
+        assert!(output.contains("Bearer [REDACTED]"));
     }
 
     #[test]
-    fn test_non_sensitive_passes_through() {
-        let input = "Connected to COM3 at 115200 baud";
+    fn redacts_private_key_blocks() {
+        let input = "key=-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----";
         let output = sanitize_log(input);
-        assert_eq!(output, input);
+        assert!(!output.contains("secret"));
+        assert!(output.contains("[REDACTED PRIVATE KEY]"));
+    }
+
+    #[test]
+    fn escapes_record_injection_newlines() {
+        let output = sanitize_log("connected\n[ERROR] forged");
+        assert_eq!(output, "connected\\n[ERROR] forged");
+    }
+
+    #[test]
+    fn non_sensitive_messages_pass_through() {
+        let input = "Connected to COM3 at 115200 baud";
+        assert_eq!(sanitize_log(input), input);
     }
 }
