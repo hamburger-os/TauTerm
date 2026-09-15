@@ -225,7 +225,10 @@ impl LogWriter {
             self.split_index
         );
         let path = self.base_dir.join(file_name);
-        let file = OpenOptions::new().create_new(true).write(true).open(&path)?;
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)?;
         let mut buffered = BufWriter::with_capacity(self.buffer_size, file);
         let header = format!(
             "════ TauTerm Session Log ════\n\
