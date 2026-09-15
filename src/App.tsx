@@ -411,8 +411,8 @@ function AppInner() {
                 const isLocalShell = activePlugin?.manifest.id === "local-shell";
                 const hasAnyPanel = activeTab
                   ? ((activePlugin?.manifest.transfer_protocols?.length ?? 0) > 0 && activeTab.transferEnabled !== false)
-                    || (activePlugin?.manifest.id === "ssh" && activeTab.fileServiceEnabled === true)
-                    || (activePlugin?.manifest.id === "ssh" && activeTab.journaldEnabled === true)
+                    || (activePlugin?.manifest.id === "ssh" && activeTab.params?.file_service_enabled === true)
+                    || (activePlugin?.manifest.id === "ssh" && activeTab.params?.journald_enabled === true)
                   : false;
 
                 // custom 内容类型无侧栏面板时完全隐藏右侧栏（网络调试除外）
@@ -435,8 +435,8 @@ function AppInner() {
                         const showTransmission = tabPlugin
                           ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
                           : false;
-                        const showFileManager = tabPlugin?.manifest.id === "ssh" && tab.fileServiceEnabled === true;
-                        const showJournald = tabPlugin?.manifest.id === "ssh" && tab.journaldEnabled === true;
+                        const showFileManager = tabPlugin?.manifest.id === "ssh" && tab.params?.file_service_enabled === true;
+                        const showJournald = tabPlugin?.manifest.id === "ssh" && tab.params?.journald_enabled === true;
                         const isActive = tab.id === sessionState.activeTabId;
                         return (
                           <div
