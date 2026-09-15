@@ -17,7 +17,23 @@ jobs:
           node-version: 22
           cache: npm
       - name: Apply backend plugin boundary migration
-        run: python3 .github/finalize-backend-plugin-boundary.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/finalize-backend-plugin-boundary.py')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('alias_match = re.search(')
+          end = text.index('\nsave_marker =', start)
+          replacement = '''alias_start = commands.find("pub(crate) type SessionConnectFuture")
+          alias_end = commands.find("macro_rules! define_session_connector", alias_start)
+          if alias_start < 0 or alias_end < 0:
+              raise SystemExit("Session connector aliases not found")
+          connector_aliases = commands[alias_start:alias_end]
+          commands = commands[:alias_start] + commands[alias_end:]
+          '''
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+          python3 .github/finalize-backend-plugin-boundary.py
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
       - name: Documentation contract
