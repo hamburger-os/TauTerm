@@ -118,6 +118,14 @@ jobs:
           if 'fn read_source(relative: &str)' not in text:
               text = text.replace(marker, helper + marker, 1)
           path.write_text(text, encoding='utf-8')
+
+          modbus = Path('src/plugins/modbus/ModbusConnectForm.tsx')
+          source = modbus.read_text(encoding='utf-8')
+          old = 'invoke<Endpoint[]>("enumerate_endpoints", { connectionType: "serial" })'
+          new = 'invoke<Endpoint[]>("enumerate_endpoints", { pluginId: "serial" })'
+          if source.count(old) != 1:
+              raise SystemExit(f'Modbus endpoint discovery legacy call count: {source.count(old)}')
+          modbus.write_text(source.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Format Rust
