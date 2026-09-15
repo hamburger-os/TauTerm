@@ -603,55 +603,81 @@ fn send_block(
     }
 
     let mut last_can = false;
-    for retry in 0..MAX_RETRIES {
+    'retry: for retry in 0..MAX_RETRIES {
         if cancel() {
             return Err("传输已取消".into());
         }
 
         send_packet_only(port, block_num, data, block_size, crc_mode)?;
 
-        match read_byte_with_timeout(port, 3000)? {
-            Some(ACK) => return Ok(()),
-            Some(b) if b == CAN => {
-                if detect_cancel(b, &mut last_can) {
-                    return Err("接收方取消了传输".into());
-                }
+        // 一次发送对应一个完整响应窗口。控制台输出等噪声只在窗口内被消费，不能因为
+        // 读到一个无关字节就提前进入下一次 retry 并重发整个数据块。
+        let response_started = std::time::Instant::now();
+        loop {
+            if cancel() {
+                return Err("传输已取消".into());
             }
-            // WANTCRC — 接收方请求以 CRC 模式重传此块（对齐 lrzsz wcputsec）
-            // 在 YMODEM CRC 模式中，接收方任何时候发送 'C' 都表示
-            // "未收到有效块，请重发"，应视为重试信号而非意外响应。
-            Some(C) => {
-                log::debug!(
-                    "send_block: block {} received 'C' (WANTCRC), retrying",
-                    block_num
-                );
-                last_can = false;
-                if retry == MAX_RETRIES - 1 {
-                    return Err(format!("块 {} 收到 'C' 重试次数耗尽", block_num).into());
-                }
-            }
-            Some(NAK) | None => {
+
+            let elapsed = response_started.elapsed();
+            let response_timeout = std::time::Duration::from_millis(3000);
+            if elapsed >= response_timeout {
                 last_can = false;
                 if retry == MAX_RETRIES - 1 {
                     return Err(format!("块 {} 重试次数耗尽", block_num).into());
                 }
+                continue 'retry;
             }
-            Some(other) => {
-                // 噪声字节：设备控制台输出混入协议通道（ANSI 转义码、诊断文本等）
-                // 不触发重试 — 仅消费噪声字节并继续等待有效的协议响应。
-                // 超时（None）和 NAK/C 仍正常触发重试，保证无响应时能退出。
-                last_can = false;
-                log::debug!(
-                    "send_block: block {} ignoring noise byte 0x{:02X} ('{}')",
-                    block_num,
-                    other,
-                    if other.is_ascii_graphic() || other == b' ' {
-                        other as char
-                    } else {
-                        '.'
+
+            let remaining = response_timeout.saturating_sub(elapsed);
+            let poll_ms = remaining.as_millis().min(200).max(1) as u64;
+            match read_byte_with_timeout(port, poll_ms)? {
+                Some(ACK) => return Ok(()),
+                Some(b) if b == CAN => {
+                    if detect_cancel(b, &mut last_can) {
+                        return Err("接收方取消了传输".into());
                     }
-                );
-                continue;
+                    // 单个 CAN 只更新取消检测状态；仍在当前响应窗口等待后续字节。
+                }
+                // WANTCRC — 接收方请求以 CRC 模式重传此块（对齐 lrzsz wcputsec）
+                // 在 YMODEM CRC 模式中，接收方任何时候发送 'C' 都表示
+                // "未收到有效块，请重发"，应视为重试信号而非意外响应。
+                Some(C) => {
+                    log::debug!(
+                        "send_block: block {} received 'C' (WANTCRC), retrying",
+                        block_num
+                    );
+                    last_can = false;
+                    if retry == MAX_RETRIES - 1 {
+                        return Err(format!("块 {} 收到 'C' 重试次数耗尽", block_num).into());
+                    }
+                    continue 'retry;
+                }
+                Some(NAK) => {
+                    last_can = false;
+                    if retry == MAX_RETRIES - 1 {
+                        return Err(format!("块 {} 重试次数耗尽", block_num).into());
+                    }
+                    continue 'retry;
+                }
+                Some(other) => {
+                    // 噪声字节：设备控制台输出混入协议通道（ANSI 转义码、诊断文本等）。
+                    // 只消费噪声并继续等待本次发送对应的 ACK/NAK/C/CAN，不消耗 retry。
+                    last_can = false;
+                    log::debug!(
+                        "send_block: block {} ignoring noise byte 0x{:02X} ('{}')",
+                        block_num,
+                        other,
+                        if other.is_ascii_graphic() || other == b' ' {
+                            other as char
+                        } else {
+                            '.'
+                        }
+                    );
+                }
+                None => {
+                    // 200ms 轮询窗口到期；继续等待直到本次 3s 总响应期限。
+                    last_can = false;
+                }
             }
         }
     }
@@ -1628,4 +1654,118 @@ fn ymodem_receive(
     );
 
     Ok(batch_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedIo {
+        reads: VecDeque<u8>,
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl Read for ScriptedIo {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            match self.reads.pop_front() {
+                Some(byte) => {
+                    buf[0] = byte;
+                    Ok(1)
+                }
+                None => Ok(0),
+            }
+        }
+    }
+
+    impl Write for ScriptedIo {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes.lock().unwrap().push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn scripted_io(
+        reads: impl IntoIterator<Item = u8>,
+    ) -> (
+        Box<dyn crate::transfer::protocol::TransferIo>,
+        Arc<Mutex<Vec<Vec<u8>>>>,
+    ) {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        (
+            Box::new(ScriptedIo {
+                reads: reads.into_iter().collect(),
+                writes: writes.clone(),
+            }),
+            writes,
+        )
+    }
+
+    #[test]
+    fn send_block_ignores_noise_without_retransmitting() {
+        let (mut port, writes) = scripted_io([b'l', b'o', b'g', ACK]);
+        let data = [0u8; BLOCK0_SIZE];
+        let mut cancel = || false;
+
+        send_block(
+            &mut port,
+            1,
+            &data,
+            BLOCK0_SIZE,
+            &mut cancel,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(writes.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn send_block_retransmits_only_on_protocol_retry_signal() {
+        let (mut port, writes) = scripted_io([NAK, ACK]);
+        let data = [0u8; BLOCK0_SIZE];
+        let mut cancel = || false;
+
+        send_block(
+            &mut port,
+            7,
+            &data,
+            BLOCK0_SIZE,
+            &mut cancel,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(writes.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn send_block_keeps_single_can_inside_current_response_window() {
+        let (mut port, writes) = scripted_io([CAN, ACK]);
+        let data = [0u8; BLOCK0_SIZE];
+        let mut cancel = || false;
+
+        send_block(
+            &mut port,
+            3,
+            &data,
+            BLOCK0_SIZE,
+            &mut cancel,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(writes.lock().unwrap().len(), 1);
+    }
 }
