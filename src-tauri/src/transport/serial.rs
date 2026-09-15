@@ -2,10 +2,19 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::time::Duration;
 
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
+use windows_sys::Win32::Devices::Communication::{SetCommTimeouts, COMMTIMEOUTS};
+
 use crate::transport::error::{TransportError, TransportErrorKind};
 use crate::transport::stream::{BlockingByteStream, ReadStatus};
 
 const SERIAL_READ_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(windows)]
+const SERIAL_WRITE_TIMEOUT_MARGIN_MS: u32 = 100;
+#[cfg(windows)]
+const SERIAL_WRITE_WIRE_TIME_FACTOR: u64 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,15 +104,25 @@ pub fn open_serial(
         SerialFlowControl::XonXoff => serialport::FlowControl::Software,
     };
 
-    // One connect request performs one physical open. Retry/reconnect belongs to the Session layer.
-    let port = serialport::new(endpoint, config.baud_rate)
+    let builder = serialport::new(endpoint, config.baud_rate)
         .data_bits(data_bits)
         .parity(parity)
         .stop_bits(stop_bits)
         .flow_control(flow_control)
-        .timeout(SERIAL_READ_TIMEOUT)
-        .open()
-        .map_err(map_open_error)?;
+        .timeout(SERIAL_READ_TIMEOUT);
+
+    #[cfg(windows)]
+    let port: Box<dyn serialport::SerialPort> = {
+        let native = builder.open_native().map_err(map_open_error)?;
+        configure_windows_timeouts(&native, config)?;
+        Box::new(native)
+    };
+
+    #[cfg(unix)]
+    let port: Box<dyn serialport::SerialPort> = builder.open().map_err(map_open_error)?;
+
+    #[cfg(not(any(unix, windows)))]
+    let port: Box<dyn serialport::SerialPort> = builder.open().map_err(map_open_error)?;
 
     // Never purge immediately after open: startup/boot bytes are valid input.
     Ok(SerialDriver { port })
@@ -137,6 +156,53 @@ fn validate_config(config: &SerialTransportConfig) -> Result<(), TransportError>
             "serial_config",
             "invalid serial transport configuration",
         ))
+    }
+}
+
+#[cfg(windows)]
+fn serial_frame_bits(config: &SerialTransportConfig) -> u64 {
+    let parity_bits = u64::from(config.parity != SerialParity::None);
+    let stop_bits = match config.stop_bits {
+        SerialStopBits::One => 1,
+        SerialStopBits::Two => 2,
+    };
+    1 + u64::from(config.data_bits) + parity_bits + stop_bits
+}
+
+#[cfg(windows)]
+fn windows_write_timeout_multiplier_ms(config: &SerialTransportConfig) -> u32 {
+    let baud = u64::from(config.baud_rate.max(1));
+    let scaled_bits = serial_frame_bits(config)
+        .saturating_mul(1000)
+        .saturating_mul(SERIAL_WRITE_WIRE_TIME_FACTOR);
+    let milliseconds_per_byte = scaled_bits.saturating_add(baud - 1) / baud;
+    milliseconds_per_byte.clamp(1, u64::from(u32::MAX)) as u32
+}
+
+#[cfg(windows)]
+fn configure_windows_timeouts(
+    port: &serialport::COMPort,
+    config: &SerialTransportConfig,
+) -> Result<(), TransportError> {
+    // serialport's single timeout is mapped to both ReadFile and WriteFile on Windows. Keep the
+    // actor's short read slice, but give writes an independent byte-scaled deadline so protocol-sized
+    // frames (for example YMODEM 1 KiB packets) are not forced through the 50 ms read budget.
+    // Configure this once when the COM handle is opened; per-packet SetCommTimeouts churn is avoided.
+    let timeouts = COMMTIMEOUTS {
+        ReadIntervalTimeout: u32::MAX,
+        ReadTotalTimeoutMultiplier: u32::MAX,
+        ReadTotalTimeoutConstant: SERIAL_READ_TIMEOUT.as_millis() as u32,
+        WriteTotalTimeoutMultiplier: windows_write_timeout_multiplier_ms(config),
+        WriteTotalTimeoutConstant: SERIAL_WRITE_TIMEOUT_MARGIN_MS,
+    };
+
+    if unsafe { SetCommTimeouts(port.as_raw_handle(), &timeouts) } == 0 {
+        Err(TransportError::io(
+            "serial_configure_timeouts",
+            std::io::Error::last_os_error(),
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -231,5 +297,35 @@ mod tests {
             "localized message",
         ));
         assert_eq!(invalid.kind, TransportErrorKind::InvalidConfiguration);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_write_deadline_covers_ymodem_1k_frame() {
+        let config = SerialTransportConfig::default();
+        let frame_len = 1029u64;
+        let timeout_ms = frame_len * u64::from(windows_write_timeout_multiplier_ms(&config))
+            + u64::from(SERIAL_WRITE_TIMEOUT_MARGIN_MS);
+        let wire_ms = frame_len
+            .saturating_mul(serial_frame_bits(&config))
+            .saturating_mul(1000)
+            .div_ceil(u64::from(config.baud_rate));
+
+        assert!(timeout_ms >= wire_ms.saturating_mul(SERIAL_WRITE_WIRE_TIME_FACTOR));
+        assert!(timeout_ms > SERIAL_READ_TIMEOUT.as_millis() as u64);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_write_deadline_scales_with_baud_rate() {
+        let fast = SerialTransportConfig::default();
+        let slow = SerialTransportConfig {
+            baud_rate: 9_600,
+            ..Default::default()
+        };
+
+        assert!(
+            windows_write_timeout_multiplier_ms(&slow) > windows_write_timeout_multiplier_ms(&fast)
+        );
     }
 }
