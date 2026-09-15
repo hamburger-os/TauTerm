@@ -8,12 +8,17 @@
 import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "../components/common/Icon";
 import i18n from "../i18n";
-import {
-  setSessionPresentation,
-  type SessionPresentation,
-} from "./session-presentation-registry.ts";
+import type {
+  SessionPresentation,
+  SessionReconnectContext,
+  SessionReconnectGuardResult,
+} from "./plugin-contracts";
 
-export type { SessionPresentation } from "./session-presentation-registry.ts";
+export type {
+  SessionPresentation,
+  SessionReconnectContext,
+  SessionReconnectGuardResult,
+} from "./plugin-contracts";
 
 // ── Types ───────────────────────────────────────────
 
@@ -91,14 +96,15 @@ export interface BottomPanelDef {
 export interface StatusBarContext {
   /** 活跃会话 ID（无活跃会话时为空串） */
   sessionId: string;
-  /** 活跃会话（无活跃会话时为 null） */
+  /** 活跃会话的协议无关最小快照。协议私有状态由插件自己的 store/hook 读取。 */
   activeTab: StatusBarTab | null;
 }
 
 /**
- * 状态栏可见性/渲染所需的最小会话信息（结构化子集）。
- * 用独立结构而非直接引用 SessionContext 的 TabInfo，避免 plugin-registry
- * 与 SessionContext 形成循环依赖（SessionContext 反向 import 了本模块）。
+ * 状态栏可见性/渲染所需的最小 Session 信息。
+ *
+ * 这里禁止加入 Serial/SSH/Network 等插件私有字段；插件 renderer 如需专属运行态，
+ * 应使用自己的 store/hook。这样公共 registry 不会随新增协议持续膨胀。
  */
 export interface StatusBarTab {
   id: string;
@@ -106,9 +112,6 @@ export interface StatusBarTab {
   state: string;
   endpoint: string;
   params?: Record<string, unknown>;
-  virtualVirtualEndpoints?: Array<{ external_path: string }>;
-  virtualPortError?: string;
-  virtualPortErrorKind?: string;
 }
 
 /** 状态栏项（声明式描述符） */
@@ -140,6 +143,18 @@ export interface PluginRegistration {
   normalizeConnectionParams?: (params: Record<string, unknown>) => Record<string, unknown>;
   /** 插件连接表单是否满足创建/保存会话的最低要求。 */
   isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
+  /**
+   * 保存 Session 后返回前端应继续持有的参数快照。
+   * 用于剥离凭据等插件私有瞬态输入；公共 Session 层不解释协议字段。
+   */
+  persistedConnectionParams?: (
+    params: Record<string, unknown>,
+    sessionId: string,
+  ) => Record<string, unknown>;
+  /** 断开会话重新连接前的插件专属安全/配置检查。 */
+  reconnectGuard?: (
+    context: SessionReconnectContext,
+  ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;
   /** 默认名称（创建时一次性生成）与动态配置摘要。 */
   sessionPresentation?: SessionPresentation;
   toolbarItems?: ToolbarItem[];
@@ -163,7 +178,6 @@ class PluginRegistry {
       throw new Error(`[PluginRegistry] 插件 "${id}" 重复注册`);
     }
     this.plugins.set(id, registration);
-    setSessionPresentation(id, registration.sessionPresentation);
 
     for (const [language, resources] of Object.entries(registration.locales ?? {})) {
       i18n.addResourceBundle(
@@ -179,7 +193,6 @@ class PluginRegistry {
   /** 注销插件 */
   unregister(pluginId: string): void {
     this.plugins.delete(pluginId);
-    setSessionPresentation(pluginId);
   }
 
   /** 获取插件 */
