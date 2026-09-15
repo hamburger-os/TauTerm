@@ -1,4 +1,5 @@
 import type { TabInfo } from "../../context/SessionContext";
+import { resolveSessionSubtitle } from "../../core/plugin-contracts";
 import { pluginRegistry } from "../../core/plugin-registry";
 
 /**
@@ -21,15 +22,14 @@ export function getSessionSubtitle(
   _legacyLabels?: SessionPresentationLabels,
   _legacyRuntimeState?: SessionPresentationNetworkState,
 ): string {
-  if (tab.parentId) return tab.endpoint;
-
-  const params = (tab.params ?? {}) as Record<string, unknown>;
-  return pluginRegistry
-    .get(tab.pluginId)
-    ?.sessionPresentation
-    ?.subtitle?.(params, tab.endpoint)
-    ?.trim()
-    || tab.endpoint;
+  return resolveSessionSubtitle(
+    pluginRegistry.get(tab.pluginId)?.sessionPresentation,
+    {
+      endpoint: tab.endpoint,
+      params: tab.params,
+      parentId: tab.parentId,
+    },
+  );
 }
 
 /**
