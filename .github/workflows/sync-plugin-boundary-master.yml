@@ -1,0 +1,30 @@
+name: Sync Plugin Boundary With Master
+on:
+  push:
+    branches: [refactor/plugin-boundary-cleanup]
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+          fetch-depth: 0
+      - name: Merge latest master
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          if ! git merge --no-ff --no-edit origin/master; then
+            echo '===== merge conflicts ====='
+            git status --short
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+          git rm .github/workflows/sync-plugin-boundary-master.yml
+          git commit --amend --no-edit
+          git push origin HEAD:refactor/plugin-boundary-cleanup
