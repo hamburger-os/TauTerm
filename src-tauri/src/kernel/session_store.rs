@@ -3,9 +3,7 @@
 //! SessionStore owns user-visible session lifecycle. Physical I/O resources are owned by
 //! `SessionDataPlane`; callers interact through `SessionIo` capabilities.
 
-use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::file_transfer::FileTransfer;
-use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::persistence::atomic_write;
 use crate::kernel::plugin_adapter::{
     ProtocolConnection, SessionAttach, SessionChannelFactory, SessionService,
@@ -13,13 +11,11 @@ use crate::kernel::plugin_adapter::{
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transfer::scheduler::TransferScheduler;
-use crate::transport::{DataPlaneHandle, DataPlaneRuntime};
-use crate::virtual_port::backend::VirtualEndpoint;
-use crate::virtual_port::bridge::VirtualPortBridge;
+use crate::transport::DataPlaneRuntime;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
@@ -63,28 +59,10 @@ pub struct SessionStats {
     pub connected_at: Option<u64>,
 }
 
-/// 会话内对端信息（网络调试会话的自定义视图用）
-#[derive(Debug, Clone, Serialize)]
-pub struct PeerInfo {
-    pub peer_id: String,
-    pub name: String,
-    pub addr: String,
-    /// 本端地址（TCP client 连接后本机分配的 ip:port，可与服务端对端条目对应）
-    pub local_addr: String,
-    pub state: String,
-    pub tx_bytes: u64,
-    pub rx_bytes: u64,
-    pub connected_at: Option<u64>,
-}
-
-/// 子连接句柄（SSH 多连接 / 网络调试会话多对端）。
+/// 通用子连接句柄。
 ///
-/// 每个子连接有独立的 DataPlane、SessionIo 和统计信息。
-/// 关闭子连接不影响父 session，关闭父 session 级联清理所有子连接。
-///
-/// 两种用途：
-/// - SSH 通道（`tabbed = true`）：前端表现为独立标签页；
-/// - 网络调试对端（`tabbed = false`）：会话内实体，前端在自定义视图中展示。
+/// 每个子连接有独立的 DataPlane、SessionIo 和统计信息。协议可以决定它是否作为
+/// Workspace 中的独立可见项，但协议地址、peer 元数据等领域信息由插件运行时自行持有。
 pub struct SubConnection {
     pub id: TabId,
     pub name: String,
@@ -99,9 +77,7 @@ pub struct SubConnection {
     pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
     pub script_thread: Option<std::thread::JoinHandle<()>>,
     pub script_shutdown: Option<Arc<AtomicBool>>,
-    pub tabbed: bool,
-    pub peer_addr: Option<String>,
-    pub local_addr: Option<String>,
+    pub visible_in_workspace: bool,
 }
 
 pub struct ActiveSessionHandle {
@@ -118,8 +94,6 @@ pub struct ActiveSessionHandle {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
-    pub virtual_port_bridge: Option<VirtualPortBridge>,
-    pub virtual_endpoints: Vec<VirtualEndpoint>,
     pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
     pub script_thread: Option<std::thread::JoinHandle<()>>,
     pub script_shutdown: Option<Arc<AtomicBool>>,
@@ -157,38 +131,26 @@ impl SubConnection {
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
-            tabbed: true,
-            peer_addr: None,
-            local_addr: None,
+            visible_in_workspace: true,
         }
     }
-}
 
-impl ActiveSessionHandle {
-    pub fn virtual_port_enabled(&self) -> bool {
-        self.params
-            .get("virtual_port_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-    pub fn virtual_port_count(&self) -> u32 {
-        self.params
-            .get("virtual_port_count")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-            .unwrap_or(0)
+    /// 创建不直接显示为 Workspace tab 的通用后台子连接。
+    pub fn background(
+        id: TabId,
+        name: String,
+        data_plane: SessionDataPlane,
+        io: Arc<SessionIo>,
+        channel_index: u32,
+    ) -> Self {
+        let mut child = Self::new(id, name, data_plane, io, channel_index, false);
+        child.visible_in_workspace = false;
+        child
     }
 }
 
 impl Drop for ActiveSessionHandle {
     fn drop(&mut self) {
-        if let Some(bridge) = self.virtual_port_bridge.take() {
-            log::warn!(
-                "ActiveSessionHandle '{}' dropped without proper close_session; shutting down bridge asynchronously",
-                self.id
-            );
-            std::thread::spawn(move || bridge.shutdown());
-        }
         if let Some(attachment) = self.attachment.take() {
             attachment.on_detached(&self.id);
         }
@@ -303,19 +265,6 @@ pub struct ContainerSessionCreateOptions {
     pub id_override: Option<String>,
 }
 
-/// 网络对端 DataPlane 注册参数。
-pub struct PeerChannelRegistration {
-    pub parent_id: String,
-    pub peer_name: String,
-    pub peer_addr: String,
-    pub local_addr: String,
-    pub runtime: DataPlaneRuntime,
-    pub encoding: String,
-    pub data_mode: String,
-    pub peer_handles: Arc<Mutex<HashMap<String, DataPlaneHandle>>>,
-    pub mirror_tx: Option<mpsc::Sender<Vec<u8>>>,
-}
-
 impl SessionStore {
     /// 保留最近关闭会话名称的数量上限（LRU 淘汰）
     const MAX_REMOVED_SESSION_NAMES: usize = 50;
@@ -418,8 +367,6 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_port_bridge: None,
-            virtual_endpoints: Vec::new(),
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
@@ -458,7 +405,7 @@ impl SessionStore {
         }
     }
 
-    /// 创建终端父容器（SSH / Local Shell，无 I/O loop）。
+    /// 创建终端父容器（无 I/O loop）。
     ///
     /// 仅持有可选协议 service、文件传输 capability、channel factory 和元数据，不创建 I/O 线程。
     /// 实际终端通过 `add_sub_connection` 添加。
@@ -540,8 +487,6 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_port_bridge: None,
-            virtual_endpoints: Vec::new(),
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
@@ -566,11 +511,6 @@ impl SessionStore {
         Ok(id)
     }
 
-    /// # 调用方约定
-    ///
-    /// **调用方必须在此调用之前 clone `virtual_endpoints`**（如需访问），
-    /// 因为此方法一开始就 `sessions.remove(session_id)`，句柄随后被 drop。
-    /// 参考 `disconnect_session` 在 `commands.rs` 中的用法。
     pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
         let mut handle = self
             .sessions
@@ -607,9 +547,6 @@ impl SessionStore {
         }
         if let Some(thread) = handle.script_thread.take() {
             let _ = thread.join();
-        }
-        if let Some(bridge) = handle.virtual_port_bridge.take() {
-            bridge.shutdown();
         }
         if let Some(flag) = &handle.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -666,7 +603,6 @@ impl SessionStore {
 
     /// 切换到指定会话（支持子连接 ID）
     pub fn switch_active(&mut self, session_id: &str) -> Result<(), String> {
-        // 检查是否是已知会话
         if let Some(h) = self.sessions.get(session_id) {
             if h.state == SessionState::Disconnected {
                 return Err(self.session_not_found(session_id));
@@ -674,7 +610,6 @@ impl SessionStore {
             self.active_id = Some(session_id.to_string());
             return Ok(());
         }
-        // 搜索子连接
         for handle in self.sessions.values() {
             if handle.sub_connections.iter().any(|s| s.id == session_id) {
                 self.active_id = Some(session_id.to_string());
@@ -705,7 +640,7 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 向指定会话写入数据（支持子连接路由）
+    /// 向指定会话写入数据（支持通用子连接路由）
     pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
         self.get_io_for(session_id)
             .ok_or_else(|| format!("会话 {} 不可直接写入", session_id))?
@@ -720,218 +655,30 @@ impl SessionStore {
         sub: SubConnection,
     ) -> Result<(), String> {
         let not_found = self.session_not_found(parent_id);
-        let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
+        let handle = self
+            .sessions
+            .get_mut(parent_id)
+            .ok_or_else(|| not_found.clone())?;
+        if handle.state != SessionState::Connected {
+            return Err(not_found);
+        }
         handle.sub_connections.push(sub);
         Ok(())
     }
 
-    /// 注册一个"对端通道"到容器会话（网络调试等协议使用）。
-    ///
-    /// 与 `commands::create_ssh_sub_channel` 的通道创建流程等价，但面向会话内
-    /// 多对端模型：对端不占独立标签页（`tabbed = false`），拥有独立的 DataPlane、
-    /// 统计采集、SessionIo（自动应答/脚本按对端生效）与日志路由。
-    ///
-    /// 对端 I/O loop 断开时广播 `netdbg-peer-left` 事件；本方法广播
-    /// `netdbg-peer-joined` 事件，供前端对端列表刷新。
-    pub fn register_peer_channel(
-        &mut self,
-        app: &tauri::AppHandle,
-        log_tx: mpsc::SyncSender<LogEntry>,
-        registration: PeerChannelRegistration,
-    ) -> Result<String, String> {
-        let PeerChannelRegistration {
-            parent_id,
-            peer_name,
-            peer_addr,
-            local_addr,
-            runtime,
-            encoding,
-            data_mode,
-            peer_handles,
-            mirror_tx,
-        } = registration;
-        let not_found = self.session_not_found(&parent_id);
-        if !self
-            .sessions
-            .get(&parent_id)
-            .is_some_and(|h| h.state == SessionState::Connected)
-        {
-            return Err(not_found);
-        }
-        let channel_id = uuid::Uuid::new_v4().to_string();
-        let io = Arc::new(SessionIo::new(
-            Some(runtime.handle.clone()),
-            None,
-            encoding.clone(),
-        ));
-        peer_handles
-            .lock()
-            .map_err(|e| e.to_string())?
-            .insert(channel_id.clone(), runtime.handle.clone());
-
-        let app_data = app.clone();
-        let batcher = DataBatcher::new(move |batched| {
-            let _ = app_data.emit(
-                "session-data",
-                serde_json::json!({
-                    "session_id": batched.session_id, "data_b64": batched.data_b64,
-                }),
-            );
-        });
-        let encoding_log = encoding.clone();
-        let data_mode_log = data_mode.clone();
-        let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
-            let payload = data.clone();
-            let mirror_payload = mirror_tx.as_ref().map(|_| data.clone());
-            batcher.push(session_id.clone(), data);
-            if let (Some(tx), Some(payload)) = (mirror_tx.as_ref(), mirror_payload) {
-                let _ = tx.send(payload);
-            }
-            let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
-                session_id,
-                direction: DataDirection::RX,
-                data_mode: data_mode_log.clone(),
-                encoding: encoding_log.clone(),
-                payload,
-                timestamp: chrono::Local::now(),
-            }));
-        });
-        let app_disconnect = app.clone();
-        let pid = parent_id.clone();
-        let peer_id = channel_id.clone();
-        let peer_handles_for_close = peer_handles.clone();
-        let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
-            Box::new(move |_id, info| {
-                if let Ok(mut handles) = peer_handles_for_close.lock() {
-                    handles.remove(&peer_id);
-                }
-                let mut final_tx = None;
-                let mut final_rx = None;
-                if let Ok(mut store) = app_disconnect
-                    .state::<crate::AppState>()
-                    .session_store
-                    .lock()
-                {
-                    store.mark_sub_disconnected(&pid, &peer_id, info.retain_terminal);
-                    if let Some(sub) = store
-                        .get_session(&pid)
-                        .and_then(|h| h.sub_connections.iter().find(|s| s.id == peer_id))
-                    {
-                        final_tx = Some(sub.io.tx_bytes());
-                        final_rx = Some(sub.io.rx_bytes());
-                    }
-                }
-                let _ = app_disconnect.emit(
-                    "netdbg-peer-left",
-                    serde_json::json!({
-                        "session_id": pid, "peer_id": peer_id,
-                        "tx_bytes": final_tx, "rx_bytes": final_rx,
-                    }),
-                );
-            });
-        let data_plane =
-            SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
-                .map_err(|e| e.to_string())?;
-        let stats_cancel_flag = Arc::new(AtomicBool::new(false));
-        let connected_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        );
-        Self::spawn_stats_collector(
-            app.clone(),
-            channel_id.clone(),
-            io.clone(),
-            connected_at,
-            stats_cancel_flag.clone(),
-        );
-        let (actual_index, actual_name) = {
-            let handle = self.sessions.get_mut(&parent_id).ok_or(not_found)?;
-            let idx = handle.sub_connections.iter().filter(|s| !s.tabbed).count() as u32;
-            let name = if peer_name.is_empty() {
-                format!("Peer {}", idx + 1)
-            } else {
-                peer_name
-            };
-            (idx, name)
-        };
-        self.sessions
-            .get_mut(&parent_id)
-            .expect("parent checked")
-            .sub_connections
-            .push(SubConnection {
-                id: channel_id.clone(),
-                name: actual_name.clone(),
-                data_plane: Some(data_plane),
-                io,
-                state: SessionState::Connected,
-                connected_at,
-                stats_cancel_flag: Some(stats_cancel_flag),
-                channel_index: actual_index,
-                elevated: false,
-                retain_terminal: false,
-                script_tx: None,
-                script_thread: None,
-                script_shutdown: None,
-                tabbed: false,
-                peer_addr: Some(peer_addr.clone()),
-                local_addr: Some(local_addr.clone()),
-            });
-        let _ = app.emit(
-            "netdbg-peer-joined",
-            serde_json::json!({
-                "session_id": parent_id, "peer_id": channel_id, "peer_name": actual_name,
-                "peer_addr": peer_addr, "local_addr": local_addr,
-            }),
-        );
-        Ok(channel_id)
-    }
-
-    /// 查找子连接（对端）所属的父会话与下标
+    /// 查找子连接所属的父会话与下标。
     fn find_sub_connection_index(&self, channel_id: &str) -> Option<(TabId, usize)> {
-        for (pid, handle) in self.sessions.iter() {
-            for (i, sub) in handle.sub_connections.iter().enumerate() {
+        for (pid, handle) in &self.sessions {
+            for (index, sub) in handle.sub_connections.iter().enumerate() {
                 if sub.id == channel_id {
-                    return Some((pid.clone(), i));
+                    return Some((pid.clone(), index));
                 }
             }
         }
         None
     }
 
-    /// 列出容器会话内所有对端（网络调试视图初始化用）
-    pub fn list_peers(&self, parent_id: &str) -> Vec<PeerInfo> {
-        let mut out = Vec::new();
-        if let Some(handle) = self.sessions.get(parent_id) {
-            for sub in &handle.sub_connections {
-                if sub.tabbed {
-                    continue;
-                }
-                out.push(PeerInfo {
-                    peer_id: sub.id.clone(),
-                    name: sub.name.clone(),
-                    addr: sub.peer_addr.clone().unwrap_or_default(),
-                    local_addr: sub.local_addr.clone().unwrap_or_default(),
-                    state: match sub.state {
-                        SessionState::Connected => "connected".into(),
-                        SessionState::Connecting => "connecting".into(),
-                        SessionState::Disconnected => "disconnected".into(),
-                        SessionState::Transferring => "transferring".into(),
-                    },
-                    tx_bytes: sub.io.tx_bytes(),
-                    rx_bytes: sub.io.rx_bytes(),
-                    connected_at: sub.connected_at,
-                });
-            }
-        }
-        out
-    }
-
-    /// 获取通信句柄（支持对端路由）。
-    ///
-    /// 先尝试匹配会话；否则搜索对端（网络调试）。对端拥有各自的 SessionIo，
-    /// 使文本转码、脚本、自动应答按对端生效。
+    /// 获取通信句柄（支持通用子连接路由）。
     pub fn get_io_for(&self, session_id: &str) -> Option<Arc<SessionIo>> {
         if let Some(handle) = self.sessions.get(session_id) {
             return handle.io.clone();
@@ -949,13 +696,7 @@ impl SessionStore {
     ///
     /// **阶段 1（本方法，持 store 锁）**：向脚本引擎 / 统计采集器 / I/O loop
     /// 发送全部关闭信号，并从 `sub_connections` 移除，返回待 join 的句柄。
-    /// **不在锁内 join** —— I/O 线程退出路径可能触发 on_disconnect 回调，
-    /// 回调需获取本 store 锁，持锁 join 会形成循环死锁。
-    ///
     /// **阶段 2（调用方，锁外）**：调用 [`SubConnectionCleanup::join`]。
-    ///
-    /// 返回 `(是否为最后一个子连接, 清理句柄)`；若为最后一个子连接，
-    /// 调用方应级联关闭父会话。
     pub fn close_sub_connection(
         &mut self,
         parent_id: &str,
@@ -998,8 +739,6 @@ impl SessionStore {
     }
 
     /// 解析 session_id，返回实际的顶层会话 ID。
-    ///
-    /// 如果 session_id 是子连接，返回其父会话的 ID；否则返回自身。
     pub fn resolve_parent_id(&self, session_id: &str) -> Option<String> {
         if self.sessions.contains_key(session_id) {
             return Some(session_id.to_string());
@@ -1009,7 +748,7 @@ impl SessionStore {
 
     /// 查找子连接所属的父会话 ID
     pub fn find_parent_of_channel(&self, channel_id: &str) -> Option<String> {
-        for (pid, handle) in self.sessions.iter() {
+        for (pid, handle) in &self.sessions {
             if handle.sub_connections.iter().any(|s| s.id == channel_id) {
                 return Some(pid.clone());
             }
@@ -1161,9 +900,7 @@ impl SessionStore {
         }
     }
 
-    /// 重连指定会话
-    /// TODO: 暴露为 Tauri 命令并在前端 ConnectDialog 编辑模式中使用，
-    /// 以保留 UUID 和 I/O 统计连续性（当前前端使用 delete+create 方式）。
+    /// 重连指定会话。
     pub fn reconnect_session(
         &mut self,
         session_id: &str,
@@ -1266,10 +1003,6 @@ impl SessionStore {
     }
 
     /// 注册传输 task 的 JoinHandle，供 close_session 等待完成。
-    ///
-    /// 每次 `tokio::spawn` 启动传输后调用此方法，将 handle 存入会话句柄。
-    /// `close_session()` 在 I/O 线程退出后 join 所有已注册的 handle，
-    /// 确保传输 task 的 Drop 清理逻辑执行完毕。
     pub fn register_transfer_task(
         &mut self,
         session_id: &str,
@@ -1277,7 +1010,6 @@ impl SessionStore {
     ) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
         let h = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        // 清理已完成的 handle，防止长时间运行会话中 transfer_tasks 无限增长
         h.transfer_tasks.retain(|h| !h.is_finished());
         h.transfer_tasks.push(handle);
         Ok(())
@@ -1289,10 +1021,6 @@ impl SessionStore {
     }
 
     /// 标记会话为已断开（由 on_disconnect 回调调用）。
-    ///
-    /// 调用时机：I/O 循环检测到连接丢失。
-    /// 注意：此时 I/O 线程正在退出，不应尝试 join（会死锁）。
-    /// 但必须取消 SFTP、脚本引擎和统计采集器，避免资源泄漏。
     pub fn mark_disconnected(&mut self, session_id: &str) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
             handle.state = SessionState::Disconnected;
@@ -1315,17 +1043,13 @@ impl SessionStore {
             if let Some(flag) = &handle.stats_cancel_flag {
                 flag.store(true, Ordering::SeqCst);
             }
-            if let Some(bridge) = handle.virtual_port_bridge.take() {
-                bridge.shutdown();
+            if let Some(service) = &handle.service {
+                service.shutdown();
             }
         }
     }
 
     /// 标记子连接为已断开（由子通道 I/O 回调调用）。
-    ///
-    /// 与 `mark_disconnected` 同理 — 调用时 I/O task 正在退出，不能 join 自己的线程。
-    /// 仅标记状态、取消统计采集器。实际的 I/O task join 由后续的 `close_sub_connection` 或
-    /// `close_session` 在安全上下文中执行。
     pub fn mark_sub_disconnected(
         &mut self,
         parent_id: &str,
@@ -1348,7 +1072,6 @@ impl SessionStore {
     }
 
     /// 启动 I/O 统计采集器（使用 std::thread + AtomicBool 取消，无需 tokio runtime）。
-    /// 子连接统计通过 [`Self::spawn_stats_collector`] 委托到此函数。
     fn start_stats_collector(
         app_handle: tauri::AppHandle,
         tab_id: String,
@@ -1395,7 +1118,6 @@ impl SessionStore {
 
     /// 获取会话持久化文件路径
     pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-        use tauri::Manager;
         let path = app_handle
             .path()
             .app_data_dir()
@@ -1481,9 +1203,6 @@ impl SessionStore {
     }
 
     /// 保存 Session Library 后执行一个外部提交步骤；外部步骤失败时恢复原 Library。
-    ///
-    /// 用于 SSH 这类“非敏感配置 + 安全凭据”跨存储提交，且整个文件回滚窗口始终
-    /// 持有 Session Library mutex，避免并发保存被旧快照覆盖。
     pub fn save_config_to_disk_transactional<F>(
         app_handle: &tauri::AppHandle,
         session: SavedSession,
@@ -1653,23 +1372,16 @@ mod persistence_tests {
         SavedSession {
             id: id.to_string(),
             name: format!("session-{id}"),
-            plugin_id: "serial".into(),
+            plugin_id: "dummy".into(),
             endpoint: "loopback".into(),
             params: serde_json::json!({
-                "baud_rate": 115200,
-                "data_bits": 8,
-                "parity": "none",
-                "stop_bits": "1",
-                "flow_control": "none",
-                "data_mode": "text",
-                "dual_frame_timeout_ms": 50,
                 "encoding": "utf-8",
-                "virtual_port_enabled": false,
-                "virtual_port_count": 1
+                "data_mode": "text",
+                "option": 42
             }),
             timestamp,
-            transfer_enabled: true,
-            transfer_protocol: Some("ymodem".into()),
+            transfer_enabled: false,
+            transfer_protocol: None,
             send_bar_enabled: true,
         }
     }
@@ -1686,7 +1398,7 @@ mod persistence_tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].id, "a");
         assert_eq!(loaded[1].id, "b");
-        assert_eq!(loaded[0].params["baud_rate"], 115200);
+        assert_eq!(loaded[0].params["option"], 42);
         let raw = std::fs::read_to_string(path).unwrap();
         assert!(raw.contains("\"version\": 2"));
         assert!(raw.contains("\"sessions\""));

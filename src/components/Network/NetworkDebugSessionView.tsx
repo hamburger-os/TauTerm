@@ -15,14 +15,23 @@
  * - UDP 由后端单 socket `recv_from` 直接 emit `session-data`（session_id = 容器，
  *   payload 带 `source_addr`），本组件逐报文记网格；
  * - `netdbg-peer-joined/left`、`session-stats` 由 SessionContext 全局监听维护 TCP 对端条目；
- * - TX：TCP 走 `subscribeDataSent`（群发扇出由 SessionContext.sendData 统一处理），
+ * - TX：TCP 走 `subscribeDataSent`（群发扇出由 Network plugin send contribution 统一处理），
  *   UDP 走 `subscribeNetworkManualSent`。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
-import { useSession, type NetworkPeerEntry } from "../../context/SessionContext";
+import { useSession } from "../../context/SessionContext";
+import { usePluginRuntime } from "../../core/usePluginRuntime";
+import {
+  getNetworkRuntime,
+  refreshNetworkPeers,
+  registerNetworkUdpSource,
+  selectNetworkPeer,
+  subscribeNetworkManualSent,
+  type NetworkPeerEntry,
+  type NetworkRuntimeSnapshot,
+} from "../../plugins/network/runtime-store";
 import { usePluginSessionStore, type SessionStoreApi } from "../../hooks/usePluginSessionStore";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import DualPane, { type DualLine } from "../Terminal/DualPane";
@@ -183,7 +192,7 @@ interface Props {
 
 export default function NetworkDebugSessionView({ sessionId }: Props) {
   const { t } = useTranslation();
-  const { state: sessionState, selectNetworkPeer, getNetworkPeers, mergeNetworkPeers, registerNetworkUdpSource, subscribeDataSent, subscribeNetworkManualSent, updateSessionStats } = useSession();
+  const { state: sessionState, subscribeDataSent, updateSessionStats } = useSession();
 
   // 容器会话参数（连接时确定，稳定）：transport / role / encoding / data_mode
   const containerTab = sessionState.tabs.find(tab => tab.id === sessionId);
@@ -193,9 +202,11 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
   /** 数据模式来自连接参数（与串口一致，会话内不可切换） */
   const displayMode = (containerTab?.params?.data_mode as TcpDisplayMode | undefined) ?? "dual";
 
-  // 对端数据源（SessionContext；ref 镜像供全局监听器读取最新列表）
-  const peers = sessionState.networkPeers[sessionId] ?? [];
-  const selectedPeerId = sessionState.selectedNetworkPeer[sessionId] ?? null;
+  // 对端运行态完全由 Network 插件拥有；公共 SessionContext 不解释 peer 语义。
+  const runtime = usePluginRuntime<NetworkRuntimeSnapshot>("network", sessionId);
+  const peers = [...runtime.peers];
+  const selectedPeerId = runtime.selectedPeerId;
+  const getNetworkPeers = useCallback((id: string): NetworkPeerEntry[] => [...getNetworkRuntime(id).peers], []);
   const peersRef = useRef<NetworkPeerEntry[]>([]);
   peersRef.current = peers;
 
@@ -224,27 +235,13 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
     keepAlive: true,
     onRelease: () => releaseListenerDeps(sessionId),
     onSessionDisconnected: () => {
-      // 容器断开：清理当前注册实例的分帧/解码器（对端注册由 SessionContext 级联清理）。
+      // 容器断开：清理当前注册实例的分帧/解码器（对端注册由 Network runtime store 级联清理）。
       clearListenerRuntime(sessionId);
       return { frames: {}, packets: [], rxBytes: 0, txBytes: 0, rxPackets: 0, txPackets: 0 };
     },
     getStatus: async (sid, _api) => {
-      try {
-        const list = await invoke<any[]>("list_network_peers", { sessionId: sid });
-        // 对端条目已迁至 SessionContext：快照合并进 context（保留既有统计）
-        mergeNetworkPeers(sid, list.map((p) => ({
-          peerId: p.peer_id,
-          name: p.name,
-          addr: p.addr,
-          localAddr: p.local_addr,
-          state: p.state === "connected" ? "connected" : "disconnected",
-          txBytes: p.tx_bytes ?? 0,
-          rxBytes: p.rx_bytes ?? 0,
-        })));
-        return undefined;
-      } catch {
-        return undefined;
-      }
+      await refreshNetworkPeers(sid);
+      return undefined;
     },
   });
 
@@ -446,7 +443,7 @@ function bytesToHex(bytes: Uint8Array): string {
 // ── 事件监听（会话级，仅注册一次） ─────────────────
 
 interface InitDeps {
-  /** 读取会话当前对端列表（读 SessionContext stateRef，非活跃会话也始终新鲜） */
+  /** 读取会话当前对端列表（读 Network runtime store，非活跃会话也始终新鲜） */
   getNetworkPeers: (containerId: string) => NetworkPeerEntry[];
   peersRef: React.MutableRefObject<NetworkPeerEntry[]>;
   framersRef: React.MutableRefObject<Map<string, StreamFramer>>;
@@ -492,7 +489,7 @@ function initListeners(
     }
 
     // TCP：session_id = 对端 UUID，需匹配对端再分帧。
-    // 对端匹配读 SessionContext stateRef（getNetworkPeers 始终新鲜）：
+    // 对端匹配读 Network runtime store（getNetworkPeers 始终新鲜）：
     // 非活跃会话视图不渲染，refs 会冻结，不能作为后台收发的路由依据。
     const peer = getNetworkPeers(api.sessionId).find(p => p.peerId === sid);
     if (!peer) return;
@@ -516,7 +513,7 @@ function initListeners(
     });
   });
 
-  // ── TX 回显（TCP 对端发送 → 追加 TX 行；群发扇出由 SessionContext.sendData 统一处理） ──
+  // ── TX 回显（TCP 对端发送 → 追加 TX 行；群发扇出由 Network plugin send contribution 统一处理） ──
   // 与 RX 一样注册在会话级持久监听器中（keepAlive=true）：视图切换/卸载后仍持续追加，
   // 保证后台发送期间的 TX 回显不丢失。UDP 的 TX 回显走 subscribeNetworkManualSent。
   const unDataSent = initDeps.subscribeDataSent((sid, bytes) => {

@@ -9,8 +9,11 @@
 pub mod capture;
 pub mod xml;
 
+pub const PLUGIN_ID: &str = "trdp";
+
 use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::{SessionAttach, SessionService};
+use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -53,31 +56,79 @@ pub struct TrdpRuntime {
     confirmable_md_sessions: Arc<Mutex<HashSet<String>>>,
 }
 
-fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpRuntime>>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpRuntime>>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+pub struct TrdpPlugin {
+    runtimes: SessionRuntimeRegistry<TrdpRuntime>,
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<TrdpRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
+impl TrdpPlugin {
+    pub fn new() -> Self {
+        Self {
+            runtimes: SessionRuntimeRegistry::new(),
+        }
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<TrdpRuntime>> {
+        self.runtimes.get(session_id)
+    }
 }
 
 struct RuntimeAttach {
     runtime: Arc<TrdpRuntime>,
+    runtimes: SessionRuntimeRegistry<TrdpRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
-        }
+        self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
+        self.runtimes.detach(session_id);
+    }
+}
+
+fn validate_session_config(params: &Value) -> Result<(), String> {
+    match params.get("mode").and_then(Value::as_str).unwrap_or("node") {
+        "node" | "monitor" => Ok(()),
+        mode => Err(format!("未知 TRDP 会话模式: {mode}")),
+    }
+}
+
+fn prepare_session_config(
+    services: &crate::plugin_application::SessionConfigServices<'_>,
+    session_id: &str,
+    params: &mut Value,
+) -> Result<crate::plugin_application::PreparedSessionConfig, String> {
+    if params.get("trdp_workspace").is_none() {
+        let workspace = services.session_store.lock().ok().and_then(|store| {
+            store
+                .get_session(session_id)
+                .and_then(|handle| handle.params.get("trdp_workspace"))
+                .cloned()
+        });
+        if let (Some(workspace), Some(object)) = (workspace, params.as_object_mut()) {
+            object.insert("trdp_workspace".to_string(), workspace);
         }
+    }
+    Ok(crate::plugin_application::PreparedSessionConfig::unchanged())
+}
+
+fn default_session_name(params: &Value, _endpoint: &str) -> Result<String, String> {
+    validate_session_config(params)?;
+    Ok(
+        if params.get("mode").and_then(Value::as_str) == Some("monitor") {
+            "TRDP @ Monitor".to_string()
+        } else {
+            "TRDP @ Node".to_string()
+        },
+    )
+}
+
+pub(crate) fn session_config_handler() -> crate::plugin_application::SessionConfigHandler {
+    crate::plugin_application::SessionConfigHandler {
+        validate: Some(validate_session_config),
+        prepare: prepare_session_config,
+        default_name: Some(default_session_name),
+        sanitize_saved: None,
+        delete: None,
     }
 }
 
@@ -655,6 +706,7 @@ pub async fn connect_session(
         return Err(format!("未知 TRDP 会话模式: {mode}"));
     }
 
+    let plugin = state.plugin::<TrdpPlugin>(PLUGIN_ID);
     let runtime = Arc::new(TrdpRuntime::new(params.clone()));
     let session_name = name.unwrap_or_else(|| {
         if mode == "monitor" {
@@ -686,6 +738,7 @@ pub async fn connect_session(
                 io: None,
                 attachment: Some(Arc::new(RuntimeAttach {
                     runtime: runtime.clone(),
+                    runtimes: plugin.runtimes.clone(),
                 })),
                 teardown_delay: std::time::Duration::ZERO,
             },
@@ -1103,7 +1156,10 @@ pub fn trdp_command(
         _ => {}
     }
 
-    let trdp = runtime(&session_id).ok_or("会话不是 TRDP 会话")?;
+    let trdp = state
+        .plugin::<TrdpPlugin>(PLUGIN_ID)
+        .runtime(&session_id)
+        .ok_or("会话不是 TRDP 会话")?;
     let operation = command
         .get("command")
         .and_then(Value::as_str)

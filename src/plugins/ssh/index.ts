@@ -1,18 +1,33 @@
-/**
- * SSH 插件前端注册
- *
- * 向内核注册 SSH 协议插件的 manifest、翻译资源和运行时状态贡献。
- */
+/** SSH frontend plugin registration. */
 import { createElement } from "react";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
 import SshStatusItems from "./SshStatusItems";
+import SshHostKeyGate from "./SshHostKeyGate";
+import { SshFileManagerSidebarPanel, SshJournaldSidebarPanel } from "./SshRightSidebarPanels";
+
+function formatHostPort(host: string, port: number): string {
+  const trimmedHost = host.trim();
+  const displayHost = trimmedHost.includes(":")
+    && !(trimmedHost.startsWith("[") && trimmedHost.endsWith("]"))
+    ? `[${trimmedHost}]`
+    : trimmedHost;
+  return `${displayHost}:${port}`;
+}
 
 const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
   activeTab?.state === "connected" || activeTab?.state === "transferring";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  persistedConnectionParams: (params, sessionId) => {
+    const persisted = { ...params };
+    delete persisted.password;
+    delete persisted.private_key;
+    delete persisted.passphrase;
+    persisted.credential_account = `ssh-session:${sessionId}`;
+    return persisted;
+  },
   sessionPresentation: {
     defaultName: params => {
       const username = typeof params.username === "string" && params.username.trim()
@@ -20,6 +35,31 @@ registerPlugin({
         : "root";
       return `SSH @ ${username}`;
     },
+    subtitle: (params, endpoint) => {
+      const host = typeof params.host === "string" && params.host.trim()
+        ? params.host.trim()
+        : endpoint;
+      const port = typeof params.port === "number" && Number.isInteger(params.port)
+        && params.port > 0 && params.port <= 65535
+        ? params.port
+        : 22;
+      return formatHostPort(host, port);
+    },
+  },
+  appOverlay: SshHostKeyGate,
+  rightSidebar: {
+    panels: [
+      {
+        id: "ssh-file-manager",
+        when: params => params.file_service_enabled === true,
+        component: SshFileManagerSidebarPanel,
+      },
+      {
+        id: "ssh-journald",
+        when: params => params.journald_enabled === true,
+        component: SshJournaldSidebarPanel,
+      },
+    ],
   },
   statusBarItems: [
     {

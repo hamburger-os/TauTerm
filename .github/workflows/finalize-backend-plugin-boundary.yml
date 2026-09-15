@@ -1,0 +1,154 @@
+name: Finalize Backend Plugin Boundary
+on:
+  push:
+    branches: [refactor/plugin-boundary-cleanup]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply backend plugin boundary migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/finalize-backend-plugin-boundary.py')
+          text = path.read_text(encoding='utf-8')
+          old_brace = "    brace = text.find('{', match.end())"
+          new_brace = "    brace = text.find('{', match.start())"
+          if text.count(old_brace) != 1:
+              raise SystemExit(f'item parser brace marker expected 1 match, got {text.count(old_brace)}')
+          text = text.replace(old_brace, new_brace, 1)
+          start = text.index('alias_match = re.search(')
+          end = text.index('\nsave_marker =', start)
+          replacement = '''alias_start = commands.find("pub(crate) type SessionConnectFuture")
+          alias_end = commands.find("macro_rules! define_session_connector", alias_start)
+          if alias_start < 0 or alias_end < 0:
+              raise SystemExit("Session connector aliases not found")
+          connector_aliases = commands[alias_start:alias_end]
+          commands = commands[:alias_start] + commands[alias_end:]
+          '''
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+          python3 .github/finalize-backend-plugin-boundary.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          def remove_fn(path: str, signature: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              pos = text.find(signature)
+              if pos < 0:
+                  raise SystemExit(f'{label}: signature not found')
+              line_start = text.rfind('\n', 0, pos) + 1
+              while line_start > 0:
+                  prev_end = line_start - 1
+                  prev_start = text.rfind('\n', 0, prev_end) + 1
+                  previous = text[prev_start:prev_end].strip()
+                  if previous.startswith('#[') or previous.startswith('///') or previous == '':
+                      line_start = prev_start
+                  else:
+                      break
+              brace = text.find('{', pos)
+              depth = 0
+              end = None
+              for index in range(brace, len(text)):
+                  if text[index] == '{':
+                      depth += 1
+                  elif text[index] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end = index + 1
+                          break
+              if end is None:
+                  raise SystemExit(f'{label}: closing brace not found')
+              while end < len(text) and text[end] == '\n':
+                  end += 1
+              p.write_text(text[:line_start] + text[end:], encoding='utf-8')
+
+          replace_once(
+              'src-tauri/src/lib.rs',
+              'plugins::network::plugins::network::commands::network_udp_send_to',
+              'plugins::network::commands::network_udp_send_to',
+              'network send_to invoke path',
+          )
+          replace_once(
+              'src-tauri/src/plugin_application.rs',
+              'use crate::kernel::plugin_adapter::ProtocolConnection;\n',
+              '',
+              'unused ProtocolConnection import',
+          )
+          replace_once(
+              'src-tauri/src/commands.rs',
+              'use tauri::{AppHandle, Emitter, Manager, State};\n',
+              'use tauri::{AppHandle, Emitter, State};\n',
+              'unused Manager import',
+          )
+          replace_once(
+              'src-tauri/src/plugin_application.rs',
+              'pub(crate) struct PreparedSessionConfig {\n    commit: Option<Box<dyn FnOnce(&CredentialStore) -> Result<(), String> + Send>>,\n}',
+              'type SessionConfigCommit = Box<dyn FnOnce(&CredentialStore) -> Result<(), String> + Send>;\n\npub(crate) struct PreparedSessionConfig {\n    commit: Option<SessionConfigCommit>,\n}',
+              'SessionConfig commit type alias',
+          )
+          replace_once(
+              'src-tauri/src/plugins/trdp.rs',
+              '/// TRDP connection implementation called by the shared kernel connection router.\n\npub(crate) fn session_connector(',
+              '/// TRDP connection implementation called by the shared kernel connection router.\npub(crate) fn session_connector(',
+              'TRDP connector doc spacing',
+          )
+          remove_fn(
+              'src-tauri/src/plugins/serial/mod.rs',
+              'pub fn virtual_endpoints(&self)',
+              'unused Serial virtual_endpoints method',
+          )
+          remove_fn(
+              'src-tauri/src/commands.rs',
+              'fn saved_session(plugin_id: &str, params: Value)',
+              'unused command test saved_session helper',
+          )
+          PY
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Documentation contract
+        run: npm run docs:check
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Rust check
+        run: cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Rust clippy
+        run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Commit migration and remove one-shot tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/finalize-backend-plugin-boundary.py .github/workflows/finalize-backend-plugin-boundary.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: move protocol commands behind plugin boundary"
+          git push origin HEAD:refactor/plugin-boundary-cleanup

@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
@@ -7,7 +8,9 @@ import LocalShellConnectForm from "./LocalShellConnectForm";
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: LocalShellConnectForm,
+  resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),
   toolbarItems: [],
+  rightSidebar: { available: () => false },
   statusBarItems: [
     {
       id: "local-shell-type",

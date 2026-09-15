@@ -22,6 +22,7 @@ mod ipc_transport;
 mod kernel;
 #[cfg(test)]
 mod performance_contract;
+mod plugin_application;
 mod plugins;
 mod security;
 mod session;
@@ -159,6 +160,23 @@ fn build_plugin_runtime() -> PluginRuntime {
         commands::modbus_session_connector,
     );
 
+    for (plugin_id, handler) in [
+        (
+            plugins::ssh::PLUGIN_ID,
+            plugins::ssh::application::session_config_handler(),
+        ),
+        (
+            plugins::local_shell::PLUGIN_ID,
+            plugins::local_shell::session_config_handler(),
+        ),
+    ] {
+        let plugin_id =
+            kernel::plugin_adapter::PluginId::parse(plugin_id).expect("built-in plugin id");
+        runtime
+            .register_contribution(&plugin_id, handler)
+            .unwrap_or_else(|error| panic!("注册 Session 配置 contribution 失败: {error}"));
+    }
+
     let trdp_id = runtime
         .register_manifest(parse_builtin_manifest(include_str!(
             "../../src/plugin-manifests/trdp.json"
@@ -170,6 +188,12 @@ fn build_plugin_runtime() -> PluginRuntime {
             commands::trdp_session_connector as commands::SessionConnectHandler,
         )
         .unwrap_or_else(|error| panic!("注册 TRDP 连接 contribution 失败: {error}"));
+    runtime
+        .register_contribution(&trdp_id, plugins::trdp::TrdpPlugin::new())
+        .unwrap_or_else(|error| panic!("注册 TRDP runtime contribution 失败: {error}"));
+    runtime
+        .register_contribution(&trdp_id, plugins::trdp::session_config_handler())
+        .unwrap_or_else(|error| panic!("注册 TRDP Session 配置 contribution 失败: {error}"));
 
     runtime
 }
@@ -545,7 +569,7 @@ pub fn run() {
             plugins::trdp::trdp_decode_dataset,
             commands::load_sessions,
             commands::save_session_config,
-            commands::resolve_local_shell_session_name,
+            plugins::local_shell::resolve_local_shell_session_name,
             commands::delete_session_config,
             commands::file_transfer_send,
             commands::file_transfer_receive,

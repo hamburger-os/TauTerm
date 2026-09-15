@@ -21,12 +21,9 @@ use crate::kernel::session_store::{
     ContainerSessionCreateOptions, ContainerSessionRuntime, SessionCreateOptions, SessionState,
     SessionStore,
 };
+use crate::plugin_application::{SessionConfigHandler, SessionConfigServices};
 use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transport::DataPlaneRuntime;
-use crate::virtual_port::backend::{
-    contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig,
-};
-use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::AppState;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -105,7 +102,6 @@ pub struct ConnectSessionRequest {
     pub transfer_enabled: Option<bool>,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
-    pub journald_enabled: Option<bool>,
     pub session_id: Option<String>,
     #[serde(default)]
     pub initial_elevated: bool,
@@ -157,235 +153,6 @@ pub struct SaveSessionConfigRequest {
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
     pub session_id: Option<String>,
-}
-
-const SSH_CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
-
-fn ssh_credential_account(session_id: &str) -> String {
-    format!("ssh-session:{session_id}")
-}
-
-fn non_empty_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-}
-
-fn ssh_credential_from_params(
-    params: &Value,
-) -> Result<
-    Option<(
-        crate::security::credential_store::CredentialType,
-        crate::security::credential_store::CredentialValue,
-    )>,
-    String,
-> {
-    use crate::security::credential_store::{CredentialType, CredentialValue};
-
-    let auth_method = params
-        .get("auth_method")
-        .and_then(Value::as_str)
-        .unwrap_or("password");
-
-    match auth_method {
-        "password" => Ok(non_empty_param(params, "password").map(|password| {
-            (
-                CredentialType::Password,
-                CredentialValue::Password(password.to_string()),
-            )
-        })),
-        "key" => Ok(non_empty_param(params, "private_key").map(|private_key| {
-            let passphrase = non_empty_param(params, "passphrase").map(str::to_string);
-            (
-                CredentialType::SshKey,
-                CredentialValue::SshKey {
-                    private_key: private_key.to_string(),
-                    passphrase,
-                },
-            )
-        })),
-        other => Err(format!("不支持的 SSH 认证方式: {other}")),
-    }
-}
-
-fn credential_matches_auth(
-    auth_method: &str,
-    credential: &crate::security::credential_store::CredentialValue,
-) -> bool {
-    use crate::security::credential_store::CredentialValue;
-
-    matches!(
-        (auth_method, credential),
-        ("password", CredentialValue::Password(_)) | ("key", CredentialValue::SshKey { .. })
-    )
-}
-
-fn strip_ssh_secret_fields(params: &mut Value) -> Result<bool, String> {
-    let object = params
-        .as_object_mut()
-        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    let mut changed = false;
-    changed |= object.remove("password").is_some();
-    changed |= object.remove("private_key").is_some();
-    changed |= object.remove("passphrase").is_some();
-    Ok(changed)
-}
-
-fn scrub_ssh_secrets_from_saved_sessions(
-    sessions: &mut [crate::kernel::session_store::SavedSession],
-) -> Result<bool, String> {
-    let mut changed = false;
-    for session in sessions {
-        if session.plugin_id == "ssh" {
-            changed |= strip_ssh_secret_fields(&mut session.params)?;
-        }
-    }
-    Ok(changed)
-}
-
-#[derive(Debug)]
-struct PendingSshCredential {
-    account: String,
-    credential_type: crate::security::credential_store::CredentialType,
-    value: crate::security::credential_store::CredentialValue,
-    description: String,
-}
-
-/// Prepare the only supported SSH persistence model without mutating the credential store.
-///
-/// Plaintext authentication material is accepted only as transient input. Persisted/session params
-/// contain only the deterministic credential account reference. A new credential is returned as a
-/// pending commit so the Session Library and credential store can be coordinated transactionally.
-fn prepare_ssh_session_params(
-    state: &AppState,
-    session_id: &str,
-    params: &mut Value,
-) -> Result<Option<PendingSshCredential>, String> {
-    use crate::security::credential_store::CredentialStoreError;
-
-    let auth_method = params
-        .get("auth_method")
-        .and_then(Value::as_str)
-        .unwrap_or("password")
-        .to_string();
-    let account = ssh_credential_account(session_id);
-
-    let pending = if let Some((credential_type, value)) = ssh_credential_from_params(params)? {
-        let username = params
-            .get("username")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let host = params
-            .get("host")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        Some(PendingSshCredential {
-            account: account.clone(),
-            credential_type,
-            value,
-            description: format!("SSH {username}@{host}"),
-        })
-    } else {
-        match state.credential_store.get_credential(&account) {
-            Ok(value) if credential_matches_auth(&auth_method, &value) => {}
-            Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
-            Err(CredentialStoreError::NotFound(_)) => {
-                return Err("SSH 会话没有可用的安全凭据，请重新输入密码或私钥".into());
-            }
-            Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
-        }
-        None
-    };
-
-    let object = params
-        .as_object_mut()
-        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    object.insert(
-        SSH_CREDENTIAL_ACCOUNT_KEY.to_string(),
-        Value::String(account),
-    );
-    strip_ssh_secret_fields(params)?;
-    Ok(pending)
-}
-
-fn commit_ssh_credential(state: &AppState, pending: PendingSshCredential) -> Result<(), String> {
-    state
-        .credential_store
-        .store_credential(
-            &pending.account,
-            pending.credential_type,
-            pending.value,
-            &pending.description,
-        )
-        .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
-}
-
-fn apply_ssh_credential(
-    config: &mut crate::plugins::ssh::SshConfig,
-    credential: crate::security::credential_store::CredentialValue,
-) -> Result<(), String> {
-    use crate::security::credential_store::CredentialValue;
-
-    match (config.auth_method.as_str(), credential) {
-        ("password", CredentialValue::Password(password)) => {
-            config.password = Some(password);
-            config.private_key = None;
-            config.passphrase = None;
-        }
-        (
-            "key",
-            CredentialValue::SshKey {
-                private_key,
-                passphrase,
-            },
-        ) => {
-            config.password = None;
-            config.private_key = Some(private_key);
-            config.passphrase = passphrase;
-        }
-        _ => {
-            return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
-        }
-    }
-    Ok(())
-}
-
-fn hydrate_ssh_config(
-    state: &AppState,
-    params: &Value,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
-    let mut config: crate::plugins::ssh::SshConfig =
-        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-
-    let account = params
-        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
-
-    let credential = state
-        .credential_store
-        .get_credential(account)
-        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
-
-    apply_ssh_credential(&mut config, credential)?;
-    Ok(config)
-}
-
-fn hydrate_ssh_config_with_pending(
-    state: &AppState,
-    params: &Value,
-    pending: Option<&PendingSshCredential>,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
-    if let Some(pending) = pending {
-        let mut config: crate::plugins::ssh::SshConfig =
-            serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-        apply_ssh_credential(&mut config, pending.value.clone())?;
-        Ok(config)
-    } else {
-        hydrate_ssh_config(state, params)
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -582,336 +349,124 @@ async fn connect_session_serial(
         session_id,
         ..
     } = request;
-    // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
-    let conn = state
-        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
+    let adapter =
+        state.plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID);
+    let conn = adapter
         .connect(&endpoint, &params)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    let params_clone = params.clone();
     let session_name = name.unwrap_or_default();
-    // 提前读取虚拟串口开关，决定是否创建桥接数据通道
-    let virtual_enabled = params_clone
-        .get("virtual_port_enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    log::info!(
-        "connect_session_serial: virtual_port_enabled={}, params keys={:?}",
-        virtual_enabled,
-        params_clone
-            .as_object()
-            .map(|o| o.keys().collect::<Vec<_>>())
-    );
-    // 获取 data_mode 用于日志格式化
-    let data_mode = params_clone
+    let data_mode = params
         .get("data_mode")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("text")
         .to_string();
-    let data_mode_for_log = data_mode.clone(); // clone for use after the closure
-                                               // 会话字符编码（用于日志按编码解码为 UTF-8）
-    let encoding_for_log = params_clone
+    let encoding = params
         .get("encoding")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("utf-8")
         .to_string();
-
-    let app_data = app.clone();
-    let log_tx = {
-        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
-    };
-
-    // 共享 on_data 回调只负责 UI 批处理与日志；脚本/虚拟串口均通过
-    // DataPlane subscription 独立消费，避免耦合或静默丢字节。
-    let on_data = create_on_data_callback(&app_data, log_tx, data_mode.clone(), encoding_for_log);
+    let log_tx = state.log_engine.lock().map_err(|e| e.to_string())?.sender();
+    let on_data = create_on_data_callback(&app, log_tx, data_mode.clone(), encoding);
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
         Box::new(move |session_id, info| {
-            let app_state: State<'_, AppState> = app_disconnect.state();
-
-            // 1. 在 mark_disconnected 之前读取虚拟端口对
-            //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
-            let pairs: Vec<VirtualEndpoint> = {
-                let store = match app_state.session_store.lock() {
-                    Ok(s) => s,
-                    Err(e) => e.into_inner(),
-                };
-                store
-                    .get_session(&session_id)
-                    .map(|h| h.virtual_endpoints.clone())
-                    .unwrap_or_default()
-            };
-
-            // 2. 标记运行态断开 — Saved Session Library 由显式配置命令独立持久化
-            if let Ok(mut store) = app_state.session_store.lock() {
+            if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
                 store.mark_disconnected(&session_id);
             }
-
-            // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
-            if !pairs.is_empty() {
-                if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
-                    for pair in &pairs {
-                        let _ = vpm.destroy_endpoint(pair);
-                    }
-
-                    // 检查是否有因权限不足而写入 state 文件的残留端口
-                    // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
-                    // 下次连接的 create_endpoints_elevated），避免在断开回调中突然弹窗
-                    let orphan_count = vpm.pending_orphan_count();
-                    if orphan_count > 0 {
-                        log::warn!(
-                            "Session {} disconnected: {} port pair(s) need admin cleanup — \
-                         deferred to next explicit user action",
-                            session_id,
-                            orphan_count
-                        );
-                    }
-
-                    log::info!(
-                        "已清理断开会话 {} 的虚拟端口对 ({} 对)",
-                        session_id,
-                        pairs.len()
-                    );
-                }
-            }
-
             let _ = app_disconnect.emit(
                 "session-disconnected",
                 serde_json::json!({
                     "session_id": session_id,
-                    "reason": info.reason,
-                    "disconnect_info": info,
+                    "reason": &info.reason,
+                    "disconnect_info": &info,
                 }),
             );
         });
 
-    let transfer_enabled_val = transfer_enabled.unwrap_or(true);
-    let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
-    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
-
-    // 在作用域块内创建会话并保存，利用 RAII 自动释放 MutexGuard
-    let session_id = {
+    let transfer_enabled = transfer_enabled.unwrap_or(true);
+    let transfer_protocol = transfer_protocol.unwrap_or_else(|| "ymodem".into());
+    let send_bar_enabled = send_bar_enabled.unwrap_or(true);
+    let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let session_id = store.create_session(
+        store.create_session(
             SessionCreateOptions {
                 name: session_name.clone(),
-                plugin_id: "serial".into(),
+                plugin_id: crate::plugins::serial::PLUGIN_ID.into(),
                 endpoint: endpoint.clone(),
-                params,
-                transfer_enabled: transfer_enabled_val,
-                transfer_protocol: Some(transfer_protocol_val.clone()),
-                send_bar_enabled: send_bar_enabled_val,
+                params: params.clone(),
+                transfer_enabled,
+                transfer_protocol: Some(transfer_protocol.clone()),
+                send_bar_enabled,
                 id_override: session_id,
             },
             conn,
             on_data,
             on_disconnect,
             app.clone(),
-        )?;
-
-        // Runtime Session 只消费 Saved Session 配置；连接生命周期不反向覆盖 Library。
-        session_id
+        )?
     };
 
-    // ── 虚拟串口桥接 ──
-    // virtual_enabled 已在上面读取，这里只读取 virtual_count
-    let virtual_count = params_clone
-        .get("virtual_port_count")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-        .unwrap_or(0);
-
-    // vport_endpoints_json declared here so it's in scope for the session-connected emit below
-    // (even when virtual ports are disabled)
-    let mut vport_endpoints_json: Vec<serde_json::Value> = Vec::new();
-
-    // ── Virtual port pair creation + direct DataPlane/SessionIo bridge ──
-    if virtual_enabled && virtual_count > 0 {
-        let config = VirtualPortConfig {
-            enabled: true,
-            count: virtual_count,
-        };
-        let mut vpm = state
-            .virtual_port_manager
-            .lock()
-            .map_err(|e| e.to_string())?;
-
-        // 记录虚拟端口创建失败的真实原因，用于 `virtual-port-failed` 事件，避免
-        // 用一句写死的 "driver not installed" 掩盖真实问题（如端口耗尽、UAC 被取消）。
-        let mut vport_error: Option<String> = None;
-        let pairs: Vec<VirtualEndpoint> = vpm
-            .create_endpoints(&config)
-            .or_else(|first_err| {
-                log::warn!("直接创建端口对失败: {}；尝试先安装驱动...", first_err);
-                vpm.install_driver()
-                    .and_then(|_| vpm.create_endpoints(&config))
-            })
-            .unwrap_or_else(|e| {
-                let is_elevation = contains_elevation_indicator(&e);
-                if is_elevation && vpm.detect_driver() {
-                    log::info!("驱动已安装，尝试通过 UAC 提权创建端口对...");
-                    match vpm.create_endpoints_elevated(&config) {
-                        Ok(pairs) => return pairs,
-                        Err(elevated_err) => log::warn!("提权创建端口对也失败: {}", elevated_err),
-                    }
-                }
-                log::warn!("虚拟端口创建失败: {}", e);
-                vport_error = Some(e);
+    let virtual_endpoints = match adapter.runtime(&sid) {
+        Some(runtime) => runtime
+            .initialize_virtual_ports(&app, &sid, &params)
+            .unwrap_or_else(|error| {
+                log::warn!("Serial 虚拟串口 capability 初始化失败 (session={sid}): {error}");
+                let _ = app.emit(
+                    "virtual-port-failed",
+                    serde_json::json!({
+                        "session_id": sid,
+                        "kind": "create_failed",
+                        "reason": error,
+                    }),
+                );
                 Vec::new()
-            });
-        drop(vpm);
-
-        // 序列化 pairs 供 session-connected 事件使用
-        vport_endpoints_json = pairs
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "external_path": p.external_path,
-                })
-            })
-            .collect();
-
-        if !pairs.is_empty() {
-            let virtual_port_names: Vec<String> =
-                pairs.iter().map(|pair| pair.bridge_path.clone()).collect();
-            let virtual_baud_rate = params_clone
-                .get("baud_rate")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as u32)
-                .ok_or_else(|| "串口配置缺少有效 baud_rate".to_string())?;
-            let io = {
-                let store = state
-                    .session_store
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                store
-                    .get_io_for(&session_id)
-                    .ok_or_else(|| "串口会话缺少共享 I/O capability".to_string())?
-            };
-            let error_app = app.clone();
-            let error_session_id = session_id.clone();
-            match VirtualPortBridge::spawn(
-                virtual_port_names,
-                virtual_baud_rate,
-                io,
-                Box::new(move |reason| {
-                    let _ = error_app.emit(
-                        "virtual-port-failed",
-                        serde_json::json!({
-                            "session_id": error_session_id,
-                            "kind": "bridge_failed",
-                            "reason": reason,
-                        }),
-                    );
-                }),
-            ) {
-                Ok(bridge) => {
-                    {
-                        let mut store = state
-                            .session_store
-                            .lock()
-                            .map_err(|error| error.to_string())?;
-                        if let Some(handle) = store.get_session_mut(&session_id) {
-                            handle.virtual_port_bridge = Some(bridge);
-                            handle.virtual_endpoints = pairs.clone();
-                        }
-                    }
-                    let _ = app.emit(
-                        "virtual-port-created",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "endpoints": &vport_endpoints_json,
-                        }),
-                    );
-                }
-                Err(reason) => {
-                    // VPort is an optional capability. Roll back only the endpoints that were just
-                    // created; the already-established physical Serial session remains valid.
-                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-                        for pair in &pairs {
-                            let _ = vpm.destroy_endpoint(pair);
-                        }
-                    }
-                    vport_endpoints_json.clear();
-                    log::warn!("虚拟端口桥接启动失败 (session={}): {}", session_id, reason);
-                    let _ = app.emit(
-                        "virtual-port-failed",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "kind": "bridge_failed",
-                            "reason": reason,
-                        }),
-                    );
-                }
-            }
-        } else {
-            // 使用真实失败原因，避免用一句写死的 "driver not installed" 掩盖
-            // 端口耗尽 / UAC 被取消等真实问题。
-            let detail = vport_error.clone().unwrap_or_else(|| {
-                "com0com driver not installed. Run TauTerm as administrator once to install the driver."
-                    .to_string()
-            });
-            // 粗略分类，供前端映射到 i18n 文案（而非把英文错误直接展示给用户）
-            let detail_lower = detail.to_lowercase();
-            let kind = if detail_lower.contains("driver files missing") {
-                "files_missing"
-            } else if detail_lower.contains("driver not installed") {
-                "driver_missing"
-            } else if contains_elevation_indicator(&detail) || detail_lower.contains("cancel") {
-                "permission"
-            } else {
-                "create_failed"
-            };
-            log::warn!("虚拟端口创建失败 (session={}): {}", session_id, detail);
-            let _ = app.emit(
-                "virtual-port-failed",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "kind": kind,
-                    "reason": detail,
-                }),
-            );
+            }),
+        None => {
+            log::warn!("Serial runtime 未注册 (session={sid})");
+            Vec::new()
         }
-    }
+    };
+
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store
-            .get_session(&session_id)
-            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
-            .unwrap_or((session_name, params_clone, None))
+            .get_session(&sid)
+            .map(|handle| {
+                (
+                    handle.name.clone(),
+                    handle.params.clone(),
+                    handle.connected_at,
+                )
+            })
+            .unwrap_or((session_name, params.clone(), None))
     };
 
     log::info!(
         "会话已连接: {} @ {} (data_mode={})",
         actual_name,
         endpoint,
-        data_mode_for_log
+        data_mode
     );
-
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": sid,
             "endpoint": endpoint,
-            "connection_type": "serial",
-            "plugin_id": "serial",
+            "connection_type": crate::plugins::serial::PLUGIN_ID,
+            "plugin_id": crate::plugins::serial::PLUGIN_ID,
             "name": actual_name,
             "params": actual_params,
             "connected_at": connected_at,
-            "transfer_enabled": transfer_enabled_val,
-            "transfer_protocol": transfer_protocol_val,
-            "send_bar_enabled": send_bar_enabled_val,
-            // 合并虚拟端口对信息到 session-connected 中，
-            // 避免 virtual-port-created 事件先于 session-connected 到达
-            // 前端时因 tab 尚未创建而丢失数据
-            "virtual_endpoints": vport_endpoints_json,
+            "transfer_enabled": transfer_enabled,
+            "transfer_protocol": transfer_protocol,
+            "send_bar_enabled": send_bar_enabled,
+            "virtual_endpoints": virtual_endpoints,
         }),
     );
-
-    Ok(session_id)
+    Ok(sid)
 }
 
 /// Telnet 会话连接（TelnetAdapter → Channel → SessionStore）
@@ -1160,7 +715,6 @@ async fn connect_session_ssh(
         transfer_enabled,
         transfer_protocol,
         send_bar_enabled,
-        journald_enabled,
         session_id,
         ..
     } = request;
@@ -1168,24 +722,20 @@ async fn connect_session_ssh(
     let effective_session_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let pending_ssh_credential =
-        prepare_ssh_session_params(&state, &effective_session_id, &mut params)?;
-    let ssh_config =
-        hydrate_ssh_config_with_pending(&state, &params, pending_ssh_credential.as_ref())?;
-
-    // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
-    // reconfigure/restore 统一从当前 Session params 读取。
-    let journald_enabled_val = if let Some(obj) = params.as_object_mut() {
-        if let Some(existing) = obj.get("journald_enabled").and_then(|v| v.as_bool()) {
-            existing
-        } else {
-            let v = journald_enabled.unwrap_or(false);
-            obj.insert("journald_enabled".to_string(), serde_json::Value::Bool(v));
-            v
-        }
-    } else {
-        journald_enabled.unwrap_or(false)
-    };
+    let pending_ssh_credential = crate::plugins::ssh::application::prepare_session_params(
+        &state.credential_store,
+        &effective_session_id,
+        &mut params,
+    )?;
+    let ssh_config = crate::plugins::ssh::application::hydrate_config_with_pending(
+        &state.credential_store,
+        &params,
+        pending_ssh_credential.as_ref(),
+    )?;
+    let journald_enabled_val = params
+        .get("journald_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     // SSH 插件自己持有 known-host 验证状态；AppState 只通过 PluginRuntime 取得 contribution。
     let ssh_adapter =
@@ -1281,7 +831,9 @@ async fn connect_session_ssh(
     // Persist transient credentials only after the SSH parent and channel 0 are both
     // registered and readable. A credential failure rolls back the newly-created runtime Session.
     if let Some(pending) = pending_ssh_credential {
-        if let Err(error) = commit_ssh_credential(&state, pending) {
+        if let Err(error) =
+            crate::plugins::ssh::application::commit_credential(&state.credential_store, pending)
+        {
             if let Ok(mut store) = state.session_store.lock() {
                 if let Err(cleanup_error) = store.close_session(&parent_id) {
                     log::warn!(
@@ -1376,82 +928,37 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：读取 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
-    let (pairs_to_destroy, session_name, is_tftp, is_iperf) = {
+    let (session_name, plugin_id) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-
         let handle = store
             .get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
-        let pairs = handle.virtual_endpoints.clone();
-        let name = handle.name.clone();
-        let is_tftp = handle.plugin_id == "tftp";
-        let is_iperf = handle.plugin_id == "iperf";
+        let snapshot = (handle.name.clone(), handle.plugin_id.clone());
         store.close_session(&session_id)?;
         store.reset_child_counter(&session_id);
-        // Disconnected 属于运行态，不写回 Saved Session Library。
-        (pairs, name, is_tftp, is_iperf)
+        snapshot
     };
-    // 锁已释放 — close_session 内部已关闭桥接
 
-    // 销毁虚拟端口对（从内核驱动移除 → 外部工具感知 COM 端口消失）
-    if !pairs_to_destroy.is_empty() {
-        if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-            for pair in &pairs_to_destroy {
-                let _ = vpm.destroy_endpoint(pair);
-                // destroy_endpoint 对权限错误返回 Ok(()) 但通过 mark_for_deferred_cleanup
-                // 将 bus 号写入 state 文件，后续统一 UAC 清理
-            }
-
-            // 检查是否有因权限不足而写入 state 文件的残留端口
-            if vpm.pending_orphan_count() > 0 {
-                log::info!(
-                    "断开连接: {} 个端口对需要管理员权限，通过 UAC 批量清理...",
-                    vpm.pending_orphan_count()
-                );
-                match vpm.cleanup_endpoints_elevated() {
-                    Ok(cleaned) => {
-                        log::info!("断开连接: 通过 UAC 成功清理 {} 个端口对", cleaned);
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "断开连接: UAC 清理失败: {} — 可通过状态栏[清理残留端口]按钮手动清理",
-                            e
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!("会话已断开: {} (虚拟端口已清理)", session_name);
-    // TFTP 会话断开后通知前端服务端已停止
-    if is_tftp {
+    log::info!("会话已断开: {} ({})", session_name, plugin_id);
+    if plugin_id == crate::plugins::tftp::PLUGIN_ID {
         let _ = app.emit(
             "tftp-server-status",
-            serde_json::json!({
-                "session_id": session_id,
-                "running": false,
-            }),
+            serde_json::json!({ "session_id": session_id, "running": false }),
         );
     }
-    // iperf 会话断开 = 服务端生命周期结束（shutdown() 已复位 server_running，
-    // 此处显式通知前端刷新右侧面板状态）
-    if is_iperf {
+    if plugin_id == crate::plugins::iperf::PLUGIN_ID {
         let _ = app.emit(
             "iperf-server-status",
-            serde_json::json!({
-                "session_id": session_id,
-                "running": false,
-            }),
+            serde_json::json!({ "session_id": session_id, "running": false }),
         );
     }
+    let info = DisconnectInfo::user_requested();
     let _ = app.emit(
         "session-disconnected",
         serde_json::json!({
             "session_id": session_id,
-            "reason": "User requested disconnect",
-            "disconnect_info": DisconnectInfo::user_requested(),
+            "reason": &info.reason,
+            "disconnect_info": &info,
         }),
     );
     Ok(())
@@ -1545,8 +1052,8 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                 if sub.state == SessionState::Disconnected {
                     continue; // 跳过已断开的子连接，等待 channel-closed 事件触发 REMOVE_CHILD
                 }
-                if !sub.tabbed {
-                    continue; // 会话内对端（网络调试）不占标签页，由自定义视图展示
+                if !sub.visible_in_workspace {
+                    continue; // 插件后台子连接不直接占用 Workspace 标签页
                 }
                 tabs.push(TabInfo {
                     id: sub.id.clone(),
@@ -1937,9 +1444,10 @@ pub async fn open_channel(
 pub fn list_network_peers(
     state: State<'_, AppState>,
     session_id: String,
-) -> Result<Vec<crate::kernel::session_store::PeerInfo>, String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    Ok(store.list_peers(&session_id))
+) -> Result<Vec<crate::plugins::network::NetworkPeerInfo>, String> {
+    Ok(state
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
+        .list_peers(&session_id))
 }
 
 /// 关闭单个对端（网络调试）。
@@ -2160,16 +1668,24 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
+pub async fn load_sessions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
-
-    // SSH has one current persistence model only. Any plaintext authentication
-    // material found in sessions.json is a stale development artifact: scrub it
-    // from disk immediately instead of migrating it. The session card may remain,
-    // but reconnect must be explicitly reconfigured if no current credential
-    // reference exists.
-    if scrub_ssh_secrets_from_saved_sessions(&mut saved)? {
+    let mut changed = false;
+    for session in &mut saved {
+        if let Some(handler) = state
+            .plugins
+            .contribution_by_str::<SessionConfigHandler>(&session.plugin_id)
+        {
+            if let Some(sanitize) = handler.sanitize_saved {
+                changed |= sanitize(session)?;
+            }
+        }
+    }
+    if changed {
         SessionStore::replace_saved_sessions(&path, &saved)?;
     }
 
@@ -2184,7 +1700,7 @@ pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, Stri
             timestamp: s.timestamp,
             plugin_id: s.plugin_id,
             transfer_enabled: s.transfer_enabled,
-            transfer_protocol: s.transfer_protocol.clone(),
+            transfer_protocol: s.transfer_protocol,
             send_bar_enabled: s.send_bar_enabled,
         })
         .collect())
@@ -2209,9 +1725,6 @@ pub async fn save_session_config(
         session_id,
     } = request;
     let pid = plugin_id;
-    if pid == "local-shell" {
-        crate::plugins::local_shell::LocalShellAdapter::validate_params(&params)?;
-    }
     let id = if let Some(ref raw) = session_id {
         if uuid::Uuid::parse_str(raw).is_err() {
             return Err(format!("无效的 session_id 格式: {}", raw));
@@ -2221,78 +1734,44 @@ pub async fn save_session_config(
         uuid::Uuid::new_v4().to_string()
     };
 
-    let pending_ssh_credential = if pid == "ssh" {
-        prepare_ssh_session_params(&state, &id, &mut params)?
-    } else {
-        None
-    };
-
-    // TRDP Workspace is edited and persisted by the custom session view rather
-    // than the connection form. Reconfiguring a saved/disconnected TRDP
-    // session must therefore preserve the latest Workspace even when the form's
-    // params snapshot does not contain it.
-    if pid == "trdp" && params.get("trdp_workspace").is_none() {
-        let active_workspace = state.session_store.lock().ok().and_then(|store| {
-            store
-                .get_session(&id)
-                .and_then(|handle| handle.params.get("trdp_workspace"))
-                .cloned()
-        });
-        let persisted_workspace = if active_workspace.is_some() {
-            active_workspace
-        } else {
-            let path = SessionStore::sessions_file_path(&app)?;
-            SessionStore::load_from_disk(&path)?
-                .into_iter()
-                .find(|saved| saved.id == id)
-                .and_then(|saved| saved.params.get("trdp_workspace").cloned())
-        };
-        if let Some(workspace) = persisted_workspace {
-            params
-                .as_object_mut()
-                .ok_or("TRDP 会话参数必须是 JSON object")?
-                .insert("trdp_workspace".to_string(), workspace);
-        }
+    let handler = state
+        .plugins
+        .contribution_by_str::<SessionConfigHandler>(&pid);
+    if let Some(validate) = handler.as_deref().and_then(|handler| handler.validate) {
+        validate(&params)?;
     }
-    let session_name = match name.filter(|value| !value.trim().is_empty()) {
-        Some(name) => name,
-        None if pid == "local-shell" => {
-            crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)?
-        }
-        None => format!("{} @ {}", pid, endpoint),
+    let services = SessionConfigServices {
+        credential_store: &state.credential_store,
+        session_store: &state.session_store,
+    };
+    let prepared = if let Some(handler) = handler.as_deref() {
+        (handler.prepare)(&services, &id, &mut params)?
+    } else {
+        crate::plugin_application::unchanged_session_config(&services, &id, &mut params)?
     };
 
-    let now = chrono::Utc::now().timestamp_millis() as u64;
-
+    let session_name = if let Some(name) = name.filter(|value| !value.trim().is_empty()) {
+        name
+    } else if let Some(default_name) = handler.as_deref().and_then(|handler| handler.default_name) {
+        default_name(&params, &endpoint)?
+    } else {
+        format!("{} @ {}", pid, endpoint)
+    };
     let saved = crate::kernel::session_store::SavedSession {
         id: id.clone(),
         name: session_name,
-        plugin_id: pid.clone(),
+        plugin_id: pid,
         endpoint,
-        params: params.clone(),
-        timestamp: now,
+        params,
+        timestamp: chrono::Utc::now().timestamp_millis() as u64,
         transfer_enabled: transfer_enabled.unwrap_or(true),
-        transfer_protocol: transfer_protocol.clone(),
+        transfer_protocol,
         send_bar_enabled: send_bar_enabled.unwrap_or(true),
     };
-
-    if pid == "ssh" {
-        SessionStore::save_config_to_disk_transactional(&app, saved, || {
-            if let Some(pending) = pending_ssh_credential {
-                commit_ssh_credential(&state, pending)?;
-            }
-            Ok(())
-        })?;
-    } else {
-        SessionStore::save_config_to_disk(&app, saved)?;
-    }
-
+    SessionStore::save_config_to_disk_transactional(&app, saved, || {
+        prepared.commit(&state.credential_store)
+    })?;
     Ok(id)
-}
-
-#[tauri::command]
-pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String> {
-    crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)
 }
 
 /// 删除会话配置（从 sessions.json 中移除指定会话）
@@ -2303,17 +1782,15 @@ pub async fn delete_session_config(
     session_id: String,
 ) -> Result<(), String> {
     SessionStore::delete_config_from_disk_transactional(&app, &session_id, |deleted_session| {
-        if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
-            let account = ssh_credential_account(&session_id);
-            state
-                .credential_store
-                .delete_credential(&account)
-                .map_err(|error| {
-                    format!(
-                        "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
-                        error
-                    )
-                })?;
+        if let Some(saved) = deleted_session {
+            if let Some(handler) = state
+                .plugins
+                .contribution_by_str::<SessionConfigHandler>(&saved.plugin_id)
+            {
+                if let Some(delete) = handler.delete {
+                    delete(&state.credential_store, &session_id)?;
+                }
+            }
         }
         Ok(())
     })
@@ -4084,7 +3561,6 @@ pub async fn iperf_get_status(
 mod command_security_tests {
     use super::*;
     use crate::kernel::session_store::SavedSession;
-    use crate::security::credential_store::CredentialValue;
 
     fn saved_session(plugin_id: &str, params: Value) -> SavedSession {
         SavedSession {
@@ -4098,83 +3574,5 @@ mod command_security_tests {
             transfer_protocol: None,
             send_bar_enabled: false,
         }
-    }
-
-    #[test]
-    fn ssh_secret_fields_are_removed_from_persisted_params() {
-        let mut params = serde_json::json!({
-            "host": "example.invalid",
-            "username": "tester",
-            "auth_method": "key",
-            "password": "should-not-persist",
-            "private_key": "private-key-material",
-            "passphrase": "secret",
-            "credential_account": "ssh-session:test"
-        });
-
-        assert!(strip_ssh_secret_fields(&mut params).unwrap());
-        assert!(params.get("password").is_none());
-        assert!(params.get("private_key").is_none());
-        assert!(params.get("passphrase").is_none());
-        assert_eq!(params["credential_account"], "ssh-session:test");
-        assert!(!strip_ssh_secret_fields(&mut params).unwrap());
-    }
-
-    #[test]
-    fn saved_session_scrub_does_not_touch_other_protocol_params() {
-        let mut sessions = vec![
-            saved_session(
-                "ssh",
-                serde_json::json!({
-                    "host": "example.invalid",
-                    "auth_method": "password",
-                    "password": "secret"
-                }),
-            ),
-            saved_session(
-                "serial",
-                serde_json::json!({
-                    "password": "protocol-owned-field"
-                }),
-            ),
-        ];
-
-        assert!(scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
-        assert!(sessions[0].params.get("password").is_none());
-        assert_eq!(
-            sessions[1].params.get("password").and_then(Value::as_str),
-            Some("protocol-owned-field")
-        );
-        assert!(!scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
-    }
-
-    #[test]
-    fn ssh_credential_type_must_match_auth_method() {
-        assert!(credential_matches_auth(
-            "password",
-            &CredentialValue::Password("secret".into())
-        ));
-        assert!(credential_matches_auth(
-            "key",
-            &CredentialValue::SshKey {
-                private_key: "key".into(),
-                passphrase: None,
-            }
-        ));
-        assert!(!credential_matches_auth(
-            "password",
-            &CredentialValue::SshKey {
-                private_key: "key".into(),
-                passphrase: None,
-            }
-        ));
-    }
-
-    #[test]
-    fn ssh_session_credential_account_is_stable() {
-        assert_eq!(
-            ssh_credential_account("00000000-0000-0000-0000-000000000001"),
-            "ssh-session:00000000-0000-0000-0000-000000000001"
-        );
     }
 }

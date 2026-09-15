@@ -1,14 +1,10 @@
-/**
- * Telnet 插件前端注册
- *
- * 向内核注册 Telnet 协议插件的 manifest 和翻译资源。
- * 无文件传输（transfer_protocols 为空）→ 右侧 Transmission 面板不显示。
- */
+/** Telnet frontend plugin registration. */
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/telnet.json";
 import { telnetEndpointLabel, telnetSessionTitle } from "./presentation";
+import { telnetRuntimeStore, type TelnetRuntimeSnapshot } from "./runtime-store";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
@@ -16,6 +12,8 @@ registerPlugin({
     defaultName: () => telnetSessionTitle(),
     subtitle: (params, endpoint) => telnetEndpointLabel(params, endpoint),
   },
+  runtimeStore: telnetRuntimeStore,
+  terminalLocalEcho: runtimeSnapshot => (runtimeSnapshot as TelnetRuntimeSnapshot).localEcho === true,
   toolbarItems: [],
   statusBarItems: [
     {

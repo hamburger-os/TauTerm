@@ -15,6 +15,13 @@ fn read_workspace_source(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
 }
 
+fn workspace_path(relative: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri must have workspace parent")
+        .join(relative)
+}
+
 #[test]
 fn kernel_does_not_depend_on_concrete_plugins() {
     let kernel_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel");
@@ -77,19 +84,45 @@ fn common_connection_router_is_registry_driven() {
 }
 
 #[test]
-fn plugin_session_runtime_indices_are_adapter_owned() {
-    let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
-    for entry in std::fs::read_dir(&plugins_dir).expect("plugins directory") {
-        let entry = entry.expect("plugin entry");
-        let module = entry.path().join("mod.rs");
-        if !module.is_file() {
-            continue;
+fn plugin_session_runtime_indices_are_plugin_owned() {
+    fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("plugin directory") {
+            let path = entry.expect("plugin entry").path();
+            if path.is_dir() {
+                visit(&path, files);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                files.push(path);
+            }
         }
-        let source = std::fs::read_to_string(&module).expect("plugin module source");
+    }
+    let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+    let mut files = Vec::new();
+    visit(&plugins_dir, &mut files);
+    for path in files {
+        let source = std::fs::read_to_string(&path).expect("plugin source");
         assert!(
-            !source.contains("fn runtime_registry("),
-            "plugin module {} must keep Session runtime indices on its Adapter instance, not in process-global static state",
-            module.display()
+            !source.contains("fn runtime_registry(") && !source.contains("static REGISTRY: std::sync::OnceLock"),
+            "plugin source {} must keep Session runtime indices on a registered plugin/Adapter instance",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn common_session_config_commands_are_plugin_driven() {
+    let source = read_source("commands.rs");
+    assert!(source.contains("SessionConfigHandler"));
+    for forbidden in [
+        r#"pid == "ssh""#,
+        r#"pid == "trdp""#,
+        r#"pid == "local-shell""#,
+        "SSH_CREDENTIAL_ACCOUNT_KEY",
+        "prepare_ssh_session_params",
+        "scrub_ssh_secrets_from_saved_sessions",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "common Session config commands must not own plugin policy: {forbidden}"
         );
     }
 }
@@ -130,4 +163,97 @@ fn common_session_ipc_has_no_serial_compatibility_default() {
         !frontend.contains(r#"transferProtocol || "ymodem""#),
         "frontend generic session API must not inject a Serial transfer protocol"
     );
+}
+
+#[test]
+fn frontend_plugin_registry_does_not_expose_protocol_private_status_state() {
+    let source = read_workspace_source("src/core/plugin-registry.ts");
+    for private_field in [
+        "virtualVirtualEndpoints",
+        "virtualPortError",
+        "virtualPortErrorKind",
+        "journaldEnabled",
+        "fileServiceEnabled",
+    ] {
+        assert!(
+            !source.contains(private_field),
+            "generic frontend plugin registry must not expose protocol-private field '{private_field}'"
+        );
+    }
+}
+
+#[test]
+fn frontend_session_presentation_is_plugin_driven() {
+    let source = read_workspace_source("src/components/Layout/sessionPresentation.ts");
+    assert!(
+        source.contains("pluginRegistry") && source.contains("sessionPresentation"),
+        "common session presentation must delegate to PluginRegistration.sessionPresentation"
+    );
+    for plugin_id in ["ssh", "iperf", "trdp", "network", "serial", "modbus"] {
+        assert!(
+            !source.contains(&format!(r#"pluginId === "{plugin_id}""#)),
+            "common session presentation must not branch on built-in plugin '{plugin_id}'"
+        );
+    }
+}
+
+#[test]
+fn frontend_session_policy_is_plugin_driven() {
+    let source = read_workspace_source("src/context/SessionContext.tsx");
+    assert!(
+        source.contains("persistedConnectionParams") && source.contains("reconnectGuard"),
+        "common SessionContext must consume plugin-owned persistence/reconnect contributions"
+    );
+    assert!(
+        !source.contains(r#"pluginId === "tftp""#)
+            && !source.contains(r#"tab.pluginId === "tftp""#),
+        "TFTP reconnect policy must stay inside the TFTP plugin"
+    );
+    assert!(
+        !source.contains(r#"pluginId !== "ssh""#)
+            && !source.contains("delete sanitized.password")
+            && !source.contains("delete sanitized.private_key"),
+        "SSH persistence policy must stay inside the SSH plugin"
+    );
+}
+
+#[test]
+fn frontend_has_single_plugin_registry_for_presentation() {
+    assert!(
+        !workspace_path("src/core/session-presentation-registry.ts").exists(),
+        "presentation metadata must live in PluginRegistry; mirrored registries are forbidden"
+    );
+    let contracts = read_workspace_source("src/core/plugin-contracts.ts");
+    assert!(
+        !contracts.contains("from \"react\"")
+            && !contracts.contains("from 'react'")
+            && !contracts.contains("from \"../context/SessionContext")
+            && !contracts.contains("from '../../context/SessionContext")
+            && !contracts.contains("from \"../i18n")
+            && !contracts.contains("from '../../i18n"),
+        "frontend plugin contracts must stay dependency-free"
+    );
+}
+
+#[test]
+fn frontend_app_shell_is_plugin_driven() {
+    let app = read_workspace_source("src/App.tsx");
+    for plugin_id in [
+        "ssh",
+        "network",
+        "local-shell",
+        "serial",
+        "telnet",
+        "trdp",
+        "modbus",
+    ] {
+        assert!(
+            !app.contains(&format!(r#"manifest.id === "{plugin_id}""#))
+                && !app.contains(&format!(r#"pluginId === "{plugin_id}""#)),
+            "App Shell must not branch on built-in plugin '{plugin_id}'"
+        );
+    }
+    assert!(!app.contains("ssh-host-key-verify"));
+    assert!(!app.contains("file_service_enabled"));
+    assert!(!app.contains("journald_enabled"));
 }
