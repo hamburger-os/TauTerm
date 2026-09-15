@@ -58,9 +58,7 @@ static MAINTENANCE_FAILURES: AtomicU64 = AtomicU64::new(0);
 fn record_log_loss(counter: &AtomicU64, stream: &str, reason: &str) {
     let total = counter.fetch_add(1, Ordering::Relaxed) + 1;
     if total == 1 || total.is_power_of_two() {
-        eprintln!(
-            "TauTerm: {stream} log loss detected (count {total}, latest: {reason})"
-        );
+        eprintln!("TauTerm: {stream} log loss detected (count {total}, latest: {reason})");
     }
 }
 
@@ -87,9 +85,7 @@ fn record_system_write_loss(reason: &str) {
 fn record_maintenance_failure(reason: &str) {
     let total = MAINTENANCE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
     if total == 1 || total.is_power_of_two() {
-        eprintln!(
-            "TauTerm: log storage maintenance failure (count {total}, latest: {reason})"
-        );
+        eprintln!("TauTerm: log storage maintenance failure (count {total}, latest: {reason})");
     }
 }
 
@@ -663,10 +659,9 @@ impl LogEngine {
                     let mut rotated = false;
                     if let Some(writer) = writers.get_mut(&entry.session_id) {
                         let before = writer.file_name();
-                        match writer.reconfigure(
-                            current_config.file_max_size,
-                            current_config.buffer_size,
-                        ) {
+                        match writer
+                            .reconfigure(current_config.file_max_size, current_config.buffer_size)
+                        {
                             Ok(changed) => rotated |= changed,
                             Err(error) => {
                                 record_session_write_loss(&format!(
@@ -687,9 +682,7 @@ impl LogEngine {
                         }
                         rotated |= before != writer.file_name();
                         status_update_counter = status_update_counter.wrapping_add(1);
-                        if !failed
-                            && (rotated || status_update_counter.is_multiple_of(10))
-                        {
+                        if !failed && (rotated || status_update_counter.is_multiple_of(10)) {
                             if let Ok(mut logs) = active_logs.lock() {
                                 if let Some(status) = logs.get_mut(&entry.session_id) {
                                     status.file_name = writer.file_name();
@@ -939,7 +932,10 @@ impl LogEngine {
         }
     }
 
-    fn flush_all_open(writers: &mut HashMap<String, LogWriter>, system_writer: &mut Option<SystemWriter>) {
+    fn flush_all_open(
+        writers: &mut HashMap<String, LogWriter>,
+        system_writer: &mut Option<SystemWriter>,
+    ) {
         for (session_id, writer) in writers.iter_mut() {
             if let Err(error) = writer.flush() {
                 record_session_write_loss(&format!(
@@ -990,8 +986,9 @@ impl LogEngine {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(format!("cannot read log directory: {error}")),
         };
-        let cutoff = SystemTime::now()
-            .checked_sub(Duration::from_secs(config.retention_days.saturating_mul(86_400)));
+        let cutoff = SystemTime::now().checked_sub(Duration::from_secs(
+            config.retention_days.saturating_mul(86_400),
+        ));
         let mut files = Vec::new();
 
         for entry in entries.flatten() {
@@ -1028,9 +1025,9 @@ impl LogEngine {
             }
             match std::fs::remove_file(&path) {
                 Ok(()) => total = total.saturating_sub(size),
-                Err(error) => record_maintenance_failure(&format!(
-                    "quota delete {path:?} failed: {error}"
-                )),
+                Err(error) => {
+                    record_maintenance_failure(&format!("quota delete {path:?} failed: {error}"))
+                }
             }
         }
         Ok(())
@@ -1110,9 +1107,7 @@ impl SystemWriter {
         let timestamp = timestamp.to_rfc3339_opts(SecondsFormat::Millis, false);
         let message = sanitize_log(message);
         let line = format!("[{timestamp}] [{}] {message}\n", level.to_ascii_uppercase());
-        if self.bytes_written > 0
-            && self.bytes_written + line.len() as u64 > self.split_threshold
-        {
+        if self.bytes_written > 0 && self.bytes_written + line.len() as u64 > self.split_threshold {
             self.close()?;
             self.segment_index = self.segment_index.saturating_add(1);
             self.open_unique_segment()?;
