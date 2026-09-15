@@ -18,6 +18,24 @@ jobs:
           cache: npm
       - name: Apply final migration
         run: python3 .github/finalize-plugin-boundary.py
+      - name: Update documentation ownership
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("docs/modules/AUTOMATION.md")
+          text = path.read_text(encoding="utf-8")
+          old = "Network Debug 的目标选择由 SessionContext 拥有；`TargetBar` 只负责展示和选择，目标同步桥接把 TCP/UDP server 当前目标传给后端运行时。只有已连接的 Network Debug 会话才允许同步运行时副作用；断开、连接中或被新目标取代的异步同步不能产生陈旧状态。"
+          new = "Network Debug 的目标选择、peer 列表和 targeted-send 状态由 Network 插件自己的 runtime store 拥有；公共 SendBar 只通过 `sendTarget` / `sendData` contribution 挂载目标选择和发送策略。目标同步桥接仅在已连接的 Network runtime 上执行，断开、连接中或被新目标取代的异步同步不能产生陈旧状态。"
+          if text.count(old) != 1:
+              raise SystemExit(f"AUTOMATION ownership paragraph expected 1 match, got {text.count(old)}")
+          text = text.replace(old, new, 1)
+          text = text.replace("- Network Debug 目标属于会话状态；后端目标同步只在已连接 runtime 上执行，并继续严格校验目标能力。", "- Network Debug 目标属于插件私有 Session runtime 状态；公共 SessionContext 不保存 peer/target 字段，后端目标同步只在已连接 runtime 上执行并严格校验目标能力。", 1)
+          old_anchor = "- `src/components/SendBar/useNetworkSendTargetSync.ts`"
+          new_anchor = "- `src/plugins/network/NetworkSendTarget.tsx`\n- `src/plugins/network/runtime-store.ts`"
+          if text.count(old_anchor) != 1:
+              raise SystemExit(f"AUTOMATION stale anchor expected 1 match, got {text.count(old_anchor)}")
+          path.write_text(text.replace(old_anchor, new_anchor, 1), encoding="utf-8")
+          PY
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
       - name: TypeScript
