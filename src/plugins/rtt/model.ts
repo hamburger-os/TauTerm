@@ -44,7 +44,7 @@ export interface RttErrorSnapshot {
 }
 
 export interface RttSnapshot {
-  phase: "idle" | "opening_probe" | "attaching_target" | "locating_control_block" | "running" | "faulted" | "stopping";
+  phase: "idle" | "opening_backend" | "running" | "faulted" | "stopping";
   backend?: RttBackendDescriptor | null;
   channels: RttChannelInfo[];
   rx_bytes: number;
