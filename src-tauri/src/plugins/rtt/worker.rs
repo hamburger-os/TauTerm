@@ -93,7 +93,7 @@ pub(super) fn run(
                 WorkerCommand::RefreshChannels { reply } => {
                     let result = backend.refresh_channels();
                     if let Ok(channels) = result.as_ref() {
-                        shared.update_channels(channels.clone());
+                        shared.set_running(backend.descriptor(), channels.clone());
                         let _ = emit_snapshot(&app, &session_id, &shared);
                     }
                     let _ = reply.send(result);
