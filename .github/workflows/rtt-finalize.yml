@@ -1,0 +1,191 @@
+name: RTT finalize
+
+on:
+  push:
+    branches:
+      - feat/rtt-debug-session
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/rtt-debug-session
+          fetch-depth: 0
+      - name: Synchronize RTT contracts and public docs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one match in {path}: {old!r}, found {text.count(old)}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "AGENTS.md",
+              "| TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |",
+              "| TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |\n| RTT debug probe integration, RTT runtime/channel model and native/J-Link Existing backends | `docs/modules/RTT.md` |",
+          )
+
+          replace_once(
+              "docs/README.md",
+              "| [TRDP.md](modules/TRDP.md) | TRDP Node/Monitor、抓包、XML/Dataset 与 native runtime |",
+              "| [TRDP.md](modules/TRDP.md) | TRDP Node/Monitor、抓包、XML/Dataset 与 native runtime |\n| [RTT.md](modules/RTT.md) | RTT 调试探针接入、多 Channel、后台 runtime 与 Terminal/Text/HEX 工作流 |",
+          )
+          replace_once(
+              "docs/README.md",
+              "- [TRDP](knowledge/TRDP.md)",
+              "- [TRDP](knowledge/TRDP.md)\n- [嵌入式调试](knowledge/EMBEDDED_DEBUG.md)",
+          )
+          replace_once(
+              "docs/knowledge/README.md",
+              "| [TRDP.md](TRDP.md) | IEC 61375-2-3 / TRDP、TCNOpen、SDT 边界 |",
+              "| [TRDP.md](TRDP.md) | IEC 61375-2-3 / TRDP、TCNOpen、SDT 边界 |\n| [EMBEDDED_DEBUG.md](EMBEDDED_DEBUG.md) | probe-rs、RTT、调试探针与 J-Link Existing Session 上游依据 |",
+          )
+
+          replace_once(
+              "README.md",
+              "SSH/SFTP · Serial · Local Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP",
+              "SSH/SFTP · Serial · Local Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP · RTT",
+          )
+          replace_once(
+              "README.md",
+              "SSH/SFTP and local shells live beside Serial, TCP/UDP, TFTP, Telnet, iPerf, and TRDP.",
+              "SSH/SFTP and local shells live beside Serial, TCP/UDP, TFTP, Telnet, iPerf, TRDP, and RTT.",
+          )
+          replace_once(
+              "README.md",
+              "| TRDP Node + passive live/offline Monitor | ✅ |",
+              "| TRDP Node + passive live/offline Monitor | ✅ |\n| RTT Debug Assistant via debug probes or an existing local J-Link debug session | ✅ |",
+          )
+
+          replace_once(
+              "README.zh-CN.md",
+              "SSH/SFTP · 串口 · 本地 Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP",
+              "SSH/SFTP · 串口 · 本地 Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP · RTT",
+          )
+          replace_once(
+              "README.zh-CN.md",
+              "SSH/SFTP、本地 Shell 与串口、TCP/UDP、TFTP、Telnet、iPerf、TRDP 处于同一工作台。",
+              "SSH/SFTP、本地 Shell 与串口、TCP/UDP、TFTP、Telnet、iPerf、TRDP、RTT 处于同一工作台。",
+          )
+          replace_once(
+              "README.zh-CN.md",
+              "| TRDP Node + 被动实时/离线 Monitor | ✅ |",
+              "| TRDP Node + 被动实时/离线 Monitor | ✅ |\n| RTT 调试助手：调试探针或已有本机 J-Link 调试会话 | ✅ |",
+          )
+
+          replace_once(
+              "CHANGELOG.md",
+              "- **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.",
+              "- **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.\n- **RTT Debug Assistant** — adds a first-class embedded RTT Session with native debug-probe access through probe-rs, coexistence with existing local J-Link debug sessions, independent Up/Down multi-channel I/O, bounded background history, and Terminal/Text/HEX views.",
+          )
+
+          replace_once(
+              "src-tauri/src/plugins/rtt/worker.rs",
+              '"kind": error.code.as_str(),\n                    "reason": error.message,',
+              '"kind": "io_error",\n                    "reason": error.message,\n                    "plugin_error_code": error.code.as_str(),',
+          )
+
+          replace_once(
+              "src-tauri/src/architecture_contract.rs",
+              'for plugin_id in ["ssh", "iperf", "trdp", "network", "serial", "modbus"] {',
+              'for plugin_id in ["ssh", "iperf", "trdp", "rtt", "network", "serial", "modbus"] {',
+          )
+          replace_once(
+              "src-tauri/src/architecture_contract.rs",
+              '        "trdp",\n        "modbus",',
+              '        "trdp",\n        "rtt",\n        "modbus",',
+          )
+
+          worker = Path("src-tauri/src/plugins/rtt/worker.rs")
+          text = worker.read_text(encoding="utf-8")
+          if "write_all_handles_partial_backend_writes" not in text:
+              text += r'''
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+              use crate::plugins::rtt::model::{
+                  RttBackendCapabilities, RttBackendDescriptor, RttChannelInfo,
+              };
+
+              struct PartialWriteBackend {
+                  channels: Vec<RttChannelInfo>,
+                  max_write: usize,
+                  written: Vec<u8>,
+              }
+
+              impl RttBackend for PartialWriteBackend {
+                  fn descriptor(&self) -> RttBackendDescriptor {
+                      RttBackendDescriptor {
+                          kind: "mock".into(),
+                          display_name: "Mock".into(),
+                          target: None,
+                          probe: None,
+                          control_block_address: None,
+                          capabilities: RttBackendCapabilities::default(),
+                      }
+                  }
+
+                  fn channels(&self) -> &[RttChannelInfo] {
+                      &self.channels
+                  }
+
+                  fn poll(&mut self, _output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
+                      Ok(())
+                  }
+
+                  fn write(&mut self, _channel_index: u32, data: &[u8]) -> Result<usize, RttError> {
+                      let count = data.len().min(self.max_write);
+                      self.written.extend_from_slice(&data[..count]);
+                      Ok(count)
+                  }
+
+                  fn refresh_channels(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
+                      Ok(self.channels.clone())
+                  }
+              }
+
+              #[test]
+              fn write_all_handles_partial_backend_writes() {
+                  let mut backend = PartialWriteBackend {
+                      channels: Vec::new(),
+                      max_write: 2,
+                      written: Vec::new(),
+                  };
+                  let payload = b"partial RTT write";
+                  let written = write_all(&mut backend, 0, payload, Duration::from_secs(1)).unwrap();
+                  assert_eq!(written, payload.len());
+                  assert_eq!(backend.written, payload);
+              }
+          }
+          '''
+              worker.write_text(text, encoding="utf-8")
+      - name: Install repository Rust toolchain and rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit synchronized contracts and remove finalize workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/rtt-finalize.yml
+          git add -A
+          git commit -m "Finalize RTT session contracts and documentation"
+          git push origin HEAD:feat/rtt-debug-session
