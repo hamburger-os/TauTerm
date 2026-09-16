@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 const ROOT = process.cwd();
@@ -7,6 +7,15 @@ const manifestDir = path.join(ROOT, "src", "plugin-manifests");
 const manifestFiles = (await readdir(manifestDir))
   .filter(name => name.endsWith(".json"))
   .sort();
+
+async function exists(target) {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 assert.deepEqual(
   manifestFiles,
@@ -46,6 +55,10 @@ for (const file of manifestFiles) {
     assert.equal(typeof manifest[field], "string", `${file}: ${field} must be a string`);
     assert.ok(manifest[field].length > 0, `${file}: ${field} must not be empty`);
   }
+  assert.ok(
+    ["terminal", "custom"].includes(manifest.content_type),
+    `${file}: content_type must be a supported canonical renderer class`,
+  );
   assert.equal(typeof manifest.send_bar, "boolean", `${file}: send_bar must be boolean`);
   assert.ok(Array.isArray(manifest.capabilities), `${file}: capabilities must be an array`);
   assert.ok(Array.isArray(manifest.transfer_protocols), `${file}: transfer_protocols must be an array`);
@@ -100,10 +113,46 @@ assert.doesNotMatch(
 
 const lib = await readFile(path.join(ROOT, "src-tauri", "src", "lib.rs"), "utf8");
 assert.match(lib, /plugins::catalog::build_runtime\(\)/, "Rust bootstrap must install the backend plugin catalog");
+assert.match(lib, /tauterm_invoke_handler!/, "Rust bootstrap must delegate plugin IPC registration to the backend catalog");
 assert.doesNotMatch(lib, /PluginDescriptor\s*\{/, "manual backend plugin descriptors are forbidden");
 for (const adapter of ["SerialAdapter", "SshAdapter", "TelnetAdapter", "TftpAdapter", "IperfAdapter", "NetworkAdapter", "ModbusAdapter"]) {
   assert.doesNotMatch(lib, new RegExp(`${adapter}::new`), `lib.rs must not assemble ${adapter} directly`);
 }
+for (const plugin of ["serial", "ssh", "telnet", "local_shell", "tftp", "iperf", "network", "modbus", "trdp"]) {
+  assert.doesNotMatch(
+    lib,
+    new RegExp(`plugins::${plugin}::`),
+    `lib.rs must not register concrete plugin IPC directly: ${plugin}`,
+  );
+}
+
+const pluginAdapter = await readFile(
+  path.join(ROOT, "src-tauri", "src", "kernel", "plugin_adapter.rs"),
+  "utf8",
+);
+assert.doesNotMatch(
+  pluginAdapter,
+  /fn\s+content_type\s*\(&self\)/,
+  "ProtocolAdapter must not duplicate canonical manifest content_type",
+);
+
+for (const legacyUiDir of ["Tftp", "Iperf"]) {
+  assert.equal(
+    await exists(path.join(ROOT, "src", "components", legacyUiDir)),
+    false,
+    `${legacyUiDir} private UI must live inside its plugin directory`,
+  );
+}
+assert.equal(
+  await exists(path.join(ROOT, "src", "plugins", "tftp", "TftpSessionView.tsx")),
+  true,
+  "TFTP custom view must be plugin-owned",
+);
+assert.equal(
+  await exists(path.join(ROOT, "src", "plugins", "iperf", "IperfSessionView.tsx")),
+  true,
+  "iperf custom view must be plugin-owned",
+);
 
 const kernelMod = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "mod.rs"), "utf8");
 for (const deadModule of ["tab_host", "window_manager", "ipc_bridge", "shortcut_engine", "i18n_engine"]) {
