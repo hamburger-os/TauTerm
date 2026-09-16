@@ -5,7 +5,7 @@
 //! ## 架构
 //!
 //! - **Plugin Runtime**: canonical manifest、Adapter 与类型化 contribution 的唯一注册目录（`kernel/plugin_runtime`）
-//! - **Plugin Catalog**: 内建插件 composition、宿主生命周期注入的唯一目录（`plugins/catalog`）
+//! - **Plugin Catalog**: 内建插件 composition、宿主生命周期注入与专属 IPC 的唯一目录（`plugins/catalog`）
 //! - **Protocol Adapter**: 协议插件通过 `ProtocolAdapter` trait 管理连接
 //! - **Transport Runtime**: 协议无关的物理 I/O、DataPlane 与独占租约（`transport`）
 //! - **Session Runtime**: 会话生命周期、脚本 I/O 与断开语义（`session`）
@@ -412,7 +412,7 @@ pub fn run() {
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(crate::tauterm_invoke_handler![
             commands::get_connection_types,
             commands::enumerate_endpoints,
             commands::connect_session,
@@ -424,31 +424,8 @@ pub fn run() {
             commands::get_tabs,
             commands::open_channel,
             ipc_transport::close_channel,
-            plugins::network::commands::list_network_peers,
-            plugins::network::commands::close_network_peer,
-            plugins::network::commands::network_udp_send_to,
-            plugins::network::commands::network_udp_send,
-            plugins::network::commands::set_network_send_target,
-            plugins::modbus::modbus_execute,
-            plugins::modbus::modbus_status,
-            plugins::modbus::modbus_watch_set,
-            plugins::modbus::modbus_watch_start,
-            plugins::modbus::modbus_watch_stop,
-            plugins::modbus::modbus_watch_values,
-            plugins::modbus::modbus_server_set_value,
-            plugins::modbus::modbus_server_snapshot,
-            plugins::trdp::trdp_command,
-            plugins::trdp::trdp_capture_interfaces,
-            plugins::trdp::trdp_open_capture,
-            plugins::trdp::trdp_capture_packets,
-            plugins::trdp::trdp_capture_summary,
-            plugins::trdp::trdp_save_capture,
-            plugins::trdp::trdp_release_capture,
-            plugins::trdp::trdp_import_xml,
-            plugins::trdp::trdp_decode_dataset,
             commands::load_sessions,
             commands::save_session_config,
-            plugins::local_shell::resolve_local_shell_session_name,
             commands::delete_session_config,
             commands::file_transfer_send,
             commands::file_transfer_receive,
@@ -482,36 +459,7 @@ pub fn run() {
             commands::stop_script_engine,
             commands::rules_to_script,
             commands::test_match,
-            plugins::ssh::commands::sftp_list_dir_cmd,
-            plugins::ssh::commands::sftp_stat_cmd,
-            plugins::ssh::commands::sftp_read_head_cmd,
-            plugins::ssh::commands::sftp_chmod_cmd,
-            plugins::ssh::commands::sftp_delete_cmd,
-            plugins::ssh::commands::sftp_rename_cmd,
-            plugins::ssh::commands::sftp_mkdir_cmd,
-            plugins::ssh::commands::sftp_new_file_cmd,
-            plugins::ssh::commands::sftp_delete_batch_cmd,
-            plugins::ssh::commands::sftp_delete_recursive_cmd,
-            plugins::ssh::commands::start_journald_stream,
-            plugins::ssh::commands::stop_journald_stream,
-            plugins::ssh::commands::journald_query_cmd,
-            plugins::ssh::commands::start_journald_export,
-            plugins::ssh::commands::stop_journald_export,
-            plugins::ssh::commands::get_ssh_home_dir,
             ipc_transport::resize_pty,
-            plugins::ssh::commands::confirm_host_key,
-            plugins::tftp::commands::tftp_server_start,
-            plugins::tftp::commands::tftp_server_stop,
-            plugins::tftp::commands::tftp_client_get,
-            plugins::tftp::commands::tftp_client_put,
-            plugins::tftp::commands::tftp_update_params,
-            plugins::tftp::commands::tftp_get_status,
-            plugins::iperf::commands::iperf_server_start,
-            plugins::iperf::commands::iperf_server_stop,
-            plugins::iperf::commands::iperf_client_run,
-            plugins::iperf::commands::iperf_client_stop,
-            plugins::iperf::commands::iperf_update_params,
-            plugins::iperf::commands::iperf_get_status,
             diagnostics::export_diagnostics,
         ])
         .build(tauri::generate_context!())
