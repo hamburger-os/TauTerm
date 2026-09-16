@@ -4,7 +4,7 @@
  * 连接即自动启动服务端；启停完全由左侧栏会话右键菜单管理。
  * 面板仅展示运行状态和待审批请求。
  */
-import Icon from "../../../components/common/Icon";
+import Icon from "../../components/common/Icon";
 import type { PendingRequest } from "./TftpSessionView";
 import styles from "./TftpSessionView.module.css";
 import { useTranslation } from "react-i18next";
