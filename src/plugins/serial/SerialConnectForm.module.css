@@ -12,7 +12,8 @@
 }
 
 .label {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
