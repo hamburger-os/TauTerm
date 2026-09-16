@@ -20,78 +20,8 @@ jobs:
           ref: refactor/plugin-boundary-cleanup
           fetch-depth: 0
 
-      - name: Apply final patch
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/tmp_finalize_plugin_boundary.py")
-          text = path.read_text(encoding="utf-8")
-
-          old_docs = '''needle = "- 插件私有运行态必须留在插件自己的 Session store/hook；公共状态栏上下文只提供 Session ID、连接状态、端点、通用参数和统计等协议无关信息。"
-          if needle not in text:
-              raise SystemExit("UI_FOUNDATION error-policy anchor missing")
-          text = text.replace(
-              needle,
-              needle + "\\n- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。",
-              1,
-          )'''
-          new_docs = '''marker = "## 设计边界\\n\\n"
-          if marker not in text:
-              raise SystemExit("UI_FOUNDATION design-boundary section missing")
-          text = text.replace(
-              marker,
-              marker + "- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。\\n",
-              1,
-          )'''
-          if old_docs not in text:
-              raise SystemExit("temporary script documentation patch block missing")
-          text = text.replace(old_docs, new_docs, 1)
-
-          arch_start = text.index('insert_before = "\\n#[test]\\nfn frontend_generic_plugin_registry_has_no_protocol_private_status_state()"')
-          arch_end_marker = 'save(path, text)\n\n# Make forgotten inactive-root call sites an executable architecture violation.'
-          arch_end = text.index(arch_end_marker, arch_start)
-          new_arch = r'''contract = r'''
-
-#[test]
-fn session_data_plane_registration_is_two_phase() {
-    let runtime = read_source("session/runtime.rs");
-    assert!(runtime.contains("pub fn attach_paused("));
-    assert!(runtime.contains("pub fn activate(&self)"));
-
-    let store = read_source("kernel/session_store.rs");
-    assert!(store.contains("SessionDataPlane::attach_paused"));
-    assert!(store.contains("pub fn activate_data_plane(&self"));
-
-    let application = read_source("plugin_application.rs");
-    assert!(application.contains("SessionDataPlane::attach_paused"));
-    assert!(application.contains("activate_data_plane(&channel_id)"));
-
-    let network = read_source("plugins/network/mod.rs");
-    assert!(network.contains("SessionDataPlane::attach_paused"));
-    assert!(network.contains("activate_data_plane(&channel_id)"));
-}
-
-#[test]
-fn frontend_session_error_presentation_is_plugin_driven() {
-    let session_context = read_workspace_source("src/context/SessionContext.tsx");
-    assert!(session_context.contains("formatSessionError"));
-    assert!(!session_context.contains("User cancelled the UAC elevation prompt"));
-    assert!(!session_context.contains("localShell.elevationCancelled"));
-
-    let local_shell = read_workspace_source("src/plugins/local-shell/index.ts");
-    assert!(local_shell.contains("formatSessionError"));
-    assert!(local_shell.contains("localShell.elevationCancelled"));
-}
-'''
-text.push_str(contract);
-save(path, text)
-
-'''
-          text = text[:arch_start] + new_arch + text[arch_end + len('save(path, text)\n\n'):]
-          path.write_text(text, encoding="utf-8")
-          PY
-          python3 scripts/tmp_finalize_plugin_boundary.py
+      - name: Apply final lifecycle patch
+        run: python3 scripts/tmp_finalize_plugin_boundary.py
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -107,6 +37,7 @@ save(path, text)
           npx tsc --noEmit
           npm run check:product-integrity
           npm run check:sendbar
+          npm run check:journald
 
       - name: Install pinned Rust toolchain
         shell: bash
