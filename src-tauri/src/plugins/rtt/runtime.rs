@@ -218,6 +218,7 @@ pub struct RttRuntime {
     command_tx: Mutex<Option<mpsc::SyncSender<WorkerCommand>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     shutting_down: Arc<AtomicBool>,
+    worker_exited: Arc<AtomicBool>,
     closed: AtomicBool,
 }
 
@@ -229,6 +230,7 @@ impl RttRuntime {
             command_tx: Mutex::new(None),
             worker: Mutex::new(None),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            worker_exited: Arc::new(AtomicBool::new(false)),
             closed: AtomicBool::new(false),
         }
     }
@@ -237,11 +239,14 @@ impl RttRuntime {
         if self.closed.load(Ordering::Acquire) {
             return Err(RttError::new(RttErrorCode::Cancelled, "RTT 会话已关闭"));
         }
+        self.shutting_down.store(false, Ordering::Release);
+        self.worker_exited.store(false, Ordering::Release);
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let config = self.config.clone();
         let shared = Arc::clone(&self.shared);
         let shutting_down = Arc::clone(&self.shutting_down);
+        let worker_exited = Arc::clone(&self.worker_exited);
         let worker_session_id = session_id.to_string();
         let handle = std::thread::Builder::new()
             .name(format!("rtt-{session_id}"))
@@ -252,6 +257,7 @@ impl RttRuntime {
                     worker_session_id,
                     shared,
                     shutting_down,
+                    worker_exited,
                     command_rx,
                     startup_tx,
                 );
@@ -279,6 +285,7 @@ impl RttRuntime {
                 ))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.shutdown_inner(false);
                 Err(RttError::backend("RTT worker 在完成启动前退出"))
             }
         }
@@ -343,9 +350,12 @@ impl RttRuntime {
         self.shared.set_phase(RttPhase::Stopping);
         if let Ok(mut tx_slot) = self.command_tx.lock() {
             if let Some(tx) = tx_slot.take() {
-                let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-                let _ = tx.try_send(WorkerCommand::Shutdown { reply: reply_tx });
-                let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+                if !self.worker_exited.load(Ordering::Acquire) {
+                    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                    if tx.try_send(WorkerCommand::Shutdown { reply: reply_tx }).is_ok() {
+                        let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+                    }
+                }
             }
         }
         if let Ok(mut worker) = self.worker.lock() {
