@@ -357,7 +357,11 @@ impl RttRuntime {
         if self.shutting_down.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.shared.set_phase(RttPhase::Stopping);
+        let preserve_faulted = self.worker_exited.load(Ordering::Acquire)
+            && matches!(self.shared.snapshot().phase, RttPhase::Faulted);
+        if !preserve_faulted {
+            self.shared.set_phase(RttPhase::Stopping);
+        }
         if let Ok(mut tx_slot) = self.command_tx.lock() {
             if let Some(tx) = tx_slot.take() {
                 if !self.worker_exited.load(Ordering::Acquire) {
@@ -375,7 +379,9 @@ impl RttRuntime {
                 }
             }
         }
-        self.shared.set_phase(RttPhase::Idle);
+        if !preserve_faulted {
+            self.shared.set_phase(RttPhase::Idle);
+        }
     }
 }
 
