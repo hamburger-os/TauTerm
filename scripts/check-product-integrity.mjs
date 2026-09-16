@@ -34,6 +34,11 @@ const requiredStringFields = [
   "content_type",
 ];
 const ids = new Set();
+const frontendCatalog = await readFile(path.join(ROOT, "src", "plugins", "catalog.ts"), "utf8");
+const backendCatalog = await readFile(
+  path.join(ROOT, "src-tauri", "src", "plugins", "catalog.rs"),
+  "utf8",
+);
 
 for (const file of manifestFiles) {
   const manifest = JSON.parse(await readFile(path.join(manifestDir, file), "utf8"));
@@ -56,24 +61,49 @@ for (const file of manifestFiles) {
   assert.match(
     frontend,
     new RegExp(`plugin-manifests/${manifest.id}\\.json`),
-    `${manifest.id}: frontend must consume canonical manifest`,
+    `${manifest.id}: frontend definition must consume canonical manifest`,
+  );
+  assert.match(
+    frontend,
+    /definePlugin\s*\(/,
+    `${manifest.id}: frontend module must export an inert plugin definition`,
   );
   assert.doesNotMatch(
     frontend,
     /manifest:\s*\{/,
     `${manifest.id}: inline manifest duplicates are forbidden`,
   );
-}
-
-const lib = await readFile(path.join(ROOT, "src-tauri", "src", "lib.rs"), "utf8");
-for (const file of manifestFiles) {
+  assert.doesNotMatch(
+    frontend,
+    /registerPlugin\s*\(/,
+    `${manifest.id}: frontend plugin modules must not mutate the registry at import time`,
+  );
   assert.match(
-    lib,
+    frontendCatalog,
+    new RegExp(`from ["']\\./${manifest.id}["']`),
+    `${manifest.id}: frontend catalog must include the built-in plugin`,
+  );
+  assert.match(
+    backendCatalog,
     new RegExp(`plugin-manifests/${file.replace(".", "\\.")}`),
-    `Rust runtime must consume ${file}`,
+    `Rust plugin catalog must consume ${file}`,
   );
 }
+
+const main = await readFile(path.join(ROOT, "src", "main.tsx"), "utf8");
+assert.match(main, /installBuiltinPlugins\(\)/, "main.tsx must install the explicit frontend plugin catalog");
+assert.doesNotMatch(
+  main,
+  /import\s+["']\.\/plugins\/(?:serial|ssh|telnet|local-shell|tftp|iperf|network|modbus|trdp)["']/,
+  "main.tsx must not register concrete plugins through side-effect imports",
+);
+
+const lib = await readFile(path.join(ROOT, "src-tauri", "src", "lib.rs"), "utf8");
+assert.match(lib, /plugins::catalog::build_runtime\(\)/, "Rust bootstrap must install the backend plugin catalog");
 assert.doesNotMatch(lib, /PluginDescriptor\s*\{/, "manual backend plugin descriptors are forbidden");
+for (const adapter of ["SerialAdapter", "SshAdapter", "TelnetAdapter", "TftpAdapter", "IperfAdapter", "NetworkAdapter", "ModbusAdapter"]) {
+  assert.doesNotMatch(lib, new RegExp(`${adapter}::new`), `lib.rs must not assemble ${adapter} directly`);
+}
 
 const kernelMod = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "mod.rs"), "utf8");
 for (const deadModule of ["tab_host", "window_manager", "ipc_bridge", "shortcut_engine", "i18n_engine"]) {
