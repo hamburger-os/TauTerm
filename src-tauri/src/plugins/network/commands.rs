@@ -65,7 +65,34 @@ pub async fn close_network_peer(
     Ok(())
 }
 
-/// 网络调试会话连接（容器会话 + NetworkRuntime）
+fn rollback_startup_session(state: &State<'_, AppState>, session_id: &str, cause: &str) {
+    match state.session_store.lock() {
+        Ok(mut store) => {
+            if let Err(cleanup_error) = store.close_session(session_id) {
+                log::warn!(
+                    "网络调试启动失败后的会话清理也失败 (session={}): {}；原始错误: {}",
+                    session_id,
+                    cleanup_error,
+                    cause
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!(
+                "网络调试启动失败后无法锁定 SessionStore 清理会话 {}: {}；原始错误: {}",
+                session_id,
+                error,
+                cause
+            );
+        }
+    }
+}
+
+/// 网络调试会话连接（根会话 + NetworkRuntime）。
+///
+/// 根 Session 先以 paused DataPlane 注册，NetworkRuntime 完成监听/peer 启动并发布
+/// `session-connected` 后再 activate。任何启动阶段错误都会回滚已创建的 Session 资源，
+/// 避免返回连接失败时留下不可见的活动 runtime。
 async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -108,13 +135,22 @@ async fn connect_session(
     };
 
     // attach 后从 Network 插件 typed registry 获取 runtime，再启动监听/接收线程。
-    let network_runtime = state
+    let network_runtime = match state
         .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
         .runtime(&sid)
-        .ok_or_else(|| "网络调试 runtime 注册失败".to_string())?;
-    network_runtime
-        .start(app.clone(), &sid)
-        .map_err(|e| e.to_string())?;
+    {
+        Some(runtime) => runtime,
+        None => {
+            let error = "网络调试 runtime 注册失败".to_string();
+            rollback_startup_session(&state, &sid, &error);
+            return Err(error);
+        }
+    };
+    if let Err(error) = network_runtime.start(app.clone(), &sid) {
+        let error = error.to_string();
+        rollback_startup_session(&state, &sid, &error);
+        return Err(error);
+    }
 
     // 与其它协议一致：emit session-connected（网络调试容器会话本身是根标签页）。
     // 前端据此把 tab 状态从 connecting 置为 connected 并回填配置。
@@ -126,11 +162,9 @@ async fn connect_session(
         (handle.name.clone(), handle.connected_at)
     };
     // UDP Client 本地绑定地址（前端展示本机 ip:port 用；其它角色为 null）
-    let udp_local_addr = state
-        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
-        .runtime(&sid)
-        .and_then(|net| net.udp_client_local_addr())
-        .map(|a| a.to_string());
+    let udp_local_addr = network_runtime
+        .udp_client_local_addr()
+        .map(|address| address.to_string());
 
     let _ = app.emit(
         "session-connected",
