@@ -1,8 +1,8 @@
 //! 内建后端插件目录。
 //!
-//! TauTerm 采用编译期内建插件模型：具体插件的 manifest、Adapter、application contribution
-//! 与进程生命周期装配只在本模块出现。`lib.rs`/Kernel 只依赖 `PluginRuntime` 与本 catalog，
-//! 新增使用既有扩展点的插件无需继续修改应用 bootstrap。
+//! TauTerm 采用编译期内建插件模型：具体插件的 manifest、Adapter、application contribution、
+//! 专属 IPC 与进程生命周期装配只在本模块出现。`lib.rs`/Kernel 只依赖 `PluginRuntime` 与本
+//! catalog；新增使用既有扩展点的插件无需继续修改应用 bootstrap。
 
 use super::{iperf, local_shell, modbus, network, serial, ssh, telnet, tftp, trdp};
 use crate::kernel::plugin_adapter::{PluginId, PluginManifest, ProtocolAdapter};
@@ -10,6 +10,71 @@ use crate::kernel::plugin_runtime::PluginRuntime;
 use crate::plugin_application::{SessionConnectHandler, SessionDisconnectedHook};
 use std::{any::Any, path::Path, sync::Arc};
 use tauri::AppHandle;
+
+/// 合并公共应用命令与内建插件专属命令。
+///
+/// Tauri 的 root invoke handler 是单一编译期表；把插件命令清单放在 catalog 而不是
+/// `lib.rs`，可以保持 composition root 协议无关，同时继续使用稳定的现有 IPC 名称。
+#[macro_export]
+macro_rules! tauterm_invoke_handler {
+    ($($common:path),* $(,)?) => {
+        tauri::generate_handler![
+            $($common,)*
+            $crate::plugins::network::commands::list_network_peers,
+            $crate::plugins::network::commands::close_network_peer,
+            $crate::plugins::network::commands::network_udp_send_to,
+            $crate::plugins::network::commands::network_udp_send,
+            $crate::plugins::network::commands::set_network_send_target,
+            $crate::plugins::modbus::modbus_execute,
+            $crate::plugins::modbus::modbus_status,
+            $crate::plugins::modbus::modbus_watch_set,
+            $crate::plugins::modbus::modbus_watch_start,
+            $crate::plugins::modbus::modbus_watch_stop,
+            $crate::plugins::modbus::modbus_watch_values,
+            $crate::plugins::modbus::modbus_server_set_value,
+            $crate::plugins::modbus::modbus_server_snapshot,
+            $crate::plugins::trdp::trdp_command,
+            $crate::plugins::trdp::trdp_capture_interfaces,
+            $crate::plugins::trdp::trdp_open_capture,
+            $crate::plugins::trdp::trdp_capture_packets,
+            $crate::plugins::trdp::trdp_capture_summary,
+            $crate::plugins::trdp::trdp_save_capture,
+            $crate::plugins::trdp::trdp_release_capture,
+            $crate::plugins::trdp::trdp_import_xml,
+            $crate::plugins::trdp::trdp_decode_dataset,
+            $crate::plugins::local_shell::resolve_local_shell_session_name,
+            $crate::plugins::ssh::commands::sftp_list_dir_cmd,
+            $crate::plugins::ssh::commands::sftp_stat_cmd,
+            $crate::plugins::ssh::commands::sftp_read_head_cmd,
+            $crate::plugins::ssh::commands::sftp_chmod_cmd,
+            $crate::plugins::ssh::commands::sftp_delete_cmd,
+            $crate::plugins::ssh::commands::sftp_rename_cmd,
+            $crate::plugins::ssh::commands::sftp_mkdir_cmd,
+            $crate::plugins::ssh::commands::sftp_new_file_cmd,
+            $crate::plugins::ssh::commands::sftp_delete_batch_cmd,
+            $crate::plugins::ssh::commands::sftp_delete_recursive_cmd,
+            $crate::plugins::ssh::commands::start_journald_stream,
+            $crate::plugins::ssh::commands::stop_journald_stream,
+            $crate::plugins::ssh::commands::journald_query_cmd,
+            $crate::plugins::ssh::commands::start_journald_export,
+            $crate::plugins::ssh::commands::stop_journald_export,
+            $crate::plugins::ssh::commands::get_ssh_home_dir,
+            $crate::plugins::ssh::commands::confirm_host_key,
+            $crate::plugins::tftp::commands::tftp_server_start,
+            $crate::plugins::tftp::commands::tftp_server_stop,
+            $crate::plugins::tftp::commands::tftp_client_get,
+            $crate::plugins::tftp::commands::tftp_client_put,
+            $crate::plugins::tftp::commands::tftp_update_params,
+            $crate::plugins::tftp::commands::tftp_get_status,
+            $crate::plugins::iperf::commands::iperf_server_start,
+            $crate::plugins::iperf::commands::iperf_server_stop,
+            $crate::plugins::iperf::commands::iperf_client_run,
+            $crate::plugins::iperf::commands::iperf_client_stop,
+            $crate::plugins::iperf::commands::iperf_update_params,
+            $crate::plugins::iperf::commands::iperf_get_status,
+        ]
+    };
+}
 
 fn parse_manifest(raw: &'static str) -> PluginManifest {
     serde_json::from_str::<PluginManifest>(raw).expect("canonical plugin manifest")
@@ -114,10 +179,7 @@ pub fn build_runtime() -> PluginRuntime {
 
     for (id, handler) in [
         (ssh::PLUGIN_ID, ssh::application::session_config_handler()),
-        (
-            local_shell::PLUGIN_ID,
-            local_shell::session_config_handler(),
-        ),
+        (local_shell::PLUGIN_ID, local_shell::session_config_handler()),
     ] {
         runtime
             .register_contribution(&plugin_id(id), handler)
