@@ -12,7 +12,7 @@ use crate::kernel::plugin_adapter::{SessionAttach, SessionService};
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, ContainerSessionRuntime};
 use crate::plugin_application::{
-    unchanged_session_config, ConnectSessionRequest, SessionConnectFuture, SessionConfigHandler,
+    unchanged_session_config, ConnectSessionRequest, SessionConfigHandler, SessionConnectFuture,
 };
 use crate::AppState;
 use error::RttError;
@@ -101,7 +101,10 @@ async fn connect_session(
     let session_name = name.unwrap_or_else(|| "RTT 调试助手".to_string());
 
     let new_session_id = {
-        let mut store = state.session_store.lock().map_err(|error| error.to_string())?;
+        let mut store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
@@ -130,11 +133,10 @@ async fn connect_session(
     let start_runtime = runtime.clone();
     let start_app = app.clone();
     let start_session_id = new_session_id.clone();
-    let start_result = tokio::task::spawn_blocking(move || {
-        start_runtime.start(start_app, &start_session_id)
-    })
-    .await
-    .map_err(|error| format!("RTT worker 启动任务失败: {error}"))?;
+    let start_result =
+        tokio::task::spawn_blocking(move || start_runtime.start(start_app, &start_session_id))
+            .await
+            .map_err(|error| format!("RTT worker 启动任务失败: {error}"))?;
 
     if let Err(error) = start_result {
         cleanup_failed_session(app.clone(), new_session_id.clone()).await;
@@ -142,7 +144,10 @@ async fn connect_session(
     }
 
     let connected_at = {
-        let store = state.session_store.lock().map_err(|error| error.to_string())?;
+        let store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
         store
             .get_session(&new_session_id)
             .and_then(|handle| handle.connected_at)

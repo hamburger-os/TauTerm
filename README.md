@@ -7,7 +7,7 @@
 <p align="center"><strong>Local-first engineering workbench for connected systems.</strong></p>
 
 <p align="center">
-  SSH/SFTP · Serial · Local Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP
+  SSH/SFTP · Serial · Local Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP · RTT
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ Core engineering workflows are **local-first**: they are intended to remain usef
 ## Why TauTerm?
 
 - **One engineering workspace** — terminal, device, file, network, and analysis workflows share one session-oriented desktop model.
-- **Remote + embedded together** — SSH/SFTP and local shells live beside Serial, TCP/UDP, TFTP, Telnet, iPerf, and TRDP.
+- **Remote + embedded together** — SSH/SFTP and local shells live beside Serial, TCP/UDP, TFTP, Telnet, iPerf, TRDP, and RTT.
 - **Local-first by design** — core debugging does not require a cloud account.
 - **Extensible architecture** — protocol-specific behavior stays in modules while common session, workspace, logging, and automation capabilities are shared.
 - **Cross-platform targets** — Windows, Linux, and macOS packages are produced with platform-specific capability notes.
@@ -52,6 +52,7 @@ Core engineering workflows are **local-first**: they are intended to remain usef
 | Telnet terminal | ✅ |
 | iPerf2 / iPerf3 testing | ✅ |
 | TRDP Node + passive live/offline Monitor | ✅ |
+| RTT Debug Assistant via debug probes or an existing local J-Link debug session | ✅ |
 | Lua scripting and auto-reply for supported sessions | ✅ |
 | Persistent 1–4-pane Workspace | ✅ |
 | Protocol Inspector + data/CRC/bit engineering tools | ✅ |

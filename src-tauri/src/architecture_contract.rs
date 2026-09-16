@@ -185,7 +185,7 @@ fn frontend_session_presentation_is_plugin_driven() {
         source.contains("pluginRegistry") && source.contains("sessionPresentation"),
         "common session presentation must delegate to PluginRegistration.sessionPresentation"
     );
-    for plugin_id in ["ssh", "iperf", "trdp", "network", "serial", "modbus"] {
+    for plugin_id in ["ssh", "iperf", "trdp", "rtt", "network", "serial", "modbus"] {
         assert!(
             !source.contains(&format!(r#"pluginId === "{plugin_id}""#)),
             "common session presentation must not branch on built-in plugin '{plugin_id}'"
@@ -241,6 +241,7 @@ fn frontend_app_shell_is_plugin_driven() {
         "serial",
         "telnet",
         "trdp",
+        "rtt",
         "modbus",
     ] {
         assert!(

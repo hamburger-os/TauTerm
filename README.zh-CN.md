@@ -7,7 +7,7 @@
 <p align="center"><strong>面向连接系统的本地优先工程工作台。</strong></p>
 
 <p align="center">
-  SSH/SFTP · 串口 · 本地 Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP
+  SSH/SFTP · 串口 · 本地 Shell · TCP/UDP · TFTP · Telnet · iPerf · TRDP · RTT
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ TauTerm 把远端系统、嵌入式设备和网络调试工作流放进同一个
 ## 为什么是 TauTerm？
 
 - **一个工程工作区** —— 终端、设备、文件、网络与分析工作流使用统一的 Session 模型。
-- **远端与嵌入式并列** —— SSH/SFTP、本地 Shell 与串口、TCP/UDP、TFTP、Telnet、iPerf、TRDP 处于同一工作台。
+- **远端与嵌入式并列** —— SSH/SFTP、本地 Shell 与串口、TCP/UDP、TFTP、Telnet、iPerf、TRDP、RTT 处于同一工作台。
 - **本地优先** —— 核心调试能力不依赖云账号。
 - **可扩展架构** —— 协议语义留在模块中，Session、Workspace、日志和自动化等公共能力统一复用。
 - **跨平台目标** —— Windows、Linux、macOS 均有发布目标，并明确记录平台差异。
@@ -52,6 +52,7 @@ TauTerm 把远端系统、嵌入式设备和网络调试工作流放进同一个
 | Telnet 终端 | ✅ |
 | iPerf2 / iPerf3 测试 | ✅ |
 | TRDP Node + 被动实时/离线 Monitor | ✅ |
+| RTT 调试助手：调试探针或已有本机 J-Link 调试会话 | ✅ |
 | 适用 Session 的 Lua 脚本与自动回复 | ✅ |
 | 可持久化的 1–4 分屏 Workspace | ✅ |
 | 协议检查器 + 数据/CRC/位工程工具 | ✅ |

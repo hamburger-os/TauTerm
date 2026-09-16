@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.
+- **RTT Debug Assistant** — adds a first-class embedded RTT Session with native debug-probe access through probe-rs, coexistence with existing local J-Link debug sessions, independent Up/Down multi-channel I/O, bounded background history, and Terminal/Text/HEX views.
 
 ### Changed
 - **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.

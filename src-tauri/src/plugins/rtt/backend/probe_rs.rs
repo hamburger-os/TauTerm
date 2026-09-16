@@ -44,9 +44,11 @@ impl ProbeRsRttBackend {
             .ok_or_else(|| RttError::invalid_config("ProbeRs 模式缺少目标芯片"))?;
         let lister = Lister::new();
         let (mut probe, probe_label) = if let Some(raw_selector) = &config.probe_selector {
-            let selector = raw_selector.parse::<DebugProbeSelector>().map_err(|error| {
-                RttError::invalid_config(format!("无效调试探针 selector: {error}"))
-            })?;
+            let selector = raw_selector
+                .parse::<DebugProbeSelector>()
+                .map_err(|error| {
+                    RttError::invalid_config(format!("无效调试探针 selector: {error}"))
+                })?;
             let probe = lister.open(selector).map_err(map_open_error)?;
             (probe, raw_selector.clone())
         } else {
@@ -91,12 +93,14 @@ impl ProbeRsRttBackend {
             })?;
         }
 
-        let mut session = probe.attach(target.clone(), Permissions::default()).map_err(|error| {
-            RttError::new(
-                RttErrorCode::TargetAttachFailed,
-                format!("连接目标芯片 {target} 失败: {error}"),
-            )
-        })?;
+        let mut session = probe
+            .attach(target.clone(), Permissions::default())
+            .map_err(|error| {
+                RttError::new(
+                    RttErrorCode::TargetAttachFailed,
+                    format!("连接目标芯片 {target} 失败: {error}"),
+                )
+            })?;
         let region = match &config.locator {
             RttLocator::AutoRam => ScanRegion::Ram,
             RttLocator::Exact(address) => ScanRegion::Exact(*address),
@@ -194,7 +198,9 @@ impl RttBackend for ProbeRsRttBackend {
         let mut buffer = [0u8; 4 * 1024];
         for channel in self.rtt.up_channels().iter_mut() {
             for _ in 0..4 {
-                let count = channel.read(&mut core, &mut buffer).map_err(map_rtt_io_error)?;
+                let count = channel
+                    .read(&mut core, &mut buffer)
+                    .map_err(map_rtt_io_error)?;
                 if count == 0 {
                     break;
                 }
@@ -250,10 +256,12 @@ fn map_open_error(error: probe_rs::probe::DebugProbeError) -> RttError {
 
 fn map_rtt_attach_error(error: ProbeRttError) -> RttError {
     match error {
-        ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => RttError::new(
-            RttErrorCode::RttControlBlockNotFound,
-            "已连接调试探针，但尚未检测到 RTT Control Block",
-        ),
+        ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => {
+            RttError::new(
+                RttErrorCode::RttControlBlockNotFound,
+                "已连接调试探针，但尚未检测到 RTT Control Block",
+            )
+        }
         ProbeRttError::MultipleControlBlocksFound(addresses) => RttError::new(
             RttErrorCode::RttMultipleControlBlocks,
             format!("检测到多个 RTT Control Block: {addresses:#x?}"),

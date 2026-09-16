@@ -5,7 +5,7 @@ use super::{RttPlugin, PLUGIN_ID};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::sync::Arc;
-use tauri::{State};
+use tauri::State;
 
 const MAX_WRITE_BYTES: usize = 64 * 1024;
 

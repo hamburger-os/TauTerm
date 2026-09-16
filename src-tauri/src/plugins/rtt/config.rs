@@ -50,7 +50,11 @@ impl RttConfig {
         {
             "probe_rs" => RttBackendKind::ProbeRs,
             "jlink_existing" => RttBackendKind::JlinkExisting,
-            other => return Err(RttError::invalid_config(format!("未知 RTT backend: {other}"))),
+            other => {
+                return Err(RttError::invalid_config(format!(
+                    "未知 RTT backend: {other}"
+                )))
+            }
         };
         let probe_selector = nonempty_string(object.get("probe_selector"));
         let target = nonempty_string(object.get("target"));
@@ -153,7 +157,10 @@ fn parse_address(raw: &str) -> Result<u64, RttError> {
     if value.is_empty() {
         return Err(RttError::invalid_config("RTT 地址不能为空"));
     }
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         u64::from_str_radix(hex, 16)
             .map_err(|_| RttError::invalid_config(format!("无效十六进制地址: {raw}")))
     } else {
@@ -163,9 +170,7 @@ fn parse_address(raw: &str) -> Result<u64, RttError> {
     }
 }
 
-fn parse_locator(
-    object: &serde_json::Map<String, Value>,
-) -> Result<RttLocator, RttError> {
+fn parse_locator(object: &serde_json::Map<String, Value>) -> Result<RttLocator, RttError> {
     match object
         .get("locator_mode")
         .and_then(Value::as_str)
@@ -176,7 +181,9 @@ fn parse_locator(
             let raw = object
                 .get("control_block_address")
                 .and_then(Value::as_str)
-                .ok_or_else(|| RttError::invalid_config("指定地址模式需要 RTT Control Block 地址"))?;
+                .ok_or_else(|| {
+                    RttError::invalid_config("指定地址模式需要 RTT Control Block 地址")
+                })?;
             Ok(RttLocator::Exact(parse_address(raw)?))
         }
         "ranges" => {
@@ -185,7 +192,11 @@ fn parse_locator(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let mut ranges = Vec::new();
-            for item in raw.split([',', '\n', ';']).map(str::trim).filter(|s| !s.is_empty()) {
+            for item in raw
+                .split([',', '\n', ';'])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 let (start, end) = item.split_once('-').ok_or_else(|| {
                     RttError::invalid_config(format!("RTT 搜索范围必须使用 start-end 格式: {item}"))
                 })?;
@@ -199,7 +210,9 @@ fn parse_locator(
                 ranges.push(start..end);
             }
             if ranges.is_empty() {
-                return Err(RttError::invalid_config("指定范围模式至少需要一个 RTT 搜索范围"));
+                return Err(RttError::invalid_config(
+                    "指定范围模式至少需要一个 RTT 搜索范围",
+                ));
             }
             if ranges.len() > 16 {
                 return Err(RttError::invalid_config("RTT 搜索范围最多 16 个"));
@@ -229,9 +242,9 @@ fn parse_channels(value: Option<&Value>) -> Result<Vec<u32>, RttError> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| {
-                value
-                    .parse::<u32>()
-                    .map_err(|_| RttError::invalid_config(format!("无效 J-Link RTT Channel: {value}")))
+                value.parse::<u32>().map_err(|_| {
+                    RttError::invalid_config(format!("无效 J-Link RTT Channel: {value}"))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?,
         Some(_) => return Err(RttError::invalid_config("J-Link RTT Channel 列表格式无效")),
@@ -242,7 +255,9 @@ fn parse_channels(value: Option<&Value>) -> Result<Vec<u32>, RttError> {
         channels.push(0);
     }
     if channels.len() > 16 {
-        return Err(RttError::invalid_config("J-Link RTT Channel 最多配置 16 个"));
+        return Err(RttError::invalid_config(
+            "J-Link RTT Channel 最多配置 16 个",
+        ));
     }
     Ok(channels)
 }

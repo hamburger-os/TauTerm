@@ -51,7 +51,10 @@ impl HistoryStore {
                 .channels
                 .iter()
                 .filter_map(|(channel, history)| {
-                    history.chunks.front().map(|chunk| (*channel, chunk.sequence))
+                    history
+                        .chunks
+                        .front()
+                        .map(|chunk| (*channel, chunk.sequence))
                 })
                 .min_by_key(|(_, sequence)| *sequence)
                 .map(|(channel, _)| channel);
@@ -78,12 +81,14 @@ impl HistoryStore {
     }
 
     fn loss_totals(&self) -> (u64, u64) {
-        self.channels.values().fold((0, 0), |(chunks, bytes), item| {
-            (
-                chunks.saturating_add(item.dropped_chunks),
-                bytes.saturating_add(item.dropped_bytes),
-            )
-        })
+        self.channels
+            .values()
+            .fold((0, 0), |(chunks, bytes), item| {
+                (
+                    chunks.saturating_add(item.dropped_chunks),
+                    bytes.saturating_add(item.dropped_bytes),
+                )
+            })
     }
 
     fn response(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
@@ -102,8 +107,10 @@ impl HistoryStore {
             .collect();
         RttHistoryResponse {
             chunks,
-            oldest_sequence: history.and_then(|history| history.chunks.front().map(|chunk| chunk.sequence)),
-            newest_sequence: history.and_then(|history| history.chunks.back().map(|chunk| chunk.sequence)),
+            oldest_sequence: history
+                .and_then(|history| history.chunks.front().map(|chunk| chunk.sequence)),
+            newest_sequence: history
+                .and_then(|history| history.chunks.back().map(|chunk| chunk.sequence)),
             dropped_chunks: history.map_or(0, |history| history.dropped_chunks),
             dropped_bytes: history.map_or(0, |history| history.dropped_bytes),
         }
@@ -185,7 +192,10 @@ impl RttShared {
     }
 
     pub(super) fn snapshot(&self) -> RttSnapshot {
-        self.snapshot.lock().map(|value| value.clone()).unwrap_or_default()
+        self.snapshot
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default()
     }
 
     fn history(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
@@ -247,9 +257,18 @@ impl RttRuntime {
                 );
             })
             .map_err(|error| RttError::backend(format!("启动 RTT worker 失败: {error}")))?;
-        *self.command_tx.lock().map_err(|error| RttError::backend(error.to_string()))? = Some(command_tx);
-        *self.worker.lock().map_err(|error| RttError::backend(error.to_string()))? = Some(handle);
-        let startup_timeout = self.config.attach_timeout.saturating_add(Duration::from_secs(5));
+        *self
+            .command_tx
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))? = Some(command_tx);
+        *self
+            .worker
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))? = Some(handle);
+        let startup_timeout = self
+            .config
+            .attach_timeout
+            .saturating_add(Duration::from_secs(5));
         match startup_rx.recv_timeout(startup_timeout) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -259,9 +278,9 @@ impl RttRuntime {
                     "RTT backend 启动超时",
                 ))
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(RttError::backend(
-                "RTT worker 在完成启动前退出",
-            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(RttError::backend("RTT worker 在完成启动前退出"))
+            }
         }
     }
 
@@ -291,7 +310,11 @@ impl RttRuntime {
         })
         .map_err(|error| RttError::backend(format!("RTT 命令队列不可用: {error}")))?;
         reply_rx
-            .recv_timeout(self.config.write_timeout.saturating_add(Duration::from_secs(1)))
+            .recv_timeout(
+                self.config
+                    .write_timeout
+                    .saturating_add(Duration::from_secs(1)),
+            )
             .map_err(|_| RttError::new(RttErrorCode::RttWriteTimeout, "等待 RTT 写入结果超时"))?
     }
 

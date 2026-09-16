@@ -75,6 +75,7 @@ Use this map to decide which design document must change.
 | TCP/UDP Network Debug, TFTP, Telnet, iperf | `docs/modules/NETWORK.md` |
 | Modbus RTU/ASCII/TCP client/server, codec, watch and data model | `docs/modules/MODBUS.md` |
 | TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |
+| RTT debug probe integration, RTT runtime/channel model and native/J-Link Existing backends | `docs/modules/RTT.md` |
 | SendBar, auto-reply, scripting and communication automation | `docs/modules/AUTOMATION.md` |
 | data batching, logging, statistics and stateless engineering tools | `docs/modules/OBSERVABILITY_TOOLS.md` |
 | credential storage, privileged helpers, packaging/updater trust boundaries | `docs/modules/PLATFORM_SECURITY.md` |

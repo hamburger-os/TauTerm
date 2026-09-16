@@ -67,12 +67,8 @@ pub(super) fn run(
                     data,
                     reply,
                 } => {
-                    let result = write_all(
-                        backend.as_mut(),
-                        channel_index,
-                        &data,
-                        config.write_timeout,
-                    );
+                    let result =
+                        write_all(backend.as_mut(), channel_index, &data, config.write_timeout);
                     if let Ok(bytes) = result.as_ref() {
                         shared.record_tx(*bytes);
                     }
@@ -87,7 +83,8 @@ pub(super) fn run(
                     let _ = reply.send(result);
                 }
                 WorkerCommand::Shutdown { reply } => {
-                    let _ = flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
+                    let _ =
+                        flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
                     backend.shutdown();
                     let _ = reply.send(());
                     break 'worker;
@@ -208,10 +205,69 @@ fn notify_unexpected_disconnect(app: AppHandle, session_id: String, error: RttEr
                 "session_id": session_id,
                 "reason": error.message,
                 "disconnect_info": {
-                    "kind": error.code.as_str(),
+                    "kind": "io_error",
                     "reason": error.message,
+                    "plugin_error_code": error.code.as_str(),
                 }
             }),
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::rtt::model::{
+        RttBackendCapabilities, RttBackendDescriptor, RttChannelInfo,
+    };
+
+    struct PartialWriteBackend {
+        channels: Vec<RttChannelInfo>,
+        max_write: usize,
+        written: Vec<u8>,
+    }
+
+    impl RttBackend for PartialWriteBackend {
+        fn descriptor(&self) -> RttBackendDescriptor {
+            RttBackendDescriptor {
+                kind: "mock".into(),
+                display_name: "Mock".into(),
+                target: None,
+                probe: None,
+                control_block_address: None,
+                capabilities: RttBackendCapabilities::default(),
+            }
+        }
+
+        fn channels(&self) -> &[RttChannelInfo] {
+            &self.channels
+        }
+
+        fn poll(&mut self, _output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
+            Ok(())
+        }
+
+        fn write(&mut self, _channel_index: u32, data: &[u8]) -> Result<usize, RttError> {
+            let count = data.len().min(self.max_write);
+            self.written.extend_from_slice(&data[..count]);
+            Ok(count)
+        }
+
+        fn refresh_channels(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
+            Ok(self.channels.clone())
+        }
+    }
+
+    #[test]
+    fn write_all_handles_partial_backend_writes() {
+        let mut backend = PartialWriteBackend {
+            channels: Vec::new(),
+            max_write: 2,
+            written: Vec::new(),
+        };
+        let payload = b"partial RTT write";
+        let written = write_all(&mut backend, 0, payload, Duration::from_secs(1)).unwrap();
+        assert_eq!(written, payload.len());
+        assert_eq!(backend.written, payload);
+    }
 }
