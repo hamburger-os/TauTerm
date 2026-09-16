@@ -202,7 +202,15 @@ jobs:
                               gate.pending = Some(pending);
                               None
                           }
-                          Err(_) => Some(pending),
+                          Err(poisoned) => {
+                              let mut gate = poisoned.into_inner();
+                              if gate.ready {
+                                  Some(pending)
+                              } else {
+                                  gate.pending = Some(pending);
+                                  None
+                              }
+                          }
                       };
                       if let Some(pending) = ready_disconnect {
                           finalize_disconnect(
@@ -272,7 +280,11 @@ jobs:
                       gate.ready = true;
                       gate.pending.take()
                   }
-                  Err(_) => None,
+                  Err(poisoned) => {
+                      let mut gate = poisoned.into_inner();
+                      gate.ready = true;
+                      gate.pending.take()
+                  }
               };
               if let Some(pending) = pending_disconnect {
                   finalize_disconnect(
@@ -294,7 +306,7 @@ jobs:
         shell: bash
         run: |
           TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
-          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt clippy
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy
 
       - name: Install Tauri system dependencies
         shell: bash
