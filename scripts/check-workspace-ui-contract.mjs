@@ -90,6 +90,31 @@ assert.match(
   "Offline-capable workspaces must remain renderable without a connected runtime",
 );
 assert.match(
+  splitView,
+  /retainedNonTerminalSessionIds/,
+  "Non-terminal workspace views must be retained by Session identity while switching Pane assignments",
+);
+assert.match(
+  splitView,
+  /nonTerminalSessionPoolIds\.map\(sessionId\s*=>/,
+  "Retained non-terminal Sessions must render from a stable Session-owned instance pool",
+);
+assert.match(
+  splitView,
+  /plugin\?\.workspace\?\.availability\s*===\s*["']always["']\s*\|\|\s*tab\.state\s*!==\s*["']disconnected["']/,
+  "Connected-only workspace views must release on disconnect while offline-capable workspaces remain alive",
+);
+assert.match(
+  splitView,
+  /placement[\s\S]*?\{\s*display:\s*["']none["']\s*\}/,
+  "Background Session views must be hidden instead of unmounted when they are not assigned to a Pane",
+);
+assert.doesNotMatch(
+  splitView,
+  /tab\s*&&\s*!isTerminal\s*&&\s*!showDisconnectedPlaceholder\s*&&\s*renderNonTerminalContent\(tab\)/,
+  "Pane surfaces must not directly own non-terminal Session component lifetime",
+);
+assert.match(
   sidebar,
   /getSessionSubtitle/,
   "Session cards must use the shared Session presentation contract",
@@ -270,4 +295,4 @@ for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "
   );
 }
 
-console.log("workspace-ui: plugin-owned Session identity, offline workspaces, context menus, runtime independence and reconnect safety contracts preserved");
+console.log("workspace-ui: plugin-owned Session identity, retained Session workspaces, offline workbenches, context menus, runtime independence and reconnect safety contracts preserved");
