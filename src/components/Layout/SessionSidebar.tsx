@@ -234,7 +234,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       const supportsLogging = capabilities.includes("session_logging");
       const items: ContextMenuItem[] = [];
       if (supportsMultiple) {
-        items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "connection" });
+        items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "play" });
       }
       if (supportsElevation) {
         items.push({ id: "connect_elevated", label: t("contextMenu.connectAsAdministrator"), icon: "shield" });
