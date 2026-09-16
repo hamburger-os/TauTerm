@@ -53,6 +53,7 @@ struct PeerRuntime {
     local_addr: String,
     io: Arc<SessionIo>,
     connected_at: Option<u64>,
+    connected: bool,
 }
 
 struct NetworkCore {
@@ -98,33 +99,56 @@ impl NetworkCore {
     }
 
     fn list_peers(&self) -> Vec<NetworkPeerInfo> {
-        let mut peers = self
-            .peers
-            .lock()
-            .map(|peers| {
-                peers
-                    .iter()
-                    .map(|(peer_id, peer)| NetworkPeerInfo {
+        let Ok(peers) = self.peers.lock() else {
+            return Vec::new();
+        };
+        let mut peers = peers
+            .iter()
+            .map(|(peer_id, peer)| {
+                (
+                    peer.index,
+                    NetworkPeerInfo {
                         peer_id: peer_id.clone(),
                         name: peer.name.clone(),
                         addr: peer.addr.clone(),
                         local_addr: peer.local_addr.clone(),
-                        state: "connected".to_string(),
+                        state: if peer.connected {
+                            "connected".to_string()
+                        } else {
+                            "disconnected".to_string()
+                        },
                         tx_bytes: peer.io.tx_bytes(),
                         rx_bytes: peer.io.rx_bytes(),
                         connected_at: peer.connected_at,
-                    })
-                    .collect::<Vec<_>>()
+                    },
+                )
             })
-            .unwrap_or_default();
-        peers.sort_by_key(|peer| {
-            self.peers
-                .lock()
-                .ok()
-                .and_then(|records| records.get(&peer.peer_id).map(|record| record.index))
-                .unwrap_or(u32::MAX)
-        });
-        peers
+            .collect::<Vec<_>>();
+        peers.sort_by_key(|(index, _)| *index);
+        peers.into_iter().map(|(_, peer)| peer).collect()
+    }
+
+    fn mark_peer_disconnected(&self, peer_id: &str) {
+        if let Ok(mut handles) = self.peer_handles.lock() {
+            handles.remove(peer_id);
+        }
+        if let Ok(mut peers) = self.peers.lock() {
+            if let Some(peer) = peers.get_mut(peer_id) {
+                peer.connected = false;
+            }
+        }
+        if let Ok(mut target) = self.send_target.lock() {
+            if target.as_deref() == Some(peer_id) {
+                *target = None;
+            }
+        }
+    }
+
+    fn remove_peer(&self, peer_id: &str) {
+        self.mark_peer_disconnected(peer_id);
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.remove(peer_id);
+        }
     }
 
     fn udp_send_to(&self, target: &str, data: &[u8]) -> Result<(), String> {
@@ -445,6 +469,10 @@ impl NetworkRuntime {
         self.core.list_peers()
     }
 
+    pub fn remove_peer(&self, peer_id: &str) {
+        self.core.remove_peer(peer_id);
+    }
+
     pub fn udp_send_to(&self, target: &str, data: &[u8]) -> Result<(), String> {
         self.core.udp_send_to(target, data)
     }
@@ -543,16 +571,10 @@ fn register_tcp_peer(
     let parent_for_disconnect = parent_id.to_string();
     let peer_for_disconnect = channel_id.clone();
     let io_for_disconnect = io.clone();
-    let peer_handles = core.peer_handles.clone();
-    let peers = core.peers.clone();
+    let core_for_disconnect = core.clone();
     let disconnect_parent = core.role == "client";
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> = Box::new(move |_id, info| {
-        if let Ok(mut handles) = peer_handles.lock() {
-            handles.remove(&peer_for_disconnect);
-        }
-        if let Ok(mut records) = peers.lock() {
-            records.remove(&peer_for_disconnect);
-        }
+        core_for_disconnect.mark_peer_disconnected(&peer_for_disconnect);
         let mut parent_was_disconnected = false;
         if let Ok(mut store) = app_disconnect
             .state::<crate::AppState>()
@@ -641,6 +663,7 @@ fn register_tcp_peer(
                 local_addr: local_addr.clone(),
                 io,
                 connected_at,
+                connected: true,
             },
         );
     let _ = app.emit(

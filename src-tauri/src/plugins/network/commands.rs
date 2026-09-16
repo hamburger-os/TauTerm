@@ -42,18 +42,26 @@ pub async fn close_network_peer(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）
-    let cleanup = {
+    // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）。
+    // Network 插件自己的 peer 历史在 I/O 自然断开后继续保留；只有显式
+    // 关闭/清除命令完成资源回收后才删除元数据。
+    let (parent_id, cleanup) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let pid = store
+        let parent_id = store
             .find_parent_of_channel(&session_id)
             .ok_or_else(|| format!("对端 {} 未找到", session_id))?;
-        let (_is_last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
-        cleanup
+        let (_is_last, cleanup) = store.close_sub_connection(&parent_id, &session_id)?;
+        (parent_id, cleanup)
     };
     tauri::async_runtime::spawn_blocking(move || cleanup.join())
         .await
         .map_err(|error| format!("等待网络对端资源清理失败: {error}"))?;
+    if let Some(runtime) = state
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
+        .runtime(&parent_id)
+    {
+        runtime.remove_peer(&session_id);
+    }
     Ok(())
 }
 
