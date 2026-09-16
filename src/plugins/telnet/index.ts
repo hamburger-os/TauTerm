@@ -3,11 +3,22 @@ import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/telnet.json";
+import TelnetConnectForm, {
+  DEFAULT_TELNET_PARAMS,
+  isTelnetConnectionConfigValid,
+  normalizeTelnetParams,
+} from "./TelnetConnectForm";
 import { telnetEndpointLabel, telnetSessionTitle } from "./presentation";
 import { telnetRuntimeStore, type TelnetRuntimeSnapshot } from "./runtime-store";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  connectForm: TelnetConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_TELNET_PARAMS }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: true }),
+  normalizeConnectionParams: normalizeTelnetParams,
+  isConnectionConfigValid: isTelnetConnectionConfigValid,
+  resolveEndpoint: params => String(params.host ?? "").trim(),
   sessionPresentation: {
     defaultName: () => telnetSessionTitle(),
     subtitle: (params, endpoint) => telnetEndpointLabel(params, endpoint),
