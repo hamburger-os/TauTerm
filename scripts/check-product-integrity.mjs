@@ -136,6 +136,23 @@ assert.doesNotMatch(
   "ProtocolAdapter must not duplicate canonical manifest content_type",
 );
 
+const commands = await readFile(path.join(ROOT, "src-tauri", "src", "commands.rs"), "utf8");
+assert.match(
+  commands,
+  /pub transfer_enabled: bool,/,
+  "saved-session IPC must require an explicit transfer_enabled value",
+);
+assert.match(
+  commands,
+  /pub send_bar_enabled: bool,/,
+  "saved-session IPC must require an explicit send_bar_enabled value",
+);
+assert.doesNotMatch(
+  commands,
+  /transfer_enabled\.unwrap_or\(true\)|send_bar_enabled\.unwrap_or\(true\)/,
+  "generic saved-session IPC must not invent plugin UI capability defaults",
+);
+
 for (const legacyUiDir of ["Tftp", "Iperf"]) {
   assert.equal(
     await exists(path.join(ROOT, "src", "components", legacyUiDir)),
