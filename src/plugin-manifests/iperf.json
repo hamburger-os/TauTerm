@@ -1,6 +1,6 @@
 {
   "id": "iperf",
-  "name": "iperf",
+  "name": "iperf 网络测速",
   "version": "1.0.0",
   "category": "network_tool",
   "description": "iperf 网络测速",
