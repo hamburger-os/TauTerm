@@ -75,7 +75,7 @@
 }
 
 .warning {
-  color: var(--warning-color, var(--text-secondary));
+  color: var(--color-warning, var(--text-secondary));
 }
 
 .textarea {
