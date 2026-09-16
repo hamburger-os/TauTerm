@@ -173,9 +173,10 @@ async fn connect_session(
 async fn cleanup_failed_session(app: AppHandle, session_id: String) {
     let _ = tokio::task::spawn_blocking(move || {
         let state: State<'_, AppState> = app.state();
-        if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.close_session(&session_id);
-        }
+        let Ok(mut store) = state.session_store.lock() else {
+            return;
+        };
+        let _ = store.close_session(&session_id);
     })
     .await;
 }
