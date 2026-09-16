@@ -179,7 +179,10 @@ pub fn build_runtime() -> PluginRuntime {
 
     for (id, handler) in [
         (ssh::PLUGIN_ID, ssh::application::session_config_handler()),
-        (local_shell::PLUGIN_ID, local_shell::session_config_handler()),
+        (
+            local_shell::PLUGIN_ID,
+            local_shell::session_config_handler(),
+        ),
     ] {
         runtime
             .register_contribution(&plugin_id(id), handler)
