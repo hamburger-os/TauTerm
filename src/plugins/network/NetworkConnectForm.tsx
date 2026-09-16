@@ -25,6 +25,9 @@ export const DEFAULT_NETWORK_PARAMS: Record<string, unknown> = {
 export function normalizeNetworkParams(params: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...DEFAULT_NETWORK_PARAMS, ...params };
   if (normalized.transport === "udp") delete normalized.data_mode;
+  if (normalized.role === "server" && Number(normalized.local_port) === 0) {
+    normalized.local_port = DEFAULT_NETWORK_PARAMS.local_port;
+  }
   return normalized;
 }
 
