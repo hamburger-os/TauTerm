@@ -45,8 +45,14 @@ registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: SerialConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_SERIAL_PARAMS }),
+  defaultSessionOptions: () => ({
+    transferEnabled: true,
+    transferProtocol: "ymodem",
+    sendBarEnabled: true,
+  }),
   normalizeConnectionParams: normalizeSerialParams,
-  isConnectionConfigValid: isSerialConnectionConfigValid,
+  isConnectionConfigValid: (params, endpoint) =>
+    isSerialConnectionConfigValid(params) && Boolean(endpoint?.trim()),
   sessionPresentation: {
     defaultName: (_params, endpoint) => `Serial @ ${endpoint}`,
     subtitle: serialSubtitle,
