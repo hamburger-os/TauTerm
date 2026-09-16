@@ -197,12 +197,25 @@ export interface PluginRightSidebarContribution {
 
 export interface PluginRegistration {
   manifest: PluginManifest;
+  /** Connection capability UI. Common ConnectDialog only hosts this component. */
   connectForm?: ComponentType<ConnectFormProps>;
   /** 新建配置时的唯一默认值来源。 */
   defaultConnectionParams?: () => Record<string, unknown>;
+  /** 新建配置时的 Session 级选项；未声明时按 manifest 推导保守默认值。 */
+  defaultSessionOptions?: () => SessionConnectOptions;
   /** 将持久化/编辑态参数收束到插件当前 schema；不承担旧版本兼容迁移。 */
   normalizeConnectionParams?: (params: Record<string, unknown>) => Record<string, unknown>;
-  isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
+  /** 提交前完成插件私有的异步准备，例如 Local Shell 默认工作目录。 */
+  prepareConnectionParams?: (
+    params: Record<string, unknown>,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /** 插件决定配置是否有效；endpoint 是宿主维护的通用端点选择值。 */
+  isConnectionConfigValid?: (params: Record<string, unknown>, endpoint?: string) => boolean;
+  /** 从插件配置解析最终 Session endpoint；未声明时直接使用宿主 endpoint。 */
+  resolveEndpoint?: (
+    params: Record<string, unknown>,
+    endpoint: string,
+  ) => string | Promise<string>;
   /** 将瞬态编辑参数投影为前端内存中的安全 Saved Session 参数。 */
   persistedConnectionParams?: (
     params: Record<string, unknown>,
@@ -211,6 +224,8 @@ export interface PluginRegistration {
   reconnectGuard?: (
     context: SessionReconnectContext,
   ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;
+  /** 对声明 elevated_session 的插件，由插件判断当前配置是否允许创建提权 Session。 */
+  canCreateElevatedSession?: (params: Record<string, unknown>) => boolean;
   /** 同步默认展示和动态摘要；需要宿主调用的默认名使用 resolveDefaultSessionName。 */
   sessionPresentation?: SessionPresentation;
   resolveDefaultSessionName?: (
@@ -248,6 +263,9 @@ class PluginRegistry {
     const id = registration.manifest.id;
     if (this.plugins.has(id)) {
       throw new Error(`[PluginRegistry] 插件 "${id}" 重复注册`);
+    }
+    if (registration.manifest.capabilities.includes("connection") && !registration.connectForm) {
+      throw new Error(`[PluginRegistry] 连接插件 "${id}" 必须注册 connectForm`);
     }
 
     const statusIds = new Set<string>();
