@@ -32,6 +32,10 @@ const disconnectedSessionMenu = await readFile(
   path.join(ROOT, "src", "components", "Layout", "DisconnectedSessionContextMenu.tsx"),
   "utf8",
 );
+const tftpRegistration = await readFile(
+  path.join(ROOT, "src", "plugins", "tftp", "index.ts"),
+  "utf8",
+);
 
 assert.doesNotMatch(
   splitView,
@@ -88,6 +92,16 @@ for (const contribution of ["defaultConnectionParams", "prepareConnectionParams"
 }
 assert.match(sidebar, /canCreateElevatedSession/, "SessionSidebar must delegate elevated-session policy to the plugin contribution");
 assert.match(disconnectedSessionMenu, /canCreateElevatedSession/, "Disconnected Pane menu must delegate elevated-session policy to the plugin contribution");
+assert.doesNotMatch(
+  sessionContext,
+  /exposure_confirmed|write_enabled|overwrite|listen_ip/,
+  "SessionContext must not interpret TFTP reconnect-safety fields",
+);
+assert.match(
+  tftpRegistration,
+  /reconnectGuard\s*:/,
+  "TFTP must own its reconnect safety policy through PluginRegistration",
+);
 
 const baseSession = {
   endpoint: "COM1",
