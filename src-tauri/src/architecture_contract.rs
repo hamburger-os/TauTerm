@@ -343,7 +343,10 @@ fn network_connector_rolls_back_failed_runtime_startup() {
     assert!(source.contains("fn rollback_startup_session("));
     assert!(source.contains("network_runtime.start(app.clone(), &sid)"));
     assert!(
-        source.matches("rollback_startup_session(&state, &sid").count() >= 2,
+        source
+            .matches("rollback_startup_session(&state, &sid")
+            .count()
+            >= 2,
         "Network connector must clean up both missing-runtime and runtime-start failures"
     );
 }
