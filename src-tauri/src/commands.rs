@@ -88,9 +88,9 @@ pub struct SaveSessionConfigRequest {
     pub params: Value,
     pub name: Option<String>,
     pub plugin_id: String,
-    pub transfer_enabled: Option<bool>,
+    pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
-    pub send_bar_enabled: Option<bool>,
+    pub send_bar_enabled: bool,
     pub session_id: Option<String>,
 }
 #[derive(Debug, Deserialize)]
@@ -489,9 +489,9 @@ pub async fn save_session_config(
         endpoint,
         params,
         timestamp: chrono::Utc::now().timestamp_millis() as u64,
-        transfer_enabled: transfer_enabled.unwrap_or(true),
+        transfer_enabled,
         transfer_protocol,
-        send_bar_enabled: send_bar_enabled.unwrap_or(true),
+        send_bar_enabled,
     };
     SessionStore::save_config_to_disk_transactional(&app, saved, || {
         prepared.commit(&state.credential_store)
