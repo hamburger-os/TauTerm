@@ -13,7 +13,10 @@ import {
   parseScriptImport,
   uniqueAssetName,
 } from "../src/components/SendBar/assetValidation.ts";
-import { canSyncNetworkSendTarget } from "../src/components/SendBar/networkSendTarget.ts";
+import {
+  canSyncNetworkSendTarget,
+  isNetworkSendTargetVisible,
+} from "../src/plugins/network/send-target.ts";
 import {
   clampSendBarBodyHeight,
   getSendBarHostHeightCss,
@@ -113,18 +116,20 @@ assert.equal(
 );
 
 // Network target selection may exist while disconnected, but runtime sync starts only once
-// the matching Network Debug server session owns a live backend side channel.
+// the Network plugin owns a connected server-side send target.
 const tcpServerParams = { transport: "tcp", role: "server" };
 const udpServerParams = { transport: "udp", role: "server" };
-assert.equal(canSyncNetworkSendTarget("network", "disconnected", tcpServerParams), false);
-assert.equal(canSyncNetworkSendTarget("network", "connecting", tcpServerParams), false);
-assert.equal(canSyncNetworkSendTarget("network", "connected", tcpServerParams), true);
-assert.equal(canSyncNetworkSendTarget("network", "connected", udpServerParams), true);
-assert.equal(canSyncNetworkSendTarget("network", "connected", { transport: "tcp", role: "client" }), false);
-assert.equal(canSyncNetworkSendTarget("serial", "connected", tcpServerParams), false);
+assert.equal(isNetworkSendTargetVisible(tcpServerParams), true);
+assert.equal(isNetworkSendTargetVisible(udpServerParams), true);
+assert.equal(isNetworkSendTargetVisible({ transport: "tcp", role: "client" }), false);
+assert.equal(canSyncNetworkSendTarget("disconnected", tcpServerParams), false);
+assert.equal(canSyncNetworkSendTarget("connecting", tcpServerParams), false);
+assert.equal(canSyncNetworkSendTarget("connected", tcpServerParams), true);
+assert.equal(canSyncNetworkSendTarget("connected", udpServerParams), true);
+assert.equal(canSyncNetworkSendTarget("connected", { transport: "tcp", role: "client" }), false);
 
 // SendBar splitter geometry is exact in pixel space. Returning to the minimum must
-// produce the same canonical body height regardless of container size or TargetBar.
+// produce the same canonical body height regardless of container size or plugin send target.
 const bodyMinHeight = 156;
 const targetBarHeight = 42;
 for (const containerHeight of [640, 810, 900, 1200]) {
@@ -151,14 +156,24 @@ const basicSend = source("src/components/SendBar/BasicSend.tsx");
 assert.ok(basicSend.includes("buildSendPayload"));
 assert.ok(!basicSend.includes("setInterval("), "repeat sends must provide backpressure");
 
-const targetBar = source("src/components/SendBar/TargetBar.tsx");
-assert.ok(!targetBar.includes("invoke("), "TargetBar must remain presentation-only");
-const targetSync = source("src/components/SendBar/useNetworkSendTargetSync.ts");
-assert.ok(targetSync.includes('invoke("set_network_send_target"'));
-assert.ok(targetSync.includes("canSyncNetworkSendTarget"));
-assert.ok(targetSync.includes("if (!syncReady) return;"));
-assert.ok(targetSync.includes("if (!active) return;"), "stale target-sync failures must not surface after lifecycle changes");
-assert.ok(!targetSync.includes("catch(() =>"), "current target sync failures must not be swallowed");
+// Common SendBar only resolves generic plugin contributions. Network target presentation,
+// visibility and backend synchronization stay inside the Network plugin.
+const sendBar = source("src/components/SendBar/SendBar.tsx");
+assert.ok(sendBar.includes("pluginRegistry.get(tab.pluginId)?.sendTarget"));
+assert.ok(!sendBar.includes("NetworkSendTarget"), "common SendBar must not import a built-in target implementation");
+assert.ok(!sendBar.includes("set_network_send_target"), "common SendBar must not own Network synchronization");
+const app = source("src/App.tsx");
+assert.ok(app.includes("pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible"));
+assert.ok(!app.includes("networkSendTarget"), "app shell must not own Network target rules");
+const networkTarget = source("src/plugins/network/NetworkSendTarget.tsx");
+assert.ok(networkTarget.includes('invoke("set_network_send_target"'));
+assert.ok(networkTarget.includes("canSyncNetworkSendTarget"));
+assert.ok(networkTarget.includes("if (!syncReady) return;"));
+assert.ok(networkTarget.includes("if (!active) return;"), "stale target-sync failures must not surface after lifecycle changes");
+assert.ok(!networkTarget.includes("catch(() =>"), "current target sync failures must not be swallowed");
+const networkPlugin = source("src/plugins/network/index.tsx");
+assert.ok(networkPlugin.includes("sendTarget: NetworkSendTarget"));
+assert.ok(networkPlugin.includes("sendTargetVisible: params => isNetworkSendTargetVisible(params)"));
 
 const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
@@ -172,14 +187,12 @@ assert.ok(context.includes("const hasLocalDraft = previousActive != null && curr
 assert.ok(context.includes('stateRef.current.executionMode === "auto-reply"'));
 assert.ok(context.includes('stateRef.current.executionMode === "script"'));
 
-const sendBar = source("src/components/SendBar/SendBar.tsx");
 assert.ok(!sendBar.includes("wrapperHidden"), "inactive mode panels should not stay mounted");
 assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
 
-const app = source("src/App.tsx");
 assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
 assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");
 assert.ok(!app.includes("SENDBAR_MIN_PCT"), "percentage minimum quantization must not return");
@@ -222,4 +235,4 @@ assert.ok(!types.includes("interface LoopConfig"));
 assert.ok(!types.includes("interface ExecutionState"));
 assert.ok(!types.includes("localStorage"));
 
-console.log("SendBar payload, layout, state-boundary, lifecycle, execution and UI contracts passed.");
+console.log("SendBar payload, layout, plugin-target boundary, lifecycle, execution and UI contracts passed.");
