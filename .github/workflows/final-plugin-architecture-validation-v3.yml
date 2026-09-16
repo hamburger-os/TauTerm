@@ -1,0 +1,129 @@
+name: Final Plugin Architecture Validation V3
+
+on:
+  push:
+    branches:
+      - refactor/plugin-boundary-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply final shared-layer boundary fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '''    const { state: sessionState, parentId, pluginId } = menu.session;\n    const capabilities = pluginRegistry.get(pluginId)?.manifest.capabilities ?? [];\n    const supportsMultiple = capabilities.includes("multi_session");\n    const supportsElevation = capabilities.includes("elevated_session")\n      && menu.session.params?.shell_kind !== "wsl";\n''',
+              '''    const { state: sessionState, parentId, pluginId } = menu.session;\n    const registration = pluginRegistry.get(pluginId);\n    const capabilities = registration?.manifest.capabilities ?? [];\n    const supportsMultiple = capabilities.includes("multi_session");\n    const supportsElevation = capabilities.includes("elevated_session")\n      && (registration?.canCreateElevatedSession?.(menu.session.params ?? {}) ?? true);\n''',
+              'sidebar elevation visibility',
+          )
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '''        const supportsElevation = tab\n          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("elevated_session")\n            && tab.params?.shell_kind !== "wsl"\n          : false;\n''',
+              '''        const registration = tab ? pluginRegistry.get(tab.pluginId) : undefined;\n        const supportsElevation = Boolean(\n          tab\n          && registration?.manifest.capabilities.includes("elevated_session")\n          && (registration.canCreateElevatedSession?.(tab.params ?? {}) ?? true),\n        );\n''',
+              'sidebar elevation action',
+          )
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '    // ── 父级 SSH / TFTP / Serial 会话 ──\n',
+              '    // ── 根会话菜单 ──\n',
+              'sidebar protocol comment',
+          )
+          replace_once(
+              'src/context/SessionContext.tsx',
+              '  /** Local Shell 子会话是否经系统提权 helper 启动。 */\n  elevated?: boolean;\n',
+              '  /** 子 channel 是否以提升权限运行；仅对声明对应能力的插件有意义。 */\n  elevated?: boolean;\n',
+              'generic elevated metadata comment',
+          )
+
+          contract = Path('scripts/check-workspace-ui-contract.mjs')
+          text = contract.read_text(encoding='utf-8')
+          source_marker = '''const presentationHelper = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "sessionPresentation.ts"),\n  "utf8",\n);\n'''
+          source_addition = source_marker + '''const connectDialog = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "ConnectDialog.tsx"),\n  "utf8",\n);\nconst sessionContext = await readFile(\n  path.join(ROOT, "src", "context", "SessionContext.tsx"),\n  "utf8",\n);\nconst disconnectedSessionMenu = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "DisconnectedSessionContextMenu.tsx"),\n  "utf8",\n);\n'''
+          if text.count(source_marker) != 1:
+              raise SystemExit('workspace contract source marker mismatch')
+          text = text.replace(source_marker, source_addition, 1)
+
+          boundary_marker = '''assert.doesNotMatch(\n  presentationHelper,\n  /pluginId\\s*===\\s*["'](?:ssh|iperf|trdp|network|serial|modbus)["']/,\n  "Common Session presentation must not contain built-in protocol branches",\n);\n'''
+          boundary_addition = boundary_marker + '''\nfor (const [label, source] of [\n  ["SessionSidebar", sidebar],\n  ["SplitView", splitView],\n  ["SessionContext", sessionContext],\n  ["DisconnectedSessionContextMenu", disconnectedSessionMenu],\n  ["sessionPresentation", presentationHelper],\n]) {\n  assert.doesNotMatch(source, /\\bshell_kind\\b/, `${label} must not interpret Local Shell private configuration fields`);\n}\nassert.doesNotMatch(\n  connectDialog,\n  /\\b(?:isSerial|isSsh|isTftp|isTelnet|isIperf|isNetwork|isTrdp|isLocalShell)\\b|["'](?:serial|ssh|tftp|telnet|iperf|network|trdp|modbus|local-shell)["']/,\n  "ConnectDialog must not contain built-in plugin branches or IDs",\n);\nfor (const contribution of ["defaultConnectionParams", "prepareConnectionParams", "resolveEndpoint"]) {\n  assert.ok(connectDialog.includes(contribution), `ConnectDialog must delegate ${contribution} to PluginRegistration`);\n}\nassert.match(sidebar, /canCreateElevatedSession/, "SessionSidebar must delegate elevated-session policy to the plugin contribution");\nassert.match(disconnectedSessionMenu, /canCreateElevatedSession/, "Disconnected Pane menu must delegate elevated-session policy to the plugin contribution");\n'''
+          if text.count(boundary_marker) != 1:
+              raise SystemExit('workspace contract boundary marker mismatch')
+          text = text.replace(boundary_marker, boundary_addition, 1)
+
+          old_loop = 'for (const plugin of ["ssh", "iperf", "trdp", "network", "serial", "modbus"]) {'
+          new_loop = 'for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "network", "serial", "modbus"]) {'
+          if text.count(old_loop) != 1:
+              raise SystemExit('workspace contract plugin loop mismatch')
+          text = text.replace(old_loop, new_loop, 1)
+
+          old_assert = '''  assert.match(\n    source,\n    /sessionPresentation\\s*:/,\n    `${plugin} must own its Session presentation contribution`,\n  );\n'''
+          new_assert = old_assert + '''  assert.match(\n    source,\n    /connectForm\\s*:/,\n    `${plugin} must own its connection form contribution`,\n  );\n'''
+          if text.count(old_assert) != 1:
+              raise SystemExit('workspace contract plugin assertion mismatch')
+          text = text.replace(old_assert, new_assert, 1)
+          contract.write_text(text, encoding='utf-8')
+
+          replace_once(
+              'docs/modules/UI_FOUNDATION.md',
+              '- 协议模块声明内容与能力，不直接拥有整个应用导航。\n',
+              '- 协议模块声明内容与能力，不直接拥有整个应用导航。Session 创建/编辑也遵循同一边界：`ConnectDialog` 只承载 `connectForm`，默认参数、SessionOptions、校验、提交前准备和 endpoint 解析由 `PluginRegistration` contribution 所有；共享 UI 可以消费稳定的跨插件 capability，但 capability 的配置适用性必须由插件判定，例如 `elevated_session` 的可用性由 `canCreateElevatedSession` 决定，Workspace 不读取 `shell_kind` 等协议私有参数。\n',
+              'UI foundation connection boundary',
+          )
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Documentation contract
+        run: npm run docs:check
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Workspace architecture contract
+        run: node scripts/check-workspace-ui-contract.mjs
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Rust check
+        run: cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Rust clippy
+        run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Commit final architecture review
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/final-plugin-architecture-validation-v3.yml
+          git add src/components/Layout/SessionSidebar.tsx src/context/SessionContext.tsx scripts/check-workspace-ui-contract.mjs docs/modules/UI_FOUNDATION.md
+          git diff --cached --check
+          git commit -m 'refactor: enforce frontend plugin connection boundary'
+          git push origin HEAD:refactor/plugin-boundary-cleanup
