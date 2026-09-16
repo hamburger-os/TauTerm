@@ -7,7 +7,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
-import Icon from "../../../components/common/Icon";
+import Icon from "../../components/common/Icon";
 import type { TftpParams, ClientFormState } from "./TftpSessionView";
 import styles from "./TftpSessionView.module.css";
 
