@@ -1,0 +1,71 @@
+name: Temporary Network Peer Registration Fix V2
+
+on:
+  push:
+    branches:
+      - refactor/plugin-boundary-cleanup
+    paths:
+      - .github/workflows/tmp-network-peer-registration-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refactor/plugin-boundary-cleanup
+          fetch-depth: 0
+
+      - name: Apply peer registration ordering fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          workflow = Path(".github/workflows/tmp-network-peer-registration.yml").read_text(encoding="utf-8")
+          match = re.search(r"replacement = r'''([\s\S]*?)'''", workflow)
+          if not match:
+              raise SystemExit("unable to extract peer registration replacement")
+          replacement = match.group(1)
+          path = Path("src-tauri/src/plugins/network/mod.rs")
+          text = path.read_text(encoding="utf-8")
+          start = text.index("fn register_tcp_peer(")
+          end = text.index("\nfn emit_udp_datagram(", start)
+          path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+          PY
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Format and validate Rust
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+          cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Commit validated fix and remove temporary workflows
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-network-peer-registration.yml
+          rm .github/workflows/tmp-network-peer-registration-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/plugins/network/mod.rs .github/workflows/tmp-network-peer-registration.yml .github/workflows/tmp-network-peer-registration-v2.yml
+          git commit -m "fix: order network peer registration lifecycle"
+          git push origin HEAD:refactor/plugin-boundary-cleanup
