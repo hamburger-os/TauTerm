@@ -8,6 +8,7 @@ pub mod iperf;
 pub mod local_shell;
 pub mod modbus;
 pub mod network;
+pub mod rtt;
 pub mod serial;
 pub mod ssh;
 pub mod telnet;

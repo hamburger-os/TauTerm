@@ -1,0 +1,171 @@
+.root {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.toolbar {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: 5px var(--spacing-md);
+  border-bottom: 1px solid var(--content-divider);
+  flex: 0 0 auto;
+}
+
+.identity,
+.stats,
+.viewerHeader > div,
+.modeTabs {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.identity span,
+.stats span,
+.directionDetail {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats button { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
+
+.errorBanner,
+.warningBanner {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: 6px var(--spacing-md);
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.errorBanner { color: var(--color-error); }
+.warningBanner { color: var(--color-warning); }
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+
+.channels {
+  min-width: 0;
+  overflow: auto;
+  padding: var(--spacing-sm);
+  border-right: 1px solid var(--content-divider);
+}
+
+.sectionTitle {
+  padding: 4px 6px 8px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.channelButton {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.channelButton:hover { background: var(--glass-hover); color: var(--text-primary); }
+.channelActive { background: var(--control-button-bg); border-color: var(--control-button-border); color: var(--text-primary); }
+.channelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.direction { flex: 0 0 auto; color: var(--accent-primary); font-family: var(--font-mono); }
+
+.viewer {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.viewerHeader {
+  min-height: 38px;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 5px var(--spacing-md);
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.modeTabs button { height: 28px; padding: 2px 9px; }
+.viewerContent { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+.terminalHost { position: absolute; inset: 0; padding: 6px 8px; }
+.terminalHost :global(.xterm) { height: 100%; }
+.terminalHost :global(.xterm-viewport) { background: transparent !important; }
+
+.textView,
+.hexView {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: var(--spacing-md);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.hexView { white-space: pre; }
+
+.inputBar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--spacing-sm);
+  padding: 6px var(--spacing-md);
+  border-top: 1px solid var(--content-divider);
+}
+
+.inputBar input { min-width: 0; }
+.inputBar button { min-width: 64px; }
+.empty { color: var(--text-muted); font-size: var(--text-xs); padding: var(--spacing-sm); }
+.emptyCenter { margin: auto; color: var(--text-muted); }
+
+@container session-pane (max-width: 620px) {
+  .toolbar { align-items: flex-start; }
+  .stats { flex-wrap: wrap; justify-content: flex-end; }
+  .body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .channels {
+    display: flex;
+    gap: var(--spacing-xs);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--content-divider);
+    padding: 5px var(--spacing-sm);
+  }
+  .sectionTitle { display: none; }
+  .channelButton { width: auto; min-width: 110px; }
+  .viewerHeader { align-items: flex-start; }
+  .modeTabs { flex-wrap: wrap; justify-content: flex-end; }
+}

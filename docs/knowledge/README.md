@@ -34,6 +34,7 @@
 | [MODBUS.md](MODBUS.md) | Modbus Application Protocol、Serial Line、RTU/ASCII/TCP framing、功能码与异常语义 |
 | [TERMINAL_SERIAL_AUTOMATION.md](TERMINAL_SERIAL_AUTOMATION.md) | 终端控制序列、PTY/ConPTY、串口标准、Lua |
 | [TRDP.md](TRDP.md) | IEC 61375-2-3 / TRDP、TCNOpen、SDT 边界 |
+| [EMBEDDED_DEBUG.md](EMBEDDED_DEBUG.md) | probe-rs、RTT、调试探针与 J-Link Existing Session 上游依据 |
 | [PLATFORM_SECURITY.md](PLATFORM_SECURITY.md) | Tauri 安全模型、权限、updater、平台 native 边界 |
 | [LICENSE_COMPLIANCE.md](LICENSE_COMPLIANCE.md) | TauTerm 双许可证、GPL/MPL、第三方再分发检查 |
 

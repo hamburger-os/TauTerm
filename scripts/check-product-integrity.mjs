@@ -24,6 +24,7 @@ assert.deepEqual(
     "local-shell.json",
     "modbus.json",
     "network.json",
+    "rtt.json",
     "serial.json",
     "ssh.json",
     "telnet.json",
@@ -66,7 +67,7 @@ for (const file of manifestFiles) {
   assert.ok(!ids.has(manifest.id), `${file}: duplicate plugin id ${manifest.id}`);
   ids.add(manifest.id);
 
-  const frontendExt = ["modbus", "network", "trdp"].includes(manifest.id) ? "tsx" : "ts";
+  const frontendExt = ["modbus", "network", "trdp", "rtt"].includes(manifest.id) ? "tsx" : "ts";
   const frontend = await readFile(
     path.join(ROOT, "src", "plugins", manifest.id, `index.${frontendExt}`),
     "utf8",
@@ -107,7 +108,7 @@ const main = await readFile(path.join(ROOT, "src", "main.tsx"), "utf8");
 assert.match(main, /installBuiltinPlugins\(\)/, "main.tsx must install the explicit frontend plugin catalog");
 assert.doesNotMatch(
   main,
-  /import\s+["']\.\/plugins\/(?:serial|ssh|telnet|local-shell|tftp|iperf|network|modbus|trdp)["']/,
+  /import\s+["']\.\/plugins\/(?:serial|ssh|telnet|local-shell|tftp|iperf|network|modbus|trdp|rtt)["']/,
   "main.tsx must not register concrete plugins through side-effect imports",
 );
 
@@ -118,7 +119,7 @@ assert.doesNotMatch(lib, /PluginDescriptor\s*\{/, "manual backend plugin descrip
 for (const adapter of ["SerialAdapter", "SshAdapter", "TelnetAdapter", "TftpAdapter", "IperfAdapter", "NetworkAdapter", "ModbusAdapter"]) {
   assert.doesNotMatch(lib, new RegExp(`${adapter}::new`), `lib.rs must not assemble ${adapter} directly`);
 }
-for (const plugin of ["serial", "ssh", "telnet", "local_shell", "tftp", "iperf", "network", "modbus", "trdp"]) {
+for (const plugin of ["serial", "ssh", "telnet", "local_shell", "tftp", "iperf", "network", "modbus", "trdp", "rtt"]) {
   assert.doesNotMatch(
     lib,
     new RegExp(`plugins::${plugin}::`),

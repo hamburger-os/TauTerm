@@ -1,0 +1,66 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.field label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.field small,
+.hint {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.inlineField {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.inlineField button {
+  height: var(--select-height);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.grid2,
+.grid3 {
+  display: grid;
+  gap: var(--spacing-md);
+}
+
+.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.advanced {
+  border-top: 1px solid var(--content-divider);
+  padding-top: var(--spacing-sm);
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.error { color: var(--color-error) !important; }
+
+@media (max-width: 680px) {
+  .grid2,
+  .grid3 { grid-template-columns: 1fr; }
+}

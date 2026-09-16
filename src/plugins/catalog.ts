@@ -6,6 +6,7 @@ import { iperfPlugin } from "./iperf";
 import { localShellPlugin } from "./local-shell";
 import { modbusPlugin } from "./modbus";
 import { networkPlugin } from "./network";
+import { rttPlugin } from "./rtt";
 import { serialPlugin } from "./serial";
 import { sshPlugin } from "./ssh";
 import { telnetPlugin } from "./telnet";
@@ -27,6 +28,7 @@ export const builtinPlugins = [
   networkPlugin,
   trdpPlugin,
   modbusPlugin,
+  rttPlugin,
 ] as const satisfies readonly PluginDefinition[];
 
 export function installBuiltinPlugins(): void {
