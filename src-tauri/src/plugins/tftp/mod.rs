@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
@@ -342,10 +341,6 @@ impl ProtocolAdapter for TftpAdapter {
             })),
             teardown_delay: Duration::from_millis(100),
         })
-    }
-
-    fn content_type(&self) -> ContentType {
-        ContentType::Terminal
     }
 
     fn teardown_delay(&self) -> Duration {
