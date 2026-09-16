@@ -1,7 +1,7 @@
 use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
-use super::worker::{self, WorkerCommand};
+use super::worker::{self, WorkerCommand, WorkerContext};
 use crate::kernel::plugin_adapter::SessionService;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::collections::{BTreeMap, VecDeque};
@@ -259,25 +259,17 @@ impl RttRuntime {
         self.worker_exited.store(false, Ordering::Release);
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
-        let config = self.config.clone();
-        let shared = Arc::clone(&self.shared);
-        let shutting_down = Arc::clone(&self.shutting_down);
-        let worker_exited = Arc::clone(&self.worker_exited);
-        let worker_session_id = session_id.to_string();
+        let context = WorkerContext {
+            config: self.config.clone(),
+            app,
+            session_id: session_id.to_string(),
+            shared: Arc::clone(&self.shared),
+            shutting_down: Arc::clone(&self.shutting_down),
+            worker_exited: Arc::clone(&self.worker_exited),
+        };
         let handle = std::thread::Builder::new()
             .name(format!("rtt-{session_id}"))
-            .spawn(move || {
-                worker::run(
-                    config,
-                    app,
-                    worker_session_id,
-                    shared,
-                    shutting_down,
-                    worker_exited,
-                    command_rx,
-                    startup_tx,
-                );
-            })
+            .spawn(move || worker::run(context, command_rx, startup_tx))
             .map_err(|error| RttError::backend(format!("启动 RTT worker 失败: {error}")))?;
         *self
             .command_tx
