@@ -15,6 +15,7 @@ const HISTORY_PER_CHANNEL_BYTES: usize = 256 * 1024;
 const HISTORY_PER_SESSION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -346,7 +347,7 @@ impl RttRuntime {
         tx.try_send(WorkerCommand::RefreshChannels { reply: reply_tx })
             .map_err(|error| RttError::backend(format!("RTT 命令队列不可用: {error}")))?;
         reply_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(CHANNEL_REFRESH_REPLY_TIMEOUT)
             .map_err(|_| RttError::backend("刷新 RTT Channel 超时"))?
     }
 
