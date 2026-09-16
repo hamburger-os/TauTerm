@@ -23,7 +23,7 @@
   height: var(--select-height);
   min-height: var(--select-height);
   padding: var(--select-padding);
-  border-radius: var(--select-radius);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
 }
@@ -116,7 +116,7 @@
   display: flex;
   align-items: center;
   padding: var(--select-padding);
-  border-radius: var(--select-radius);
+  border-radius: var(--radius-md);
   background: var(--glass-input-bg);
   border: 1px solid var(--glass-input-border);
   box-shadow: var(--glass-input-shadow-inner);
