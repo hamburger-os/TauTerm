@@ -22,6 +22,7 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
   const terminalRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const lastSequenceRef = useRef(0);
+  const previousConnectedRef = useRef(connected);
   const chunksRef = useRef(chunks);
   const onDataRef = useRef(onData);
   const connectedRef = useRef(connected);
@@ -76,6 +77,15 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
       lastSequenceRef.current = 0;
     };
   }, []);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (connected && !previousConnectedRef.current && terminal) {
+      terminal.reset();
+      lastSequenceRef.current = 0;
+    }
+    previousConnectedRef.current = connected;
+  }, [connected]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
