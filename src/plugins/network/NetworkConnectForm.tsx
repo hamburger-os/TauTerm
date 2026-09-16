@@ -113,7 +113,7 @@ export default function NetworkConnectForm({ params, onChange, disabled = false 
         </div>
       )}
       {transport === "tcp" && (
-        <Toggle checked={p.nodelay !== false} disabled={disabled} onChange={checked => update({ nodelay: checked })} label={t("network.nodelay")} />
+        <Toggle checked={p.nodelay !== false} disabled={disabled} onChange={checked => update({ nodelay: checked })} label={t("network.nodelay", { defaultValue: "TCP No Delay" })} />
       )}
 
       {transport === "udp" && role === "server" && (
