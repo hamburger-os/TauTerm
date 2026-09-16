@@ -143,6 +143,12 @@ registerPlugin({
   defaultConnectionParams: () => ({ ...DEFAULT_NETWORK_PARAMS }),
   defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: true }),
   normalizeConnectionParams: normalizeNetworkParams,
+  prepareConnectionParams: params => {
+    const normalized = normalizeNetworkParams(params);
+    return normalized.role === "client"
+      ? { ...normalized, local_port: 0 }
+      : normalized;
+  },
   isConnectionConfigValid: isNetworkConnectionConfigValid,
   resolveEndpoint: params => {
     const transport = params.transport === "udp" ? "udp" : "tcp";
