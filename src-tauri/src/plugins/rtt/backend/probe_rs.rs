@@ -11,6 +11,8 @@ use probe_rs::{Permissions, Session};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+const CHANNEL_REFRESH_TIMEOUT_CAP: Duration = Duration::from_secs(2);
+
 pub struct ProbeRsRttBackend {
     session: Session,
     rtt: Rtt,
@@ -18,7 +20,7 @@ pub struct ProbeRsRttBackend {
     target: String,
     probe_label: String,
     region: ScanRegion,
-    attach_timeout: Duration,
+    refresh_timeout: Duration,
     channels: Vec<RttChannelInfo>,
 }
 
@@ -127,7 +129,7 @@ impl ProbeRsRttBackend {
             target,
             probe_label,
             region,
-            attach_timeout: config.attach_timeout,
+            refresh_timeout: config.attach_timeout.min(CHANNEL_REFRESH_TIMEOUT_CAP),
             channels,
         })
     }
@@ -247,7 +249,7 @@ impl RttBackend for ProbeRsRttBackend {
                 format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
             )
         })?;
-        let mut refreshed = try_attach_to_rtt(&mut core, self.attach_timeout, &self.region)
+        let mut refreshed = try_attach_to_rtt(&mut core, self.refresh_timeout, &self.region)
             .map_err(map_rtt_attach_error)?;
         drop(core);
         let channels = collect_channels(&mut refreshed)?;
