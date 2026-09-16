@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum RttPhase {
     Idle,
-    OpeningProbe,
-    AttachingTarget,
-    LocatingControlBlock,
+    OpeningBackend,
     Running,
     Faulted,
     Stopping,
