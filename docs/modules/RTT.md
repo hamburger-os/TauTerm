@@ -55,11 +55,15 @@ probe-rs Session / RTT       127.0.0.1 RTT TELNET
 
 如果同时发现多个探针，自动模式失败关闭，要求用户明确选择；不得猜测目标设备。
 
+Channel 刷新不是重新读取首次 attach 时缓存的向量，而是使用当前 Session/Core 与原定位策略重新 attach RTT Control Block，成功后一次性替换 RTT handle 与 Channel metadata。这样目标固件在运行期重新初始化 RTT 后，刷新动作才具有真实语义；失败时继续保留原 runtime 状态并返回结构化错误。
+
 ### 已有 J-Link 调试会话
 
 兼容 backend 只连接 `127.0.0.1` 上现有 J-Link RTT TELNET 服务，用于 TauTerm 与已经占用 J-Link 的 IDE/Debugger 共存。它不会打开 USB 探针，也不会把该入口扩展成任意远程 TCP 客户端。
 
-该 backend 按配置的 RTT Channel 建立独立 loopback 连接，并显式报告能力降级：它不声称能够发现所有 Channel、读取完整 Channel metadata、定位 Control Block 或控制目标 Core。前端根据 runtime capability 展示真实能力，不按 backend ID 在公共 UI 中伪造功能。
+该 backend 按配置的 RTT Channel 建立独立 loopback 连接，并按 SEGGER RTT TELNET Config String 契约在连接建立后立即选择对应 Channel。每次 worker poll 对单个连接的读取工作量有界，避免持续高吞吐 Channel 长时间占用 worker、饿死其它 Channel 或控制命令。
+
+它显式报告能力降级：不声称能够发现所有 Channel、读取完整 Channel metadata、定位 Control Block 或控制目标 Core。前端根据 runtime capability 展示真实能力；例如 Existing Session 不显示原生 Channel 重新发现操作，公共 UI 也不按 backend ID 伪造功能。
 
 ## Channel 模型
 
@@ -71,7 +75,7 @@ RTT Up 与 Down 是独立方向。Rust domain model 对每个逻辑 index 分别
 - 仅 Down；
 - 同 index 同时具有 Up 与 Down。
 
-Channel 0 默认使用 Terminal 视图，其他 Channel 默认使用 Text；用户可在 Terminal / Text / HEX 之间切换。首版不自动猜测 binary/text，也不在 RTT Core 中解析 defmt、ELF/DWARF 或其它上层格式。
+Channel 0 默认使用 Terminal 视图，其他 Channel 默认使用 Text；用户可在 Terminal / Text / HEX 之间切换。不同 Channel 的 Terminal 实例彼此独立，切换 Channel 不能把两个 Channel 的屏幕历史混在同一个 xterm 状态中。首版不自动猜测 binary/text，也不在 RTT Core 中解析 defmt、ELF/DWARF 或其它上层格式。
 
 全局 SendBar 对 RTT 禁用。发送目标属于具体 Down Channel，由 RTT 工作区自己的输入边界处理；公共 `SessionIo` 不增加 RTT 私有 target 语义。
 
@@ -93,13 +97,15 @@ RttWorker
           WebView view state
 ```
 
-Rust 历史缓存同时具有 per-channel 和 per-session 总预算。超限时只淘汰最旧历史，并累计 dropped chunk/byte；UI 必须可观察历史缺口。这个缓存只解决进程内视图重建和短期回放，不是长期 Recorder/Evidence Path，也不能无限增长。
+Rust 历史缓存同时具有 per-channel 和 per-session 总预算。超限时只淘汰最旧历史，并累计 dropped chunk/byte；UI 必须可观察历史缺口。这个缓存只解决进程内视图重建和短期回放，不是长期 Recorder/Evidence Path，也不能无限增长。视图首次恢复时优先读取当前缓存中最近的一段数据，而不是从最旧片段开始，保证重新进入后台 Session 时首先看到当前现场。
 
 每个展示 chunk 带单调 sequence、时间戳、Channel index 和原始 payload。未来 Recording/Replay 接入时应在靠近原始 RTT 数据源的位置进入共享工程事件管线，而不是依赖当前 WebView 文本结果反向恢复原始数据。
 
+同一 Saved Session 重连会创建新的 RTT runtime generation；前端以新的 `connected_at` 为代际边界清空旧 generation 的 presentation cache，避免新 runtime 从头计数的 sequence 与旧历史互相去重或混合。
+
 ## 生命周期
 
-连接成功的正式边界是 backend 已打开、RTT 已完成 attach/定位并取得初始 Channel metadata；此前公共 Session 不能发布 Connected。
+连接成功的正式边界是 backend 已打开、RTT 已完成 attach/定位并取得初始 Channel metadata；此前公共 Session 不能发布 Connected。RTT runtime 只保留真实可观察的 `Idle → OpeningBackend → Running/Faulted → Stopping` 阶段，不为 backend 内部的瞬时步骤建立无法稳定观察的伪状态。
 
 ```text
 Disconnected
@@ -108,9 +114,7 @@ Container Session registered
    ↓
 RttWorker starts
    ↓
-open probe/backend
-   ↓
-attach target / locate RTT
+open backend / attach RTT
    ↓
 Running
    ↓
@@ -119,7 +123,7 @@ session-connected
 
 正常断开：停止接受新命令 → 通知 worker shutdown → flush 待展示数据 → backend shutdown → worker join → runtime registry detach。
 
-运行期探针拔出、目标掉电、RTT transport/loopback 关闭或 backend fatal error 会把插件 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开。插件错误码保留在 RTT snapshot；公共 `session-disconnected` 仍使用公共断开语义，不能把 RTT 私有错误枚举泄漏成新的 Kernel 状态。
+运行期探针拔出、目标掉电、RTT transport/loopback 关闭或 backend fatal error 会把插件 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开。异常断开使用公共 `retain_terminal` 语义保留当前进程内最后 snapshot 与 bounded history，用户切走再回来仍可只读查看故障现场；用户主动断开或从磁盘加载的普通离线 Saved Session 不保留一个不存在的 runtime。插件错误码保留在 RTT snapshot；公共 `session-disconnected` 仍使用公共断开语义，不能把 RTT 私有错误枚举泄漏成新的 Kernel 状态。
 
 ## 错误边界
 
