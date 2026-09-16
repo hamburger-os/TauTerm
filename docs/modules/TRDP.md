@@ -24,7 +24,9 @@ Monitor 的实时抓包通过 native sidecar 调用系统 pcap 兼容抓包能�
 
 离线 pcap/pcapng、XML 和 Dataset 分析可以在 Session 未连接时使用，因为它们不需要主动网络运行时。实时抓包仍要求 Monitor Session 已连接，并在首次抓包时按需启动 monitor sidecar。
 
-TRDP custom view 在插件边界先按 Session 模式路由到 Node 或 Monitor 工作区，避免把两种责任混在同一交互页面；通用 Custom renderer 还以 `pluginId + sessionId` 作为视图实例身份，因此同一个 Pane 从一个 custom Session 切换到另一个 Session 时会创建新的视图实例，组件本地筛选、选中项、分页和临时抓包状态不会跨 Session 泄漏。
+TRDP custom view 在插件边界先按 Session 模式路由到 Node 或 Monitor 工作区，避免把两种责任混在同一交互页面；通用 Custom renderer 仍以 `pluginId + sessionId` 作为视图实例身份，保证不同 Session 的页面、筛选、选中项和临时分析状态彼此隔离。Workspace 在本次应用运行期间按 Session ID 保留已经打开且仍有运行意义的非终端视图，因此从 TRDP 切换到其它会话、清空其 Pane 或把它移动到另一个 Pane 时，不会因为视图卸载而停止 Monitor 抓包或 Node 运行对象；切回同一 Session 时仍停留在原来的总览/PD/MD/分析页面和本次运行期 UI 状态。应用重启后不恢复这些临时 UI 状态，也不会自动恢复抓包或连接。
+
+这种视图保活只是展示连续性，不改变 TRDP 的运行时所有权：实时抓包、Node 对象和 native sidecar 的权威生命周期仍由 TRDP Session runtime 控制；完整抓包数据仍以 Rust CaptureStore 为准。未来即使 Workspace 改变渲染策略，协议后台任务也不应以 Pane 可见性作为启动/停止条件。
 
 TRDP custom view 同时按 Pane 宽度和高度适配：2×2 分屏中的短 Pane 使用紧凑密度，宽单 Pane 与 2×2 都优先利用双列 Overview 卡片减少纵向空白；顶部总览/PD/MD/分析导航保持固定几何，不因 selected/hover 改变尺寸。Analysis 的 Flow/Packet 采用同构标题栏和等宽列，表格按角色决定最小宽度与滚动策略；空分析页只展示数据源与空表，选中真实报文后再出现报文检查器。复杂对象编辑和有数据的长表仍保留明确的局部/内容滚动，不通过隐藏有效功能换取适配。
 
@@ -58,6 +60,7 @@ flowchart TB
 - 前端不能通过“写入 sidecar stdin 成功”推断业务操作成功；native 请求必须有可关联结果。
 - Node 主动运行时动作要求 Connected；Monitor 实时抓包要求 Connected；离线分析不要求连接。
 - Monitor 是被动观察面，不允许复用 Node 的主动对象编辑/发送动作。
+- 切换 Pane/Session 只改变 TRDP 视图可见性，不是停止抓包、停止对象或释放 runtime 的生命周期事件。
 - MD Confirm 只能针对当前 Node runtime 实际拥有的可确认 transaction；Monitor 捕获到的 `Mq` 不获得 Confirm 能力。
 - 完整抓包和统计的权威数据在 Rust，不把大文件/全量帧长期放进 React state。
 - helper 路径和抓包动态库加载必须遵守受控信任路径。
@@ -76,6 +79,6 @@ flowchart TB
 
 ## 何时更新本文
 
-修改 Node/Monitor 责任、模式路由、native runtime ownership、连接判定、抓包配置/数据所有权、XML/Dataset/Workspace 模型、A/B/冗余语义或安全边界时，必须同步更新本文。
+修改 Node/Monitor 责任、模式路由、native runtime ownership、连接判定、抓包配置/数据所有权、运行期视图连续性、XML/Dataset/Workspace 模型、A/B/冗余语义或安全边界时，必须同步更新本文。
 
 IEC/TCNOpen 依据与版本边界见 [TRDP 标准知识索引](../knowledge/TRDP.md)；TCNOpen 的许可证/patch provenance 见根 `THIRD_PARTY_LICENSES.md` 与 `src-tauri/vendor/tcnopen/SOURCE.json`。
