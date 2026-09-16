@@ -1,6 +1,6 @@
 {
   "id": "telnet",
-  "name": "Telnet",
+  "name": "Telnet 终端",
   "version": "1.0.0",
   "category": "terminal",
   "description": "Telnet 终端",
