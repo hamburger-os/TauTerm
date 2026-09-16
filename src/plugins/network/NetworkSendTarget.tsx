@@ -10,14 +10,13 @@ import {
   setNetworkManualTarget,
   type NetworkRuntimeSnapshot,
 } from "./runtime-store";
+import {
+  canSyncNetworkSendTarget,
+  isNetworkSendTargetVisible,
+} from "./send-target";
 import styles from "../../components/SendBar/TargetBar.module.css";
 
 const ALL_NETWORK_PEERS = "__all__";
-
-export function isNetworkSendTargetVisible(params: Record<string, unknown> | undefined): boolean {
-  const transport = params?.transport as string | undefined;
-  return (transport === "tcp" || transport === "udp") && params?.role === "server";
-}
 
 export default function NetworkSendTarget({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
@@ -28,7 +27,7 @@ export default function NetworkSendTarget({ sessionId }: { sessionId: string }) 
   const params = (tab?.params ?? {}) as Record<string, unknown>;
   const transport = params.transport as string | undefined;
   const visible = isNetworkSendTargetVisible(params);
-  const syncReady = visible && tab?.state === "connected";
+  const syncReady = canSyncNetworkSendTarget(tab?.state, params);
 
   useEffect(() => {
     if (!syncReady) return;
