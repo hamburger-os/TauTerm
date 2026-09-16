@@ -1,6 +1,6 @@
 {
   "id": "ssh",
-  "name": "SSH",
+  "name": "SSH 远程终端",
   "version": "1.0.0",
   "category": "terminal",
   "description": "SSH 远程终端",
