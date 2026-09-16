@@ -167,12 +167,6 @@ impl RttShared {
         }
     }
 
-    pub(super) fn update_channels(&self, channels: Vec<super::model::RttChannelInfo>) {
-        if let Ok(mut snapshot) = self.snapshot.lock() {
-            snapshot.channels = channels;
-        }
-    }
-
     pub(super) fn record_rx(&self, channel_index: u32, data: Vec<u8>) -> StoredRttChunk {
         let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
         let chunk = StoredRttChunk {
