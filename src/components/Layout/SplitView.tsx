@@ -100,9 +100,13 @@ function getConnectionStateFallback(state: TabInfo["state"]): string {
   }
 }
 
-function shouldShowDisconnectedPlaceholder(tab: TabInfo, contentType: string): boolean {
+function shouldShowDisconnectedPlaceholder(
+  tab: TabInfo,
+  contentType: string,
+  workspaceAvailability: "connected" | "always" = "connected",
+): boolean {
   if (contentType === "terminal") return !terminalHasRuntime(tab);
-  return tab.state === "disconnected";
+  return workspaceAvailability !== "always" && tab.state === "disconnected";
 }
 
 function PaneEmptyState({ message }: { message: string }) {
@@ -379,7 +383,7 @@ export default function SplitView({
         const contentType = plugin?.manifest.content_type ?? "terminal";
         const isTerminal = Boolean(tab) && contentType === "terminal";
         const showDisconnectedPlaceholder = tab
-          ? shouldShowDisconnectedPlaceholder(tab, contentType)
+          ? shouldShowDisconnectedPlaceholder(tab, contentType, plugin?.workspace?.availability)
           : false;
         const selected = paneId === layout.selectedPaneId;
         const contentRect = insetPaneContent(rect, paneCount, viewSize.height);
@@ -396,7 +400,7 @@ export default function SplitView({
               if (e.button === 0) onSelectPane(paneId);
             }}
             onContextMenu={(e) => {
-              if (tab?.state === "disconnected") {
+              if (showDisconnectedPlaceholder && tab) {
                 openDisconnectedMenu(e, paneId, tab);
                 return;
               }
