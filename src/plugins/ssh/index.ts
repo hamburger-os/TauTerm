@@ -2,6 +2,11 @@
 import { createElement } from "react";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
+import SshConnectForm, {
+  DEFAULT_SSH_PARAMS,
+  isSshConnectionConfigValid,
+  normalizeSshParams,
+} from "./SshConnectForm";
 import SshStatusItems from "./SshStatusItems";
 import SshHostKeyGate from "./SshHostKeyGate";
 import { SshFileManagerSidebarPanel, SshJournaldSidebarPanel } from "./SshRightSidebarPanels";
@@ -20,6 +25,12 @@ const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  connectForm: SshConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_SSH_PARAMS }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
+  normalizeConnectionParams: normalizeSshParams,
+  isConnectionConfigValid: isSshConnectionConfigValid,
+  resolveEndpoint: params => String(params.host ?? "").trim(),
   persistedConnectionParams: (params, sessionId) => {
     const persisted = { ...params };
     delete persisted.password;
