@@ -7,7 +7,7 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .label {
@@ -25,7 +25,10 @@
 .select {
   width: 100%;
   min-width: 0;
-  padding: 6px 10px;
+  height: var(--select-height);
+  min-height: var(--select-height);
+  padding: var(--select-padding);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
 }
@@ -35,10 +38,10 @@
 }
 
 .iconButton {
-  width: 32px;
-  height: 32px;
+  width: var(--select-height);
+  height: var(--select-height);
   padding: 0;
-  flex: 0 0 auto;
+  flex: 0 0 var(--select-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;

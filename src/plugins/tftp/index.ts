@@ -9,6 +9,7 @@ import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/tftp.json";
 import TftpConnectForm, {
   DEFAULT_TFTP_PARAMS,
+  hasTftpExposureRisk,
   isTftpConnectionConfigValid,
   normalizeTftpParams,
 } from "./TftpConnectForm";
@@ -22,14 +23,7 @@ registerPlugin({
   isConnectionConfigValid: isTftpConnectionConfigValid,
   resolveEndpoint: params => `${String(params.listen_ip ?? "0.0.0.0").trim()}:${Number(params.listen_port ?? 69)}`,
   reconnectGuard: ({ params }) => {
-    const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
-    const loopback = bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
-    if (
-      !loopback
-      && params.write_enabled === true
-      && params.overwrite === true
-      && params.exposure_confirmed !== true
-    ) {
+    if (hasTftpExposureRisk(params) && params.exposure_confirmed !== true) {
       return {
         ok: false,
         message: i18n.t("tftp.exposureWarning", {
@@ -48,6 +42,7 @@ registerPlugin({
       return `TFTP @ ${root}`;
     },
   },
+  workspace: { availability: "always" },
   customView: TftpSessionView,
   statusBarItems: [
     {

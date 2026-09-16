@@ -12,6 +12,8 @@ Workspace 是 TauTerm 的工程上下文容器。长期它不仅回答“在哪�
 
 布局数据和运行时连接严格分离：应用重启后可恢复 Pane 树、分割比例和配置引用，但 Session 仍保持断开，等待用户显式连接。
 
+非终端插件的“断连后是否仍展示工作台”属于插件能力，而不是 Workspace 对具体协议的硬编码。`PluginRegistration.workspace.availability` 默认语义为 `connected`；像 TFTP、iPerf 这类客户端任务可独立于常驻服务端运行的工具显式声明 `always`。这类 Session 在未连接时仍渲染完整 custom view，“连接/断开”只管理插件常驻运行时或服务端，不决定工作台本身是否存在。
+
 当前 Layout 只是未来 `TauWorkspace` 的一个字段，而不是完整 Workspace 数据模型。目标模型：
 
 ```text
@@ -31,7 +33,7 @@ TauWorkspace
 
 安全凭据永远不进入 Workspace；这里只能保存 credential reference。
 
-Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为属于 Session。未连接的不同会话类型应提供一致的连接/配置/删除直觉，不能因为是 custom view 就失去公共会话操作。未连接会话的内容区菜单复用公共 `ContextMenu` 的外部点击关闭机制；由于菜单通过 React Portal 渲染，Workspace 祖先节点不得再用冒泡 `mousedown` 提前关闭该菜单，否则会在菜单项 `click` 执行前打断操作。
+Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为属于 Session。需要连接运行时才能展示内容的未连接 Session 继续使用统一占位页，并提供一致的连接/配置/删除直觉；声明 `workspace.availability = "always"` 的离线工作台则保持真实内容可交互，Workspace 不再用“未连接”状态覆盖它的内容区域。公共会话操作始终可从左侧 Session 卡片和 Pane Header 到达，不能因为是 custom view 就失去公共操作。占位页的未连接会话菜单复用公共 `ContextMenu` 的外部点击关闭机制；由于菜单通过 React Portal 渲染，Workspace 祖先节点不得再用冒泡 `mousedown` 提前关闭该菜单，否则会在菜单项 `click` 执行前打断操作。
 
 在多 Pane Workspace 中，Pane Header 通过可见的 `…` 按钮和右键打开同一套公共 `ContextMenu`，提供以下结构操作：
 
@@ -65,6 +67,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 | 横向 2 Pane | 50/50 初始几何，可拖动且保留最小 Pane 尺寸 | 自定义视图按 Pane 宽度响应 |
 | 纵向 2 Pane | 50/50 初始几何 | 高度不足时由内容视图自己滚动 |
 | 2×2 | 四个 0.5×0.5 Pane，不复制同一 Session | TFTP/iperf/TRDP/Network 主操作仍可达 |
+| 断连恢复 | Layout 恢复但不自动建立运行时 | `connected` 工作区显示统一占位；`always` 工作区保持客户端/离线工具可用 |
 
 结构级 UI 合同：
 
@@ -75,7 +78,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - Pane Header 的 `…` 与右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
 - TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
 - TRDP Analysis 在窄 Pane 下从双列折叠为单列；
-- TFTP/iperf 在窄 Pane 下将多列配置折叠为纵向布局。
+- TFTP/iperf 在窄 Pane 下将多列配置折叠为纵向布局；它们声明离线工作台能力后，断连不应退回统一空占位。
 
 ## 设计边界
 
@@ -84,6 +87,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - Session 是工程状态，不因 Pane 清空或关闭就自动断开、删除配置或丢失终端现场。
 - `PaneId -> SessionId | null` 是 Layout 的正式状态模型；空 Pane 不使用空字符串或其它伪 Session ID 表示。
 - 布局恢复只能引用稳定配置；临时 child session 必须归一到可恢复的父配置或被丢弃。
+- 断连内容可见性由 `PluginRegistration.workspace` 声明；`SplitView` 只消费通用策略，不允许增加 TFTP、iPerf 或其它 built-in plugin ID 分支。
 - 分屏尺寸不足时，内容必须按 Pane 的真实宽度与高度响应式重排或进入明确的内部滚动，不能让控制项变得不可达；custom Session 自己拥有滚动边界，Pane surface 不再叠加第二层同轴滚动。
 - Pane 级菜单只作用于 Pane chrome；内容区交互不得误触清空或关闭 Pane。
 - 视觉材质、圆角和主题动画由主题规范统一定义，本文只记录结构和交互所有权。
@@ -98,4 +102,4 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 
 ## 何时更新本文
 
-修改 Pane 数量/树模型、选择上下文、清空/关闭 Pane、拖拽分割、Workspace 持久化格式、恢复策略、Pane/Session 操作边界时，必须同步更新本文。
+修改 Pane 数量/树模型、选择上下文、清空/关闭 Pane、拖拽分割、Workspace 持久化格式、恢复策略、Pane/Session 操作边界或插件断连工作台可见性时，必须同步更新本文。

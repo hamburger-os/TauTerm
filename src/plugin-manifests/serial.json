@@ -1,6 +1,6 @@
 {
   "id": "serial",
-  "name": "Serial",
+  "name": "串口终端",
   "version": "1.0.0",
   "category": "terminal",
   "description": "串口终端",

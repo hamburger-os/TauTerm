@@ -56,9 +56,9 @@
 }
 
 .iconButton {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: var(--select-height);
+  height: var(--select-height);
+  flex: 0 0 var(--select-height);
   padding: 0;
   color: var(--accent-primary);
   display: inline-flex;

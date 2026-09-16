@@ -195,6 +195,15 @@ export interface PluginRightSidebarContribution {
   panels?: PluginRightSidebarPanel[];
 }
 
+/**
+ * Session 工作区在断连时的可见性策略。
+ * - connected: 没有运行态时显示统一“连接后显示”占位；
+ * - always: 工作台本身可离线使用，连接仅启动/附加常驻服务。
+ */
+export interface PluginWorkspaceContribution {
+  availability: "connected" | "always";
+}
+
 export interface PluginRegistration {
   manifest: PluginManifest;
   /** Connection capability UI. Common ConnectDialog only hosts this component. */
@@ -250,6 +259,8 @@ export interface PluginRegistration {
   appOverlay?: ComponentType;
   /** 插件专属右侧栏能力；应用壳不识别具体协议 ID。 */
   rightSidebar?: PluginRightSidebarContribution;
+  /** 工作区断连可见性；默认 connected，离线工具显式声明 always。 */
+  workspace?: PluginWorkspaceContribution;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];

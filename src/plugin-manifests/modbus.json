@@ -1,6 +1,6 @@
 {
   "id": "modbus",
-  "name": "Modbus",
+  "name": "Modbus 调试助手",
   "version": "1.0.0",
   "category": "industrial_protocol",
   "description": "Modbus 调试助手",

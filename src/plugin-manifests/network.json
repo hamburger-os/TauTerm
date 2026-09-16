@@ -1,6 +1,6 @@
 {
   "id": "network",
-  "name": "Network Debug",
+  "name": "TCP/UDP 网络调试助手",
   "version": "1.0.0",
   "category": "network_tool",
   "description": "TCP/UDP 网络调试助手",

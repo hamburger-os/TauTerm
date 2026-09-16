@@ -32,6 +32,7 @@ registerPlugin({
       return `${listenIp}:${listenPort}`;
     },
   },
+  workspace: { availability: "always" },
   customView: IperfSessionView,
   statusBarItems: [
     {

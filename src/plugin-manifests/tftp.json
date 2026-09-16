@@ -1,6 +1,6 @@
 {
   "id": "tftp",
-  "name": "TFTP",
+  "name": "TFTP 文件传输",
   "version": "1.0.0",
   "category": "file_transfer",
   "description": "TFTP 文件传输",

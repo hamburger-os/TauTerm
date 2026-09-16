@@ -63,7 +63,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const availableModes = pluginRegistry.getByCapability("connection").map(plugin => ({
     id: plugin.manifest.id,
     icon: plugin.manifest.icon,
-    description: plugin.manifest.description || plugin.manifest.name,
+    label: plugin.manifest.name,
   }));
 
   const refreshModeEndpoints = useCallback(async (modeId: string, force = false) => {
@@ -275,7 +275,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                         onClick={() => handleModeSelect(mode.id)}
                       >
                         <Icon name={mode.icon} size="lg" className={styles.modeIcon} />
-                        <span className={styles.modeLabel}>{mode.description}</span>
+                        <span className={styles.modeLabel}>{mode.label}</span>
                       </motion.button>
                     ))}
                   </div>
