@@ -201,7 +201,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   };
 
   const refreshChannels = async () => {
-    if (!connected) return;
+    if (!connected || !snapshot?.backend?.capabilities.enumerate_channels) return;
     try {
       await invoke<RttChannelInfo[]>("rtt_refresh_channels", { sessionId });
       await refreshSnapshot();
@@ -223,9 +223,11 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           <span>{connected ? t("rtt.connected") : t("rtt.disconnected")}</span>
           <span>RX {formatBytes(snapshot?.rx_bytes ?? 0)}</span>
           <span>TX {formatBytes(snapshot?.tx_bytes ?? 0)}</span>
-          <button type="button" className="liquid-glass-button" disabled={!connected} onClick={() => void refreshChannels()} title={t("rtt.refreshChannels")}>
-            <Icon name="refresh" size="sm" />
-          </button>
+          {snapshot?.backend?.capabilities.enumerate_channels && (
+            <button type="button" className="liquid-glass-button" disabled={!connected} onClick={() => void refreshChannels()} title={t("rtt.refreshChannels")}>
+              <Icon name="refresh" size="sm" />
+            </button>
+          )}
         </div>
       </header>
 
