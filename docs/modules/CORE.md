@@ -16,7 +16,7 @@ Saved Session Library 是独立的版本化磁盘配置集合，不受活动运�
 
 Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要时进入 blocking worker。端点发现同样是配置辅助能力，不属于 Session 生命周期；前端进入配置页时按需请求，后端不得让硬件枚举阻塞 UI。 公共 `commands.rs` 只承载协议无关 IPC；协议连接编排、协议专属 DTO/Tauri command 与断开后的协议副作用由各插件 application/commands 模块持有，通过 `PluginRuntime` 中的 connector/lifecycle contribution 接入。共享 Session 编排辅助函数位于 application contribution 层，不反向解释 SSH、TFTP、Network 等字段。
 
-前端 `PluginRegistry` 是唯一运行时插件注册目录；`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件，插件也可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError` 与 `sessionPresentation` 分别拥有持久化参数投影、重连前置策略、协议错误展示和会话展示格式。统一 Session/UI 层只调用这些 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
+前端 `PluginRegistry` 是唯一运行时插件注册目录；`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。`PluginManifest.name` 是 Session 类型在新建卡片和配置标题中的 canonical 显示身份，`description` 只描述能力。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件；默认参数、提交前参数投影和 endpoint 解析分别由 `defaultConnectionParams`、`prepareConnectionParams` 与 `resolveEndpoint` 贡献。插件还可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError`、`sessionPresentation` 与 `workspace.availability` 分别拥有持久化参数投影、重连前置策略、协议错误展示、会话展示格式和断连工作台可见性。统一 Session/UI 层只消费这些通用 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
 
 ## 关键生命周期
 
@@ -41,9 +41,9 @@ stateDiagram-v2
 - 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断；`kernel/` 不允许依赖 `crate::plugins::*`。
 - 协议连接入口由 `PluginRuntime` 中注册的类型化 Session connector contribution 分发；公共 `connect_session` 不按插件 ID `match`。新增内建插件只在 composition root 注册 manifest、Adapter/能力和 connector。`connect_session`、端点枚举和保存配置都要求显式 `plugin_id`，公共层不提供 Serial 等具体插件的兼容默认值。 插件专属 Tauri command、连接实现和断开通知同样不得堆回公共 `commands.rs`；composition root 只负责显式注册，不承载协议语义。
 - 插件专属运行态必须由插件对象或 Session capability 持有，不把 SSH known-host verifier、协议 runtime registry 等字段泄漏到 `AppState`。Adapter 需要按 `session_id` 查找专属 runtime 时使用 `SessionRuntimeRegistry<T>`：索引实例由 Adapter 持有且只保存 `Weak<T>`，SessionStore capability graph 仍是唯一强生命周期 owner；禁止模块级 `OnceLock`/静态 runtime registry。
-- 前端只保留一个 `PluginRegistry`。依赖无关的 contract 可以独立成类型模块，但不得为了绕过循环依赖再镜像插件注册数据；会话 presentation、持久化参数投影、重连策略、状态栏项和自定义视图均由插件 registration 直接声明。
+- 前端只保留一个 `PluginRegistry`。依赖无关的 contract 可以独立成类型模块，但不得为了绕过循环依赖再镜像插件注册数据；会话 presentation、连接参数准备、重连策略、断连工作台可见性、状态栏项和自定义视图均由插件 registration 直接声明。
 - 通用前端状态/渲染合同只包含协议无关字段。Serial 虚拟端口、SSH journald/文件服务、Network peer、TRDP A/B 链路等私有运行态不能为了某个 renderer 的便利继续扩张 `StatusBarContext`、通用 presentation helper 或其它公共 registry contract；插件 renderer 应通过自己的 Session/plugin store 获取私有状态。
-- UI 能力由插件 manifest/registration 声明；SendBar、自定义视图、连接配置合法性等不由页面临时猜测。
+- UI 能力由插件 manifest/registration 声明；SendBar、自定义视图、连接配置合法性、断连工作台可见性等不由页面临时猜测。公共页面不得通过 built-in plugin ID 分支决定这些行为。
 - 运行时对象不能被持久化为 Session 配置；插件需要从编辑态参数剥离凭据或其它瞬态字段时，通过自己的持久化投影 contribution 完成，公共 Session 层不解释字段名。
 - 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
