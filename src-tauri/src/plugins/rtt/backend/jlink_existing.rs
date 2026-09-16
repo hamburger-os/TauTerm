@@ -10,6 +10,8 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
+const MAX_READS_PER_CHANNEL_PER_POLL: usize = 4;
+
 pub struct JlinkExistingRttBackend {
     port: u16,
     streams: BTreeMap<u32, TcpStream>,
@@ -100,7 +102,7 @@ impl RttBackend for JlinkExistingRttBackend {
     fn poll(&mut self, output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
         let mut buffer = [0u8; 8 * 1024];
         for (channel_index, stream) in &mut self.streams {
-            loop {
+            for _ in 0..MAX_READS_PER_CHANNEL_PER_POLL {
                 match stream.read(&mut buffer) {
                     Ok(0) => {
                         return Err(RttError::new(
@@ -108,10 +110,15 @@ impl RttBackend for JlinkExistingRttBackend {
                             format!("J-Link RTT Channel {channel_index} 连接已关闭"),
                         ));
                     }
-                    Ok(count) => output.push(RttReadChunk {
-                        channel_index: *channel_index,
-                        data: buffer[..count].to_vec(),
-                    }),
+                    Ok(count) => {
+                        output.push(RttReadChunk {
+                            channel_index: *channel_index,
+                            data: buffer[..count].to_vec(),
+                        });
+                        if count < buffer.len() {
+                            break;
+                        }
+                    }
                     Err(error) if error.kind() == ErrorKind::WouldBlock => break,
                     Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                     Err(error) => {
