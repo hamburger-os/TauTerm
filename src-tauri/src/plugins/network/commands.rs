@@ -148,6 +148,11 @@ async fn connect_session(
             "local_addr": udp_local_addr,
         }),
     );
+    state
+        .session_store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .activate_data_plane(&sid)?;
     Ok(sid)
 }
 

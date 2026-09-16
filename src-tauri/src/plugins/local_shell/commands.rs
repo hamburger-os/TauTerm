@@ -5,7 +5,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::kernel::plugin_adapter::ChannelOpenMode;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, ContainerSessionRuntime};
 use crate::plugin_application::{
-    create_terminal_sub_channel, ConnectSessionRequest, SessionConnectFuture,
+    create_terminal_sub_channel, terminal_sub_channel_connected_payload, ConnectSessionRequest,
+    SessionConnectFuture,
 };
 use crate::AppState;
 
@@ -85,7 +86,7 @@ async fn connect_session(
         &parent_id,
         first_channel,
         initial_mode == ChannelOpenMode::Elevated,
-        true,
+        false,
     )
     .await
     .inspect_err(|error| {
@@ -97,6 +98,14 @@ async fn connect_session(
                     cleanup_error
                 );
             }
+        }
+    })?;
+
+    let child_connected = terminal_sub_channel_connected_payload(&state, &parent_id, &channel_id)
+        .inspect_err(|error| {
+        log::error!("Local Shell 首个子会话发布前校验失败: {error}");
+        if let Ok(mut store) = state.session_store.lock() {
+            let _ = store.close_session(&parent_id);
         }
     })?;
 
@@ -121,6 +130,12 @@ async fn connect_session(
             "is_container": true,
         }),
     );
+    let _ = app.emit("session-connected", child_connected);
+    state
+        .session_store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .activate_data_plane(&channel_id)?;
     log::info!(
         "Local Shell 父会话已连接: {} (child: {})",
         parent_id,

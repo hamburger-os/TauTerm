@@ -352,7 +352,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         },
       });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: String(e) });
+      const error = plugin?.formatSessionError?.(e, "connect") ?? String(e);
+      dispatch({ type: "SET_ERROR", error });
       if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       return null;
     }
@@ -641,7 +642,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       return await invoke<string>("open_channel", { sessionId: parentSessionId, elevated });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: String(e) });
+      const parent = tabsRef.current.find(tab => tab.id === parentSessionId);
+      const plugin = parent ? pluginRegistry.get(parent.pluginId) : undefined;
+      const error = plugin?.formatSessionError?.(e, "open_channel") ?? String(e);
+      dispatch({ type: "SET_ERROR", error });
       return null;
     }
   }, []);

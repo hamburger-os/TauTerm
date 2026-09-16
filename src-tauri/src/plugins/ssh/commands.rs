@@ -204,6 +204,11 @@ async fn connect_session(
         }),
     );
     let _ = app.emit("session-connected", channel0_connected);
+    state
+        .session_store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .activate_data_plane(&channel0_id)?;
 
     Ok(parent_id)
 }

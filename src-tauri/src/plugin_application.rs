@@ -257,6 +257,11 @@ pub(crate) fn connect_simple_terminal_session(
             "send_bar_enabled": send_bar_enabled,
         }),
     );
+    state
+        .session_store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .activate_data_plane(&session_id)?;
     Ok(session_id)
 }
 
@@ -377,8 +382,9 @@ pub(crate) async fn create_terminal_sub_channel(
         });
 
     let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
-    let data_plane = SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
-        .map_err(|e| e.to_string())?;
+    let data_plane =
+        SessionDataPlane::attach_paused(runtime, channel_id.clone(), on_data, on_disconnect)
+            .map_err(|e| e.to_string())?;
     let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
         std::time::SystemTime::now()
@@ -453,6 +459,13 @@ pub(crate) async fn create_terminal_sub_channel(
                 "elevated": elevated,
             }),
         );
+    }
+    if announce_connected {
+        app_state
+            .session_store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .activate_data_plane(&channel_id)?;
     }
     Ok(channel_id)
 }

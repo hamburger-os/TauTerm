@@ -613,8 +613,9 @@ fn register_tcp_peer(
             );
         }
     });
-    let data_plane = SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
-        .map_err(|error| error.to_string())?;
+    let data_plane =
+        SessionDataPlane::attach_paused(runtime, channel_id.clone(), on_data, on_disconnect)
+            .map_err(|error| error.to_string())?;
     let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
         std::time::SystemTime::now()
@@ -676,6 +677,11 @@ fn register_tcp_peer(
             "local_addr": local_addr,
         }),
     );
+    app_state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?
+        .activate_data_plane(&channel_id)?;
     Ok(channel_id)
 }
 

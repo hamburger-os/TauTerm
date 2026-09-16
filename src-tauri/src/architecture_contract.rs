@@ -305,3 +305,34 @@ fn generic_session_application_payload_has_no_protocol_private_fields() {
         );
     }
 }
+
+#[test]
+fn session_data_plane_registration_is_two_phase() {
+    let runtime = read_source("session/runtime.rs");
+    assert!(runtime.contains("pub fn attach_paused("));
+    assert!(runtime.contains("pub fn activate(&self)"));
+
+    let store = read_source("kernel/session_store.rs");
+    assert!(store.contains("SessionDataPlane::attach_paused"));
+    assert!(store.contains("pub fn activate_data_plane(&self"));
+
+    let application = read_source("plugin_application.rs");
+    assert!(application.contains("SessionDataPlane::attach_paused"));
+    assert!(application.contains("activate_data_plane(&channel_id)"));
+
+    let network = read_source("plugins/network/mod.rs");
+    assert!(network.contains("SessionDataPlane::attach_paused"));
+    assert!(network.contains("activate_data_plane(&channel_id)"));
+}
+
+#[test]
+fn frontend_session_error_presentation_is_plugin_driven() {
+    let session_context = read_workspace_source("src/context/SessionContext.tsx");
+    assert!(session_context.contains("formatSessionError"));
+    assert!(!session_context.contains("User cancelled the UAC elevation prompt"));
+    assert!(!session_context.contains("localShell.elevationCancelled"));
+
+    let local_shell = read_workspace_source("src/plugins/local-shell/index.ts");
+    assert!(local_shell.contains("formatSessionError"));
+    assert!(local_shell.contains("localShell.elevationCancelled"));
+}

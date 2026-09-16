@@ -3,6 +3,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/local-shell.json";
 import LocalShellConnectForm from "./LocalShellConnectForm";
 
@@ -51,6 +52,14 @@ registerPlugin({
     subtitle: (_params, endpoint) => endpoint,
   },
   resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),
+  formatSessionError: (error, operation) => {
+    const raw = String(error);
+    const detail = raw.includes("User cancelled the UAC elevation prompt")
+      ? i18n.t("localShell.elevationCancelled")
+      : raw;
+    const key = operation === "open_channel" ? "localShell.openFailed" : "localShell.connectFailed";
+    return `${i18n.t(key)}: ${detail}`;
+  },
   canCreateElevatedSession: params => params.shell_kind !== "wsl",
   toolbarItems: [],
   rightSidebar: { available: () => false },

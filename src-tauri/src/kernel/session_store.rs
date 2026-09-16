@@ -340,8 +340,9 @@ impl SessionStore {
             .and_then(|v| v.as_str())
             .unwrap_or("utf-8");
         let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
-        let data_plane = SessionDataPlane::attach(runtime, id.clone(), on_data, on_disconnect)
-            .map_err(|e| e.to_string())?;
+        let data_plane =
+            SessionDataPlane::attach_paused(runtime, id.clone(), on_data, on_disconnect)
+                .map_err(|e| e.to_string())?;
         let stats_cancel_flag = Arc::new(AtomicBool::new(false));
         Self::start_stats_collector(
             app_handle,
@@ -690,6 +691,35 @@ impl SessionStore {
                 .find(|sub| sub.id == session_id)
                 .map(|sub| sub.io.clone())
         })
+    }
+
+    /// Activate a previously registered root or child DataPlane.
+    ///
+    /// Registration-sensitive connectors publish SessionStore state and their connected event
+    /// before releasing this barrier, so data/disconnect callbacks cannot race ahead of them.
+    pub fn activate_data_plane(&self, session_id: &str) -> Result<(), String> {
+        if let Some(handle) = self.sessions.get(session_id) {
+            let data_plane = handle
+                .data_plane
+                .as_ref()
+                .ok_or_else(|| format!("会话 {} 不包含 DataPlane", session_id))?;
+            data_plane.activate();
+            return Ok(());
+        }
+        let (parent_id, index) = self
+            .find_sub_connection_index(session_id)
+            .ok_or_else(|| self.session_not_found(session_id))?;
+        let sub = self
+            .sessions
+            .get(&parent_id)
+            .and_then(|handle| handle.sub_connections.get(index))
+            .ok_or_else(|| self.session_not_found(session_id))?;
+        let data_plane = sub
+            .data_plane
+            .as_ref()
+            .ok_or_else(|| format!("子连接 {} 不包含 DataPlane", session_id))?;
+        data_plane.activate();
+        Ok(())
     }
 
     /// 关闭单个子连接（两段式）。

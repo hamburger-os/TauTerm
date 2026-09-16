@@ -16,7 +16,7 @@ Saved Session Library 是独立的版本化磁盘配置集合，不受活动运�
 
 Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要时进入 blocking worker。端点发现同样是配置辅助能力，不属于 Session 生命周期；前端进入配置页时按需请求，后端不得让硬件枚举阻塞 UI。 公共 `commands.rs` 只承载协议无关 IPC；协议连接编排、协议专属 DTO/Tauri command 与断开后的协议副作用由各插件 application/commands 模块持有，通过 `PluginRuntime` 中的 connector/lifecycle contribution 接入。共享 Session 编排辅助函数位于 application contribution 层，不反向解释 SSH、TFTP、Network 等字段。
 
-前端 `PluginRegistry` 是唯一运行时插件注册目录；`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件，插件也可以通过 `persistedConnectionParams`、`reconnectGuard` 与 `sessionPresentation` 分别拥有持久化参数投影、重连前置策略和会话展示格式。统一 Session/UI 层只调用这些 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
+前端 `PluginRegistry` 是唯一运行时插件注册目录；`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件，插件也可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError` 与 `sessionPresentation` 分别拥有持久化参数投影、重连前置策略、协议错误展示和会话展示格式。统一 Session/UI 层只调用这些 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
 
 ## 关键生命周期
 
@@ -34,7 +34,7 @@ stateDiagram-v2
   Disconnected --> [*]
 ```
 
-`Transferring` 只表示 Session 的 inline 独占资源被传输任务占用；真实底层资源仍归 DataPlane Runtime 所有。连接、断开、异常退出、子连接关闭和传输结束必须通过统一生命周期收敛。
+`Transferring` 只表示 Session 的 inline 独占资源被传输任务占用；真实底层资源仍归 DataPlane Runtime 所有。连接、断开、异常退出、子连接关闭和传输结束必须通过统一生命周期收敛。`SessionDataPlane` 对需要注册顺序保证的 Session/child 使用 paused attach：先建立订阅与事件线程但阻塞回调，待 SessionStore 注册和 `session-connected`/peer joined 发布完成后再显式 activate；因此数据与断开事件不能抢在权威 Session 状态之前。
 
 ## 设计边界
 

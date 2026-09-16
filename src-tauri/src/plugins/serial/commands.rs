@@ -154,5 +154,10 @@ async fn connect_session(
             "virtual_endpoints": virtual_endpoints,
         }),
     );
+    state
+        .session_store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .activate_data_plane(&sid)?;
     Ok(sid)
 }

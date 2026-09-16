@@ -224,6 +224,8 @@ export interface PluginRegistration {
   reconnectGuard?: (
     context: SessionReconnectContext,
   ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;
+  /** 插件拥有连接/子通道错误的用户可见格式；公共 Session 层不解释协议错误文本。 */
+  formatSessionError?: (error: unknown, operation: "connect" | "open_channel") => string;
   /** 对声明 elevated_session 的插件，由插件判断当前配置是否允许创建提权 Session。 */
   canCreateElevatedSession?: (params: Record<string, unknown>) => boolean;
   /** 同步默认展示和动态摘要；需要宿主调用的默认名使用 resolveDefaultSessionName。 */

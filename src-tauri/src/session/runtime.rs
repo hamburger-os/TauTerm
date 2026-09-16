@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use crate::session::DisconnectInfo;
 use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
@@ -13,10 +13,15 @@ pub struct SessionDataPlane {
     handle: DataPlaneHandle,
     event_thread: Option<std::thread::JoinHandle<()>>,
     shutdown_requested: Arc<AtomicBool>,
+    activation_tx: mpsc::Sender<()>,
+    activated: Arc<AtomicBool>,
 }
 
 impl SessionDataPlane {
-    pub fn attach(
+    /// Create the receive pump in a paused state. The transport subscription is already
+    /// installed, so early data/close events queue until `activate()` releases the registration
+    /// barrier. Callers can therefore publish SessionStore state before callbacks observe it.
+    pub fn attach_paused(
         runtime: DataPlaneRuntime,
         session_id: String,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
@@ -26,29 +31,33 @@ impl SessionDataPlane {
         let subscription = handle.subscribe()?;
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let event_shutdown_requested = shutdown_requested.clone();
+        let (activation_tx, activation_rx) = mpsc::channel::<()>();
+        let activated = Arc::new(AtomicBool::new(false));
         let event_thread = std::thread::Builder::new()
             .name(format!("session-data-{session_id}"))
-            .spawn(move || loop {
-                match subscription.recv() {
-                    Ok(DataPlaneEvent::Data(data)) => on_data(session_id.clone(), data),
-                    Ok(DataPlaneEvent::Closed(info)) => {
-                        on_disconnect(session_id.clone(), info.into());
-                        break;
-                    }
-                    Err(_) => {
-                        // Subscription loss is expected after an explicit owner shutdown. Any
-                        // other loss means the transport actor vanished without publishing its
-                        // normal Closed event (for example because a driver panicked). Classify
-                        // that from the owner's shutdown intent rather than from the transport's
-                        // connected flag: the runtime now clears that flag on every exit path,
-                        // including panics.
-                        if !event_shutdown_requested.load(Ordering::Acquire) {
-                            on_disconnect(
-                                session_id.clone(),
-                                DisconnectInfo::io_error("transport runtime stopped unexpectedly"),
-                            );
+            .spawn(move || {
+                if activation_rx.recv().is_err() || event_shutdown_requested.load(Ordering::Acquire)
+                {
+                    return;
+                }
+                loop {
+                    match subscription.recv() {
+                        Ok(DataPlaneEvent::Data(data)) => on_data(session_id.clone(), data),
+                        Ok(DataPlaneEvent::Closed(info)) => {
+                            on_disconnect(session_id.clone(), info.into());
+                            break;
                         }
-                        break;
+                        Err(_) => {
+                            if !event_shutdown_requested.load(Ordering::Acquire) {
+                                on_disconnect(
+                                    session_id.clone(),
+                                    DisconnectInfo::io_error(
+                                        "transport runtime stopped unexpectedly",
+                                    ),
+                                );
+                            }
+                            break;
+                        }
                     }
                 }
             })
@@ -58,7 +67,30 @@ impl SessionDataPlane {
             handle,
             event_thread: Some(event_thread),
             shutdown_requested,
+            activation_tx,
+            activated,
         })
+    }
+
+    /// Convenience path for owners that do not need a registration barrier.
+    pub fn attach(
+        runtime: DataPlaneRuntime,
+        session_id: String,
+        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
+        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
+    ) -> Result<Self, TransportError> {
+        let owner = Self::attach_paused(runtime, session_id, on_data, on_disconnect)?;
+        owner.activate();
+        Ok(owner)
+    }
+
+    /// Release the registration barrier. All fallible setup completed in `attach_paused`, so
+    /// activation is intentionally idempotent and infallible.
+    pub fn activate(&self) {
+        if self.activated.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let _ = self.activation_tx.send(());
     }
 
     pub fn handle(&self) -> &DataPlaneHandle {
@@ -72,6 +104,9 @@ impl SessionDataPlane {
         if self.shutdown_requested.swap(true, Ordering::AcqRel) {
             return;
         }
+        // Wake a pump that may still be waiting for publication. It sees shutdown intent and
+        // exits without emitting a synthetic disconnect.
+        self.activate();
         let _ = self.handle.shutdown();
     }
 
@@ -139,6 +174,35 @@ mod tests {
         fn shutdown(&mut self) -> Result<(), TransportError> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn paused_attachment_defers_disconnect_until_activation() {
+        let panic_now = std::sync::Arc::new(AtomicBool::new(false));
+        let runtime = DataPlaneRuntime::spawn(Box::new(PanicAfterGate {
+            panic_now: panic_now.clone(),
+        }));
+        let (disconnect_tx, disconnect_rx) = mpsc::channel();
+        let mut owner = SessionDataPlane::attach_paused(
+            runtime,
+            "paused-session".into(),
+            Box::new(|_, _| {}),
+            Box::new(move |_, info| {
+                let _ = disconnect_tx.send(info);
+            }),
+        )
+        .unwrap();
+
+        panic_now.store(true, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(disconnect_rx.try_recv().is_err());
+
+        owner.activate();
+        let info = disconnect_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("queued disconnect should surface after activation");
+        assert_eq!(info.reason, "transport runtime stopped unexpectedly");
+        owner.shutdown();
     }
 
     #[test]
