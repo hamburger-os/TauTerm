@@ -7,6 +7,8 @@
 
 pub const PLUGIN_ID: &str = "ssh";
 
+pub(crate) mod commands;
+
 pub(crate) mod application;
 mod driver;
 pub mod handler;

@@ -5,6 +5,8 @@
 
 pub const PLUGIN_ID: &str = "telnet";
 
+pub(crate) mod commands;
+
 pub mod channel;
 
 use std::net::ToSocketAddrs;

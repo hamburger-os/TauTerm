@@ -11,10 +11,10 @@ pub mod xml;
 
 pub const PLUGIN_ID: &str = "trdp";
 
-use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::{SessionAttach, SessionService};
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
+use crate::plugin_application::{ConnectSessionRequest, SessionConnectFuture};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -665,7 +665,17 @@ impl SessionService for TrdpRuntime {
 }
 
 /// TRDP connection implementation called by the shared kernel connection router.
-pub async fn connect_session(
+pub(crate) fn session_connector(
+    app: AppHandle,
+    request: ConnectSessionRequest,
+) -> SessionConnectFuture {
+    Box::pin(async move {
+        let state: State<'_, AppState> = app.state();
+        connect_session(app.clone(), state, request).await
+    })
+}
+
+async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,

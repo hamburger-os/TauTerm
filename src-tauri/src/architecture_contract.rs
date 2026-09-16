@@ -70,11 +70,7 @@ fn common_connection_router_is_registry_driven() {
     let start = source
         .find("pub async fn connect_session(")
         .expect("connect_session start");
-    let tail = &source[start..];
-    let end = tail
-        .find("/// 创建共享 on_data 回调")
-        .expect("connect_session end marker");
-    let router = &tail[..end];
+    let router = &source[start..];
 
     assert!(router.contains("contribution::<SessionConnectHandler>"));
     assert!(
@@ -256,4 +252,56 @@ fn frontend_app_shell_is_plugin_driven() {
     assert!(!app.contains("ssh-host-key-verify"));
     assert!(!app.contains("file_service_enabled"));
     assert!(!app.contains("journald_enabled"));
+}
+
+#[test]
+fn common_commands_do_not_own_protocol_application_surfaces() {
+    let source = read_source("commands.rs");
+    for forbidden in [
+        "crate::plugins::",
+        "connect_session_serial",
+        "connect_session_ssh",
+        "connect_session_telnet",
+        "connect_session_local_shell",
+        "connect_session_tftp",
+        "connect_session_iperf",
+        "connect_session_network",
+        "confirm_host_key",
+        "sftp_list_dir_cmd",
+        "journald_query_cmd",
+        "network_udp_send",
+        "tftp_server_start",
+        "iperf_server_start",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "common commands.rs must stay protocol-agnostic: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn plugin_connectors_depend_on_application_contract_not_common_commands() {
+    for relative in ["plugins/modbus/mod.rs", "plugins/trdp.rs"] {
+        let source = read_source(relative);
+        assert!(
+            !source.contains("crate::commands::ConnectSessionRequest"),
+            "{relative} must consume plugin_application connector contracts"
+        );
+    }
+}
+
+#[test]
+fn generic_session_application_payload_has_no_protocol_private_fields() {
+    let source = read_source("plugin_application.rs");
+    for forbidden in [
+        "file_service_enabled",
+        "file_service_protocol",
+        "journald_enabled",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "generic Session application orchestration must not project SSH-private field {forbidden}"
+        );
+    }
 }

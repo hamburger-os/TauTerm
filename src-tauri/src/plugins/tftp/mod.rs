@@ -6,6 +6,8 @@
 
 pub const PLUGIN_ID: &str = "tftp";
 
+pub(crate) mod commands;
+
 pub mod client;
 pub mod counting_socket;
 pub mod server;

@@ -7,6 +7,8 @@
 
 pub const PLUGIN_ID: &str = "network";
 
+pub(crate) mod commands;
+
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

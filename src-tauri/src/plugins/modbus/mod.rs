@@ -14,15 +14,15 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionStore};
+use crate::plugin_application::{ConnectSessionRequest, SessionConnectFuture};
 use crate::session::SessionError;
 use crate::transport::runtime::DataPlaneRuntime;
 use crate::transport::serial::open_serial;
@@ -181,6 +181,16 @@ impl ProtocolAdapter for ModbusAdapter {
     }
 }
 
+pub(crate) fn session_connector(
+    app: AppHandle,
+    request: ConnectSessionRequest,
+) -> SessionConnectFuture {
+    Box::pin(async move {
+        let state: State<'_, AppState> = app.state();
+        connect_session(app.clone(), state, request).await
+    })
+}
+
 fn parse_watch_rows(params: &Value, mode: ModbusMode) -> Result<Vec<WatchRow>, String> {
     let Some(value) = params.get("watch_rows") else {
         return Ok(Vec::new());
@@ -215,7 +225,7 @@ fn apply_server_snapshot(server: &ModbusServer, snapshot: DataModelSnapshot) {
     }
 }
 
-pub async fn connect_session(
+async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,

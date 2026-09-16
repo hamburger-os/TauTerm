@@ -5,6 +5,8 @@
 
 pub const PLUGIN_ID: &str = "local-shell";
 
+pub(crate) mod commands;
+
 pub(crate) fn session_config_handler() -> crate::plugin_application::SessionConfigHandler {
     crate::plugin_application::SessionConfigHandler {
         validate: Some(LocalShellAdapter::validate_params),

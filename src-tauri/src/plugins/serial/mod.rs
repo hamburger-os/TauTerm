@@ -5,6 +5,8 @@
 
 pub const PLUGIN_ID: &str = "serial";
 
+pub(crate) mod commands;
+
 use crate::kernel::plugin_adapter::{
     ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
@@ -97,14 +99,6 @@ impl SerialRuntime {
         let endpoints = self.take_endpoints();
         self.destroy_endpoints(&endpoints);
     }
-
-    pub fn virtual_endpoints(&self) -> Vec<VirtualEndpoint> {
-        self.endpoints
-            .lock()
-            .map(|endpoints| endpoints.clone())
-            .unwrap_or_default()
-    }
-
     /// 初始化 Serial 可选虚拟串口能力。
     ///
     /// capability 初始化失败不会回滚已经建立的物理串口 Session；失败通过 Serial 私有事件
