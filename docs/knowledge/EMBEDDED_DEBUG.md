@@ -21,13 +21,14 @@
 ## SEGGER RTT / J-Link
 
 - SEGGER RTT Knowledge Base：https://kb.segger.com/RTT
+- J-Link RTT TELNET Channel：https://kb.segger.com/J-Link_RTT_TELNET_Channel
 - J-Link RTT Viewer：https://www.segger.com/products/debug-probes/j-link/tools/rtt-viewer/
 - J-Link RTT Client：https://kb.segger.com/J-Link_RTT_Client
 - J-Link SDK：https://www.segger.com/products/debug-probes/j-link/tools/j-link-sdk/
 
 TauTerm 当前只把 J-Link RTT TELNET/Existing Debug Session 作为兼容 backend；它不是 J-Link SDK 集成，也不意味着可以重新分发 SEGGER SDK。若以后评估 SDK，必须先重新审查许可证、分发权和平台边界。
 
-Existing Session backend 仅连接本机 loopback 服务，不能因为底层是 TCP 就扩展成未经设计的远程服务入口。Channel/Control Block 等能力应按该接口实际可提供的能力降级，不能把 native probe backend 的 introspection 能力套用过去。
+Existing Session backend 仅连接本机 loopback 服务，不能因为底层是 TCP 就扩展成未经设计的远程服务入口。Channel/Control Block 等能力应按该接口实际可提供的能力降级，不能把 native probe backend 的 introspection 能力套用过去。RTT TELNET Channel 选择必须遵循 SEGGER 官方 Config String 契约，在连接建立后的协议窗口内发送完整配置串，不能把 `RTTCh` 子命令当作裸文本命令发送。
 
 ## 设计核对原则
 
