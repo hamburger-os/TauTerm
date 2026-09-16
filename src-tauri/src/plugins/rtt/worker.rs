@@ -35,6 +35,7 @@ pub(super) fn run(
     session_id: String,
     shared: Arc<RttShared>,
     shutting_down: Arc<AtomicBool>,
+    worker_exited: Arc<AtomicBool>,
     command_rx: mpsc::Receiver<WorkerCommand>,
     startup_tx: mpsc::SyncSender<Result<(), RttError>>,
 ) {
@@ -43,6 +44,7 @@ pub(super) fn run(
         Ok(backend) => backend,
         Err(error) => {
             shared.set_error(error.clone());
+            worker_exited.store(true, Ordering::Release);
             let _ = startup_tx.send(Err(error));
             return;
         }
@@ -51,6 +53,7 @@ pub(super) fn run(
     let _ = emit_snapshot(&app, &session_id, &shared);
     if startup_tx.send(Ok(())).is_err() {
         backend.shutdown();
+        worker_exited.store(true, Ordering::Release);
         return;
     }
 
@@ -115,6 +118,7 @@ pub(super) fn run(
 
     let _ = flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
     backend.shutdown();
+    worker_exited.store(true, Ordering::Release);
 
     if let Some(error) = fatal_error {
         shared.set_error(error.clone());
