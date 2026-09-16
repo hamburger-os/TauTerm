@@ -1,4 +1,4 @@
-use super::backend::probe_rs;
+use super::backend;
 use super::error::{RttCommandError, RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttHistoryResponse, RttProbeInfo, RttSnapshot};
 use super::{RttPlugin, PLUGIN_ID};
@@ -26,7 +26,7 @@ fn runtime(
 
 #[tauri::command]
 pub async fn rtt_discover_probes() -> Result<Vec<RttProbeInfo>, RttCommandError> {
-    tokio::task::spawn_blocking(probe_rs::list_probes)
+    tokio::task::spawn_blocking(backend::list_probes)
         .await
         .map_err(|error| {
             RttCommandError::from(RttError::backend(format!("枚举调试探针失败: {error}")))
