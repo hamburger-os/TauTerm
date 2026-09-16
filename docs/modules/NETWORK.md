@@ -23,7 +23,9 @@ TCP connect/listen 使用 `transport::tcp`，UDP bind/recv/send 使用 `transpor
 
 ### TFTP
 
-TFTP 是自包含 custom Session，文件传输和服务端控制在自己的视图完成，不使用全局 SendBar。服务端默认关闭远程写入和覆盖；用户主动开启“允许写入”后才可配置覆盖。对“非回环监听 + 允许写入 + 允许覆盖”的组合，配置页显示非阻塞行内风险提示，但不再追加二次确认弹窗或后端确认令牌。
+TFTP 是自包含 custom Session，文件传输和服务端控制在自己的视图完成，不使用全局 SendBar。工作台声明 `workspace.availability = "always"`：Session 未连接时仍可直接执行客户端 GET/PUT；这些客户端命令使用一次性 UDP 状态，不依赖已连接的 TFTP runtime。对 TFTP 来说，“连接”只创建该 Session 的常驻 runtime 并启动服务端，“断开”停止服务端但不隐藏客户端工作台。
+
+服务端默认关闭远程写入和覆盖；用户主动开启“允许写入”后才可配置覆盖。对“非回环监听 + 允许写入 + 允许覆盖”的组合，配置页必须显示行内风险提示，并要求在同一配置表单中显式确认；确认状态由 TFTP 插件自己的配置校验与 `reconnectGuard` 共同消费，公共 Session 层不解释这些私有字段。风险条件发生变化后确认会失效，避免旧确认被复用于新的暴露配置。
 
 ### Telnet
 
@@ -31,7 +33,7 @@ Telnet 是终端型 Session。Telnet 协商与 IAC/NAWS 语义留在插件 drive
 
 ### iperf
 
-iperf 是自包含测试 Session，承载测试配置、运行过程、结果和服务端监听，不伪装成普通终端。
+iperf 是自包含测试 Session，承载测试配置、运行过程、结果和服务端监听，不伪装成普通终端。工作台同样声明 `workspace.availability = "always"`：未连接时客户端测速仍可运行，客户端任务使用独立瞬态状态；“连接/断开”只管理该 Session 的常驻 iperf 服务端生命周期，不决定测试工作台是否可见。
 
 ## 设计边界
 
@@ -40,8 +42,8 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 - TCP peer 使用公共 DataPlane/SessionIo 生命周期；父监听器关闭时级联清理 peer，单 peer 关闭不反向关闭监听器。
 - Network aggregate DataPlane 只为 Session 级脚本/自动回复提供统一接收与发送语义；来源地址、peer ID 等协议视图信息仍归 Network 模块。
 - Network Debug 的目标选择必须被手动发送和脚本共享；目标同步属于运行时副作用，只能发生在已连接 Network Debug 会话。
-- TFTP/iperf custom Session 的连接/配置/删除仍遵守公共 Session 规则。
-- TFTP 的保护策略以保守默认值和显式开关为主；高风险组合需要清楚可见的行内 warning，但不阻塞专业调试流程。
+- TFTP/iperf 的工作台可见性与常驻服务端连接状态分离；是否允许断连使用由插件的 Workspace contribution 声明，公共 Workspace 不写协议特例。
+- TFTP 的保护策略以保守默认值、显式开关和就地风险确认为主；高风险组合必须清楚可见且在启动服务端前得到显式确认，但不额外弹出第二套确认窗口。
 
 ## 代码锚点
 
