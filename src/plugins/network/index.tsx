@@ -22,7 +22,8 @@ import NetworkConnectForm, {
   isNetworkConnectionConfigValid,
   normalizeNetworkParams,
 } from "./NetworkConnectForm";
-import NetworkSendTarget, { isNetworkSendTargetVisible } from "./NetworkSendTarget";
+import NetworkSendTarget from "./NetworkSendTarget";
+import { isNetworkSendTargetVisible } from "./send-target";
 import {
   clearNetworkPeer,
   disconnectNetworkPeer,
