@@ -23,7 +23,7 @@
   height: var(--select-height);
   min-height: var(--select-height);
   padding: var(--select-padding);
-  border-radius: var(--radius-md);
+  border-radius: var(--select-radius);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
 }
@@ -56,9 +56,9 @@
 }
 
 .iconButton {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: var(--select-height);
+  height: var(--select-height);
+  flex: 0 0 var(--select-height);
   padding: 0;
   color: var(--accent-primary);
   display: inline-flex;
@@ -116,7 +116,7 @@
   display: flex;
   align-items: center;
   padding: var(--select-padding);
-  border-radius: var(--radius-md);
+  border-radius: var(--select-radius);
   background: var(--glass-input-bg);
   border: 1px solid var(--glass-input-border);
   box-shadow: var(--glass-input-shadow-inner);
