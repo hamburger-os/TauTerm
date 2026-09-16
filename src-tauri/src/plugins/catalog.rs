@@ -7,9 +7,7 @@
 use super::{iperf, local_shell, modbus, network, serial, ssh, telnet, tftp, trdp};
 use crate::kernel::plugin_adapter::{PluginId, PluginManifest, ProtocolAdapter};
 use crate::kernel::plugin_runtime::PluginRuntime;
-use crate::plugin_application::{
-    SessionConnectHandler, SessionDisconnectedHook,
-};
+use crate::plugin_application::{SessionConnectHandler, SessionDisconnectedHook};
 use std::{any::Any, path::Path, sync::Arc};
 use tauri::AppHandle;
 
@@ -154,4 +152,10 @@ pub fn configure_persistence(runtime: &PluginRuntime, config_dir: &Path) -> Resu
 /// 注入只在 Tauri App 建立后才能取得的宿主句柄。
 pub fn attach_app_handle(runtime: &PluginRuntime, app: AppHandle) {
     contribution::<telnet::TelnetAdapter>(runtime, telnet::PLUGIN_ID).inject_app_handle(app);
+}
+
+/// Windows 提权 shell helper 在 Tauri runtime 建立前执行，因此也由插件 catalog 暴露统一入口。
+#[cfg(windows)]
+pub fn maybe_run_elevated_shell_helper() -> bool {
+    local_shell::elevated::maybe_run_helper()
 }
