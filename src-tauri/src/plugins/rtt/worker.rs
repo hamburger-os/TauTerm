@@ -39,7 +39,7 @@ pub(super) fn run(
     command_rx: mpsc::Receiver<WorkerCommand>,
     startup_tx: mpsc::SyncSender<Result<(), RttError>>,
 ) {
-    shared.set_phase(RttPhase::OpeningProbe);
+    shared.set_phase(RttPhase::OpeningBackend);
     let mut backend = match open_backend(&config) {
         Ok(backend) => backend,
         Err(error) => {
