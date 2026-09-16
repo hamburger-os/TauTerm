@@ -35,6 +35,8 @@ function trdpSubtitle(params: Record<string, unknown>): string {
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: TrdpConnectForm,
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
+  resolveEndpoint: () => "trdp",
   sessionPresentation: {
     defaultName: params => `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`,
     subtitle: params => trdpSubtitle(params),
