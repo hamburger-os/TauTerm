@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/local-shell.json";
 import LocalShellConnectForm from "./LocalShellConnectForm";
@@ -26,7 +26,7 @@ function normalizeLocalShellParams(params: Record<string, unknown>): Record<stri
   return { ...DEFAULT_LOCAL_SHELL_PARAMS, ...params };
 }
 
-registerPlugin({
+export const localShellPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: LocalShellConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_LOCAL_SHELL_PARAMS, args: [], preset_args: [] }),

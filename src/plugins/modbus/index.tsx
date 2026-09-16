@@ -1,4 +1,4 @@
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/modbus.json";
 import ModbusConnectForm from "./ModbusConnectForm";
 import ModbusSessionView from "./ModbusSessionView";
@@ -7,7 +7,7 @@ import { modbusLocales } from "./locales";
 import { defaultModbusSessionParams, normalizeModbusSessionParams } from "./model";
 import { modbusEndpointLabel, modbusSessionTitle } from "./presentation";
 
-registerPlugin({
+export const modbusPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: ModbusConnectForm,
   defaultConnectionParams: () => defaultModbusSessionParams(),
@@ -39,5 +39,3 @@ registerPlugin({
     },
   ],
 });
-
-console.log("[Plugin] Modbus plugin registered");

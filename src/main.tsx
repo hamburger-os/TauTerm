@@ -2,20 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./components/common/ErrorBoundary";
-// 注册内建插件（必须在 App 渲染前注册）
-import "./plugins/serial";
-import "./plugins/ssh";
-import "./plugins/telnet";
-import "./plugins/local-shell";
-import "./plugins/tftp";
-import "./plugins/iperf";
-import "./plugins/network";
-import "./plugins/trdp";
-import "./plugins/modbus";
+import { installBuiltinPlugins } from "./plugins/catalog";
 import { installFrontendRuntimeDiagnostics } from "./utils/runtimeDiagnostics";
 import "./styles/global.css";
 import "./styles/selection-controls.css";
 
+installBuiltinPlugins();
 installFrontendRuntimeDiagnostics();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

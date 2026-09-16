@@ -1,11 +1,6 @@
-/**
- * Serial 插件前端注册
- *
- * 串口专属配置、运行态、校验、会话展示和状态栏项均由插件拥有；通用 Session UI
- * 只负责承载这些声明式能力。
- */
+/** Serial frontend plugin definition. */
 import { createElement } from "react";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/serial.json";
 import SerialConnectForm, {
   DEFAULT_SERIAL_PARAMS,
@@ -41,7 +36,7 @@ function serialSubtitle(params: Record<string, unknown>, endpoint: string): stri
 const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
   activeTab?.state === "connected" || activeTab?.state === "transferring";
 
-registerPlugin({
+export const serialPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: SerialConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_SERIAL_PARAMS }),
@@ -108,5 +103,3 @@ registerPlugin({
     },
   },
 });
-
-console.log("[Plugin] Serial plugin registered");

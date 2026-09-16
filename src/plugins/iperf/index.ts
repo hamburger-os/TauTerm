@@ -1,10 +1,8 @@
-/**
- * iperf 插件前端注册
- */
+/** iperf frontend plugin definition. */
 import { createElement } from "react";
 import IperfSessionView from "../../components/Iperf/IperfSessionView";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/iperf.json";
 import IperfConnectForm, {
   DEFAULT_IPERF_PARAMS,
@@ -12,7 +10,7 @@ import IperfConnectForm, {
   normalizeIperfParams,
 } from "./IperfConnectForm";
 
-registerPlugin({
+export const iperfPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: IperfConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_IPERF_PARAMS }),
@@ -47,5 +45,3 @@ registerPlugin({
     },
   ],
 });
-
-console.log("[Plugin] iperf plugin registered");
