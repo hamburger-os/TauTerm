@@ -1,6 +1,6 @@
 /** iperf frontend plugin definition. */
 import { createElement } from "react";
-import IperfSessionView from "../../components/Iperf/IperfSessionView";
+import IperfSessionView from "./views/IperfSessionView";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/iperf.json";
