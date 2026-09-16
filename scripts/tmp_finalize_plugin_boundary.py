@@ -16,7 +16,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-# SessionDataPlane: prepare the subscription/pump first but hold callbacks behind an activation gate.
+# 1. Make SessionDataPlane registration two-phase: subscribe/spawn first, callbacks activate later.
 path = "src-tauri/src/session/runtime.rs"
 text = load(path)
 text = replace_once(text, "use std::sync::Arc;", "use std::sync::{mpsc, Arc};", "runtime import")
@@ -146,7 +146,8 @@ paused_test = '''    #[test]
 text = replace_once(text, marker, paused_test + marker, "runtime paused test")
 save(path, text)
 
-# SessionStore creates roots paused and exposes one protocol-neutral activation entry point.
+
+# 2. SessionStore creates root pumps paused and owns generic activation lookup for roots/children.
 path = "src-tauri/src/kernel/session_store.rs"
 text = load(path)
 text = replace_once(
@@ -189,7 +190,8 @@ method = '''    /// Activate a previously registered root or child DataPlane.
 text = replace_once(text, marker, method + marker, "session activation method")
 save(path, text)
 
-# Generic root/child application helpers.
+
+# 3. Common application helpers activate only after Session/child publication.
 path = "src-tauri/src/plugin_application.rs"
 text = load(path)
 text = replace_once(
@@ -212,7 +214,8 @@ text = replace_once(
 )
 save(path, text)
 
-# Serial root publication ordering.
+
+# 4. Protocol connectors with custom publication ordering release the same generic barrier.
 path = "src-tauri/src/plugins/serial/commands.rs"
 text = load(path)
 text = replace_once(
@@ -223,7 +226,6 @@ text = replace_once(
 )
 save(path, text)
 
-# Network root + peer publication ordering.
 path = "src-tauri/src/plugins/network/mod.rs"
 text = load(path)
 text = replace_once(
@@ -250,7 +252,6 @@ text = replace_once(
 )
 save(path, text)
 
-# SSH initial child activation follows parent+child publication.
 path = "src-tauri/src/plugins/ssh/commands.rs"
 text = load(path)
 text = replace_once(
@@ -261,7 +262,6 @@ text = replace_once(
 )
 save(path, text)
 
-# Local Shell initial child uses the same parent->child->activate ordering as SSH.
 path = "src-tauri/src/plugins/local_shell/commands.rs"
 text = load(path)
 text = replace_once(
@@ -295,7 +295,8 @@ text = replace_once(
 )
 save(path, text)
 
-# Frontend: protocol-specific error presentation belongs to the plugin registration.
+
+# 5. Restore Local Shell error UX through a generic plugin-owned formatter, not a common protocol branch.
 path = "src/core/plugin-registry.ts"
 text = load(path)
 text = replace_once(
@@ -338,7 +339,8 @@ text = replace_once(
 )
 save(path, text)
 
-# Owner docs.
+
+# 6. Owner docs describe the new lifecycle and frontend policy boundaries.
 path = "docs/modules/CORE.md"
 text = load(path)
 text = replace_once(
@@ -357,56 +359,60 @@ save(path, text)
 
 path = "docs/modules/UI_FOUNDATION.md"
 text = load(path)
-needle = "- 插件私有运行态必须留在插件自己的 Session store/hook；公共状态栏上下文只提供 Session ID、连接状态、端点、通用参数和统计等协议无关信息。"
-if needle not in text:
-    raise SystemExit("UI_FOUNDATION error-policy anchor missing")
+marker = "## 设计边界\n\n"
+if marker not in text:
+    raise SystemExit("UI_FOUNDATION design-boundary section missing")
 text = text.replace(
-    needle,
-    needle + "\n- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。",
+    marker,
+    marker + "- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。\n",
     1,
 )
 save(path, text)
 
-# Architecture guards.
+
+# 7. Executable architecture guards prevent both boundaries from regressing.
 path = "src-tauri/src/architecture_contract.rs"
 text = load(path)
-insert_before = "\n#[test]\nfn frontend_generic_plugin_registry_has_no_protocol_private_status_state()"
 contract = r'''
+
 #[test]
 fn session_data_plane_registration_is_two_phase() {
-    let runtime = read("src/session/runtime.rs");
+    let runtime = read_source("session/runtime.rs");
     assert!(runtime.contains("pub fn attach_paused("));
     assert!(runtime.contains("pub fn activate(&self)"));
 
-    let store = read("src/kernel/session_store.rs");
+    let store = read_source("kernel/session_store.rs");
     assert!(store.contains("SessionDataPlane::attach_paused"));
     assert!(store.contains("pub fn activate_data_plane(&self"));
 
-    let application = read("src/plugin_application.rs");
+    let application = read_source("plugin_application.rs");
     assert!(application.contains("SessionDataPlane::attach_paused"));
     assert!(application.contains("activate_data_plane(&channel_id)"));
 
-    let network = read("src/plugins/network/mod.rs");
+    let network = read_source("plugins/network/mod.rs");
     assert!(network.contains("SessionDataPlane::attach_paused"));
     assert!(network.contains("activate_data_plane(&channel_id)"));
 }
+
+#[test]
+fn frontend_session_error_presentation_is_plugin_driven() {
+    let session_context = read_workspace_source("src/context/SessionContext.tsx");
+    assert!(session_context.contains("formatSessionError"));
+    assert!(!session_context.contains("User cancelled the UAC elevation prompt"));
+    assert!(!session_context.contains("localShell.elevationCancelled"));
+
+    let local_shell = read_workspace_source("src/plugins/local-shell/index.ts");
+    assert!(local_shell.contains("formatSessionError"));
+    assert!(local_shell.contains("localShell.elevationCancelled"));
+}
 '''
-text = replace_once(
-    text,
-    insert_before,
-    "\n" + contract + "\n#[test]\nfn frontend_generic_plugin_registry_has_no_protocol_private_status_state()",
-    "lifecycle architecture contract",
-)
-marker = "    assert!(session_context.contains(\"reconnectGuard\"));"
-text = replace_once(
-    text,
-    marker,
-    marker + "\n    assert!(session_context.contains(\"formatSessionError\"));\n    assert!(!session_context.contains(\"User cancelled the UAC elevation prompt\"));\n    assert!(!session_context.contains(\"localShell.elevationCancelled\"));",
-    "frontend error architecture contract",
-)
+if "fn session_data_plane_registration_is_two_phase()" in text:
+    raise SystemExit("two-phase architecture contract already exists")
+text = text.rstrip() + contract + "\n"
 save(path, text)
 
-# Make forgotten inactive-root call sites an executable architecture violation.
+
+# 8. Root Session creation must stay centralized; otherwise an inactive pump could be forgotten.
 callers = []
 for candidate in Path("src-tauri/src").rglob("*.rs"):
     content = candidate.read_text(encoding="utf-8")
