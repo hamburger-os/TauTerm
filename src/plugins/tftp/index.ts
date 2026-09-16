@@ -1,7 +1,7 @@
 /** TFTP frontend plugin definition. */
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import TftpSessionView from "../../components/Tftp/TftpSessionView";
+import TftpSessionView from "./views/TftpSessionView";
 import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/tftp.json";
