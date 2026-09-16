@@ -17,6 +17,11 @@ import { usePluginRuntime } from "../../core/usePluginRuntime";
 import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/network.json";
 import { formatBytes } from "../../utils/format";
+import NetworkConnectForm, {
+  DEFAULT_NETWORK_PARAMS,
+  isNetworkConnectionConfigValid,
+  normalizeNetworkParams,
+} from "./NetworkConnectForm";
 import NetworkSendTarget, { isNetworkSendTargetVisible } from "./NetworkSendTarget";
 import {
   clearNetworkPeer,
@@ -98,11 +103,11 @@ function networkSubtitle(params: Record<string, unknown>, endpoint: string): str
       : undefined;
     if (host && port) return `${transport.toUpperCase()} · ${host}:${port}`;
   } else {
-    const host = typeof params.listen_ip === "string" && params.listen_ip.trim()
-      ? params.listen_ip.trim()
+    const host = typeof params.local_host === "string" && params.local_host.trim()
+      ? params.local_host.trim()
       : "0.0.0.0";
-    const port = typeof params.listen_port === "number" && Number.isFinite(params.listen_port)
-      ? params.listen_port
+    const port = typeof params.local_port === "number" && Number.isFinite(params.local_port)
+      ? params.local_port
       : undefined;
     if (port) return `${transport.toUpperCase()} · ${host}:${port}`;
   }
@@ -134,6 +139,19 @@ const statusBarItems: StatusBarItem[] = [
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  connectForm: NetworkConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_NETWORK_PARAMS }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: true }),
+  normalizeConnectionParams: normalizeNetworkParams,
+  isConnectionConfigValid: isNetworkConnectionConfigValid,
+  resolveEndpoint: params => {
+    const transport = params.transport === "udp" ? "udp" : "tcp";
+    const role = params.role === "server" ? "server" : "client";
+    if (role === "client") {
+      return `${transport}://${String(params.remote_host ?? "").trim()}:${Number(params.remote_port ?? 8080)}`;
+    }
+    return `${transport}://${String(params.local_host ?? "0.0.0.0").trim() || "0.0.0.0"}:${Number(params.local_port ?? 8080)}`;
+  },
   sessionPresentation: {
     defaultName: params => {
       const transport = params.transport === "udp" ? "UDP" : "TCP";
