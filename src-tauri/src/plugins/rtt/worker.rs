@@ -88,7 +88,6 @@ pub(super) fn run(
                 WorkerCommand::Shutdown { reply } => {
                     let _ =
                         flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
-                    backend.shutdown();
                     let _ = reply.send(());
                     break 'worker;
                 }
@@ -211,6 +210,7 @@ fn notify_unexpected_disconnect(app: AppHandle, session_id: String, error: RttEr
                 "disconnect_info": {
                     "kind": "io_error",
                     "reason": error.message,
+                    "retain_terminal": true,
                     "plugin_error_code": error.code.as_str(),
                 }
             }),
