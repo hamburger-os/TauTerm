@@ -5,30 +5,21 @@ import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import TftpSessionView from "../../components/Tftp/TftpSessionView";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
-import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/tftp.json";
+import TftpConnectForm, {
+  DEFAULT_TFTP_PARAMS,
+  isTftpConnectionConfigValid,
+  normalizeTftpParams,
+} from "./TftpConnectForm";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
-  reconnectGuard: ({ params }) => {
-    const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
-    const loopback = bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
-    if (
-      !loopback
-      && params.write_enabled === true
-      && params.overwrite === true
-      && params.exposure_confirmed !== true
-    ) {
-      return {
-        ok: false,
-        message: String(i18n.t("tftp.exposureWarning", {
-          defaultValue:
-            "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
-        })),
-      };
-    }
-    return { ok: true };
-  },
+  connectForm: TftpConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_TFTP_PARAMS }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
+  normalizeConnectionParams: normalizeTftpParams,
+  isConnectionConfigValid: isTftpConnectionConfigValid,
+  resolveEndpoint: params => `${String(params.listen_ip ?? "0.0.0.0").trim()}:${Number(params.listen_port ?? 69)}`,
   sessionPresentation: {
     defaultName: (params, endpoint) => {
       const root = typeof params.file_root === "string" && params.file_root.trim()
