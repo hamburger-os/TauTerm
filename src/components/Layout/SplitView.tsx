@@ -44,6 +44,11 @@ interface PaneMenuState {
   y: number;
 }
 
+interface NonTerminalPlacement {
+  paneId: PaneId;
+  rect: PaneRect;
+}
+
 function rectStyle(rect: PaneRect): React.CSSProperties {
   return {
     left: `${rect.left * 100}%`,
@@ -144,6 +149,9 @@ export default function SplitView({
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
   const [hoveredSplit, setHoveredSplit] = useState<{ paneId: PaneId; edge: SplitEdge } | null>(null);
   const [paneMenu, setPaneMenu] = useState<PaneMenuState | null>(null);
+  const [retainedNonTerminalSessionIds, setRetainedNonTerminalSessionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const {
     menu: disconnectedSessionMenu,
     openMenu: openDisconnectedSessionMenu,
@@ -179,7 +187,6 @@ export default function SplitView({
     return map;
   }, [sessionState.tabs]);
 
-
   const terminalPlacements = useMemo(() => {
     const result: Record<string, PaneRect> = {};
     for (const [paneId, sessionId] of Object.entries(layout.assignments)) {
@@ -207,6 +214,62 @@ export default function SplitView({
     }
     return result;
   }, [layout.assignments, tabsById]);
+
+  const nonTerminalPlacements = useMemo(() => {
+    const result: Record<string, NonTerminalPlacement> = {};
+    for (const [paneId, sessionId] of Object.entries(layout.assignments)) {
+      if (!sessionId) continue;
+      const tab = tabsById.get(sessionId);
+      if (!tab) continue;
+      const plugin = pluginRegistry.get(tab.pluginId);
+      const contentType = plugin?.manifest.content_type ?? "terminal";
+      if (contentType === "terminal") continue;
+      if (shouldShowDisconnectedPlaceholder(tab, contentType, plugin?.workspace?.availability)) continue;
+      const rect = paneRects[paneId];
+      if (!rect) continue;
+      result[sessionId] = {
+        paneId,
+        rect: insetPaneContent(rect, paneCount, viewSize.height),
+      };
+    }
+    return result;
+  }, [layout.assignments, paneRects, paneCount, tabsById, viewSize.height]);
+
+  // Non-terminal Session views are Session-owned, not Pane-owned. Once a view has
+  // been opened, switching/clearing Pane assignment only hides or moves it; the
+  // React instance stays alive while the Session runtime is alive. This preserves
+  // in-process UI state and prevents view unmount from accidentally stopping work.
+  // Connected-only workspaces are released after disconnect; `always` workspaces
+  // remain alive because their offline/client workbench is itself valid runtime UI.
+  useEffect(() => {
+    setRetainedNonTerminalSessionIds(previous => {
+      const next = new Set<string>();
+      for (const sessionId of previous) {
+        const tab = tabsById.get(sessionId);
+        if (!tab) continue;
+        const plugin = pluginRegistry.get(tab.pluginId);
+        const contentType = plugin?.manifest.content_type ?? "terminal";
+        if (contentType === "terminal") continue;
+        if (plugin?.workspace?.availability === "always" || tab.state !== "disconnected") {
+          next.add(sessionId);
+        }
+      }
+      for (const sessionId of Object.keys(nonTerminalPlacements)) next.add(sessionId);
+      if (
+        next.size === previous.size
+        && [...next].every(sessionId => previous.has(sessionId))
+      ) {
+        return previous;
+      }
+      return next;
+    });
+  }, [nonTerminalPlacements, tabsById]);
+
+  const nonTerminalSessionPoolIds = useMemo(() => {
+    const ids = new Set(retainedNonTerminalSessionIds);
+    for (const sessionId of Object.keys(nonTerminalPlacements)) ids.add(sessionId);
+    return [...ids];
+  }, [nonTerminalPlacements, retainedNonTerminalSessionIds]);
 
   const handleDividerMouseDown = useCallback((e: React.MouseEvent, divider: DividerGeometry) => {
     e.preventDefault();
@@ -375,7 +438,7 @@ export default function SplitView({
       ref={viewRef}
       className={`${styles.view} liquid-glass-content`}
     >
-      {/* 非终端内容层与空 Pane。终端由下面唯一的 TerminalView 实例池覆盖投放。 */}
+      {/* Pane 材质、空 Pane 与断连占位。实际非终端视图由下方 Session 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
@@ -415,10 +478,45 @@ export default function SplitView({
             {!tab && (
               <PaneEmptyState message={t("split.selectSession", "选择左侧会话")} />
             )}
-            {tab && !isTerminal && !showDisconnectedPlaceholder && renderNonTerminalContent(tab)}
             {tab && showDisconnectedPlaceholder && (
               <PaneEmptyState message={t("session.connectToViewContent", "连接后显示会话内容")} />
             )}
+          </div>
+        );
+      })}
+
+      {/*
+       * Session-owned non-terminal instance pool. A Pane assignment is only a
+       * projection: changing the selected Session moves/hides an existing view
+       * instead of unmounting it, so background work and ephemeral UI state are
+       * not coupled to Pane visibility.
+       */}
+      {nonTerminalSessionPoolIds.map(sessionId => {
+        const tab = tabsById.get(sessionId);
+        if (!tab) return null;
+        const plugin = pluginRegistry.get(tab.pluginId);
+        const contentType = plugin?.manifest.content_type ?? "terminal";
+        if (contentType === "terminal") return null;
+        const placement = nonTerminalPlacements[sessionId];
+        const placementStyle: React.CSSProperties = placement
+          ? rectStyle(placement.rect)
+          : { display: "none" };
+        return (
+          <div
+            key={`session-surface-${tab.pluginId}:${sessionId}`}
+            className={`${styles.paneSurface} ${contentType === "custom" ? styles.customPaneSurface : ""}`}
+            style={placementStyle}
+            onMouseDown={(e) => {
+              if (e.button === 0 && placement) onSelectPane(placement.paneId);
+            }}
+            onContextMenu={(e) => {
+              // Pane-level actions belong exclusively to Pane Header. Plugin
+              // content may stop propagation first when it owns a context menu.
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            {renderNonTerminalContent(tab)}
           </div>
         );
       })}
