@@ -40,7 +40,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const { t } = useTranslation();
   const { state, refreshEndpoints, switchTab, createOfflineSession, reconfigureSession } = useSession();
   const [step, setStep] = useState<"mode" | "config">("mode");
-  const [selectedMode, setSelectedMode] = useState("serial");
+  const [selectedMode, setSelectedMode] = useState("");
   const [pluginParams, setPluginParams] = useState<Record<string, unknown>>({});
   const [endpoint, setEndpoint] = useState("");
   const [sessionOptions, setSessionOptions] = useState<SessionConnectOptions>(EMPTY_SESSION_OPTIONS);
@@ -95,13 +95,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       if (tab) {
         const plugin = pluginRegistry.get(tab.pluginId);
         const params = tab.params ?? {};
+        const defaults = defaultSessionOptions(plugin);
         setSelectedMode(tab.pluginId);
         setPluginParams(plugin?.normalizeConnectionParams?.(params) ?? params);
         setEndpoint(tab.endpoint);
         setSessionOptions({
-          transferEnabled: tab.transferEnabled,
-          transferProtocol: tab.transferProtocol,
-          sendBarEnabled: tab.sendBarEnabled,
+          transferEnabled: tab.transferEnabled ?? defaults.transferEnabled,
+          transferProtocol: tab.transferProtocol ?? defaults.transferProtocol,
+          sendBarEnabled: tab.sendBarEnabled ?? defaults.sendBarEnabled,
         });
         setSessionName(tab.name);
         setStep("config");
@@ -109,7 +110,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       }
     }
 
-    setSelectedMode("serial");
+    setSelectedMode("");
     setPluginParams({});
     setEndpoint("");
     setSessionOptions({ ...EMPTY_SESSION_OPTIONS });
@@ -342,7 +343,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       onClick={() => void handleCreate()}
                       disabled={!canSubmit}
                     >
-                      {connecting ? t("serial.confirming") : t("serial.confirm")}
+                      {connecting
+                        ? t("common.confirming", { defaultValue: "Saving..." })
+                        : t("common.confirm")}
                     </button>
                   </div>
                 </>
