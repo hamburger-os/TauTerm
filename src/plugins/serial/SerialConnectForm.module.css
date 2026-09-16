@@ -12,7 +12,7 @@
 }
 
 .label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 
@@ -31,12 +31,20 @@
 
 .control {
   width: 100%;
-  min-height: 34px;
+  height: var(--select-height);
+  min-height: var(--select-height);
+  padding: var(--select-padding);
+  border-radius: var(--select-radius);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
 }
 
 .refreshButton {
-  min-width: 38px;
-  min-height: 34px;
+  width: var(--select-height);
+  height: var(--select-height);
+  min-width: var(--select-height);
+  min-height: var(--select-height);
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
