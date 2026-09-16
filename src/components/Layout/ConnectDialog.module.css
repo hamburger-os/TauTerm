@@ -191,19 +191,15 @@
   margin-top: 1px;
 }
 
-.input, .numberInput {
-  width: 100%;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-family: var(--font-ui);
-}
+.input,
+.numberInput,
 .select {
   width: 100%;
-  padding: var(--select-padding);
   height: var(--select-height);
+  min-height: var(--select-height);
+  padding: var(--select-padding);
   border-radius: var(--radius-md);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-family: var(--font-ui);
 }
 
@@ -214,8 +210,8 @@
 }
 
 .iconBtn {
-  width: 30px;
-  height: 30px;
+  width: var(--select-height);
+  height: var(--select-height);
   color: var(--accent-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
