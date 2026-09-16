@@ -125,8 +125,8 @@ pub fn get_connection_types(state: State<'_, AppState>) -> Vec<ConnectionTypeInf
             id: plugin.id.to_string(),
             label: plugin.name.clone(),
             available: true,
-            description: format!("{} v{}", plugin.name, plugin.version),
-            icon: plugin.category.clone(),
+            description: plugin.description.clone(),
+            icon: plugin.icon.clone(),
             content_type: plugin.content_type.clone(),
         })
         .collect()
