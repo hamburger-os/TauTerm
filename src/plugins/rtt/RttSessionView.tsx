@@ -112,10 +112,13 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
     historiesRef.current.clear();
     loadedRef.current.clear();
     modesRef.current.clear();
+    writeChainRef.current = Promise.resolve();
     setSnapshot(null);
     setSelectedChannel(null);
+    setInput("");
+    setError(null);
     setRevision(value => value + 1);
-  }, [sessionId]);
+  }, [sessionId, tab?.connectedAt]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -265,7 +268,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
 
               <div className={styles.viewerContent}>
                 {!channel.up ? <div className={styles.empty}>{t("rtt.noUp")}</div> : mode === "terminal" ? (
-                  <RttTerminalView chunks={chunks} connected={connected && Boolean(channel.down)} onData={data => sendBytes(channel.index, data)} />
+                  <RttTerminalView key={channel.index} chunks={chunks} connected={connected && Boolean(channel.down)} onData={data => sendBytes(channel.index, data)} />
                 ) : mode === "text" ? (
                   <pre className={styles.textView}>{text}</pre>
                 ) : (
