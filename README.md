@@ -56,6 +56,8 @@ Core engineering workflows are **local-first**: they are intended to remain usef
 | Persistent 1–4-pane Workspace | ✅ |
 | Protocol Inspector + data/CRC/bit engineering tools | ✅ |
 
+For TFTP and iPerf, the Session workbench remains usable while **disconnected**: client GET/PUT and benchmark runs are transient operations. “Connect” starts the Session's TFTP/iPerf server; “Disconnect” stops that server without hiding the client workbench. TFTP configurations that combine remote write and overwrite on a non-loopback interface require an explicit in-form risk acknowledgement before the server can start.
+
 TRDP includes active PD/MD Node workflows and passive Monitor/capture analysis. It does **not** claim SDTv2/SDTv4 safety validation or certification.
 
 ## Install
