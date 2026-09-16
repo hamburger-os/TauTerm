@@ -25,6 +25,12 @@
 .control {
   width: 100%;
   min-width: 0;
+  height: var(--select-height);
+  min-height: var(--select-height);
+  padding: var(--select-padding);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
 }
 
 .row {
@@ -38,9 +44,9 @@
 }
 
 .iconButton {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  flex: 0 0 var(--select-height);
+  width: var(--select-height);
+  height: var(--select-height);
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -73,6 +79,7 @@
 }
 
 .textarea {
+  height: auto;
   min-height: 96px;
   resize: vertical;
   font-family: var(--font-mono);
