@@ -23,7 +23,6 @@ use tauri::Emitter;
 use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
-use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
     SessionChannelFactory, SessionService,
@@ -935,10 +934,6 @@ impl ProtocolAdapter for SshAdapter {
         Err(SessionError::CapabilityDenied {
             capability: "ssh_trusted_connection".into(),
         })
-    }
-
-    fn content_type(&self) -> ContentType {
-        ContentType::Terminal
     }
 
     /// SSH 无硬件端点枚举 — 返回空列表
