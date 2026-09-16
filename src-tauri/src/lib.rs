@@ -5,6 +5,7 @@
 //! ## 架构
 //!
 //! - **Plugin Runtime**: canonical manifest、Adapter 与类型化 contribution 的唯一注册目录（`kernel/plugin_runtime`）
+//! - **Plugin Catalog**: 内建插件 composition、宿主生命周期注入的唯一目录（`plugins/catalog`）
 //! - **Protocol Adapter**: 协议插件通过 `ProtocolAdapter` trait 管理连接
 //! - **Transport Runtime**: 协议无关的物理 I/O、DataPlane 与独占租约（`transport`）
 //! - **Session Runtime**: 会话生命周期、脚本 I/O 与断开语义（`session`）
@@ -32,23 +33,14 @@ pub mod virtual_port;
 
 #[cfg(windows)]
 pub fn maybe_run_elevated_shell_helper() -> bool {
-    plugins::local_shell::elevated::maybe_run_helper()
+    plugins::catalog::maybe_run_elevated_shell_helper()
 }
 
 use kernel::config_store::ConfigStore;
 use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
-use kernel::plugin_adapter::PluginManifest;
 use kernel::plugin_runtime::PluginRuntime;
 use kernel::session_store::SessionStore;
 use kernel::theme_engine::ThemeEngine;
-use plugins::iperf::IperfAdapter;
-use plugins::local_shell::LocalShellAdapter;
-use plugins::modbus::ModbusAdapter;
-use plugins::network::NetworkAdapter;
-use plugins::serial::SerialAdapter;
-use plugins::ssh::SshAdapter;
-use plugins::telnet::TelnetAdapter;
-use plugins::tftp::TftpAdapter;
 use security::CredentialStore;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -89,141 +81,13 @@ impl AppState {
     }
 }
 
-fn parse_builtin_manifest(raw: &'static str) -> PluginManifest {
-    serde_json::from_str::<PluginManifest>(raw).expect("canonical plugin manifest")
-}
-
-fn register_builtin_adapter<T>(
-    runtime: &mut PluginRuntime,
-    raw_manifest: &'static str,
-    adapter: T,
-    connector: plugin_application::SessionConnectHandler,
-) where
-    T: kernel::plugin_adapter::ProtocolAdapter + Any + Send + Sync + 'static,
-{
-    let plugin_id = runtime
-        .register_adapter(parse_builtin_manifest(raw_manifest), adapter)
-        .unwrap_or_else(|error| panic!("注册内建协议插件失败: {error}"));
-    runtime
-        .register_contribution(&plugin_id, connector)
-        .unwrap_or_else(|error| panic!("注册内建插件连接 contribution 失败: {error}"));
-}
-
-fn build_plugin_runtime() -> PluginRuntime {
-    let mut runtime = PluginRuntime::new();
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/serial.json"),
-        SerialAdapter::new(),
-        plugins::serial::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/ssh.json"),
-        SshAdapter::new(),
-        plugins::ssh::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/telnet.json"),
-        TelnetAdapter::new(),
-        plugins::telnet::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/local-shell.json"),
-        LocalShellAdapter::new(),
-        plugins::local_shell::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/tftp.json"),
-        TftpAdapter::new(),
-        plugins::tftp::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/iperf.json"),
-        IperfAdapter::new(),
-        plugins::iperf::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/network.json"),
-        NetworkAdapter::new(),
-        plugins::network::commands::session_connector,
-    );
-    register_builtin_adapter(
-        &mut runtime,
-        include_str!("../../src/plugin-manifests/modbus.json"),
-        ModbusAdapter::new(),
-        plugins::modbus::session_connector,
-    );
-
-    for (plugin_id, hook) in [
-        (
-            plugins::tftp::PLUGIN_ID,
-            plugins::tftp::commands::session_disconnected
-                as plugin_application::SessionDisconnectedHook,
-        ),
-        (
-            plugins::iperf::PLUGIN_ID,
-            plugins::iperf::commands::session_disconnected
-                as plugin_application::SessionDisconnectedHook,
-        ),
-    ] {
-        let plugin_id =
-            kernel::plugin_adapter::PluginId::parse(plugin_id).expect("built-in plugin id");
-        runtime
-            .register_contribution(&plugin_id, hook)
-            .unwrap_or_else(|error| panic!("注册 Session 断开 contribution 失败: {error}"));
-    }
-
-    for (plugin_id, handler) in [
-        (
-            plugins::ssh::PLUGIN_ID,
-            plugins::ssh::application::session_config_handler(),
-        ),
-        (
-            plugins::local_shell::PLUGIN_ID,
-            plugins::local_shell::session_config_handler(),
-        ),
-    ] {
-        let plugin_id =
-            kernel::plugin_adapter::PluginId::parse(plugin_id).expect("built-in plugin id");
-        runtime
-            .register_contribution(&plugin_id, handler)
-            .unwrap_or_else(|error| panic!("注册 Session 配置 contribution 失败: {error}"));
-    }
-
-    let trdp_id = runtime
-        .register_manifest(parse_builtin_manifest(include_str!(
-            "../../src/plugin-manifests/trdp.json"
-        )))
-        .unwrap_or_else(|error| panic!("注册 TRDP 插件失败: {error}"));
-    runtime
-        .register_contribution(
-            &trdp_id,
-            plugins::trdp::session_connector as plugin_application::SessionConnectHandler,
-        )
-        .unwrap_or_else(|error| panic!("注册 TRDP 连接 contribution 失败: {error}"));
-    runtime
-        .register_contribution(&trdp_id, plugins::trdp::TrdpPlugin::new())
-        .unwrap_or_else(|error| panic!("注册 TRDP runtime contribution 失败: {error}"));
-    runtime
-        .register_contribution(&trdp_id, plugins::trdp::session_config_handler())
-        .unwrap_or_else(|error| panic!("注册 TRDP Session 配置 contribution 失败: {error}"));
-
-    runtime
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     log::set_logger(&LogBridge)
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .ok();
 
-    let plugin_runtime = build_plugin_runtime();
+    let plugin_runtime = plugins::catalog::build_runtime();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -325,16 +189,15 @@ pub fn run() {
                             }
                         }
 
-                        if let Err(error) = state
-                            .plugin::<SshAdapter>(plugins::ssh::PLUGIN_ID)
-                            .configure_known_hosts(config_dir.join("known_hosts.json"))
+                        if let Err(error) =
+                            plugins::catalog::configure_persistence(&state.plugins, &config_dir)
                         {
-                            log::warn!("SSH known-host 存储初始化失败: {}", error);
+                            log::warn!("插件持久化资源初始化失败: {}", error);
                         }
                     }
                     Err(error) => {
                         log::warn!(
-                            "应用配置目录不可用；ConfigStore 与 SSH known-host 保持 fail-closed: {}",
+                            "应用配置目录不可用；ConfigStore 与插件持久化资源保持 fail-closed: {}",
                             error
                         );
                     }
@@ -398,9 +261,7 @@ pub fn run() {
             log::info!("日志目录: {:?}", log_dir);
 
             if let Some(state) = app.try_state::<AppState>() {
-                state
-                    .plugin::<TelnetAdapter>(plugins::telnet::PLUGIN_ID)
-                    .inject_app_handle(app.handle().clone());
+                plugins::catalog::attach_app_handle(&state.plugins, app.handle().clone());
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
