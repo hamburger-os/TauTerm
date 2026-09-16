@@ -1,0 +1,30 @@
+name: RTT lock bootstrap
+
+on:
+  push:
+    branches:
+      - feat/rtt-debug-session
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/rtt-debug-session
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve Cargo lockfile
+        run: cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
+      - name: Commit generated lockfile and remove bootstrap workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.lock
+          git rm .github/workflows/rtt-lock-bootstrap.yml
+          git commit -m "Update Cargo lockfile for RTT support"
+          git push origin HEAD:feat/rtt-debug-session
