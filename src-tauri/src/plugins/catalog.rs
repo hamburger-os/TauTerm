@@ -4,7 +4,7 @@
 //! 专属 IPC 与进程生命周期装配只在本模块出现。`lib.rs`/Kernel 只依赖 `PluginRuntime` 与本
 //! catalog；新增使用既有扩展点的插件无需继续修改应用 bootstrap。
 
-use super::{iperf, local_shell, modbus, network, serial, ssh, telnet, tftp, trdp};
+use super::{iperf, local_shell, modbus, network, rtt, serial, ssh, telnet, tftp, trdp};
 use crate::kernel::plugin_adapter::{PluginId, PluginManifest, ProtocolAdapter};
 use crate::kernel::plugin_runtime::PluginRuntime;
 use crate::plugin_application::{SessionConnectHandler, SessionDisconnectedHook};
@@ -42,6 +42,11 @@ macro_rules! tauterm_invoke_handler {
             $crate::plugins::trdp::trdp_release_capture,
             $crate::plugins::trdp::trdp_import_xml,
             $crate::plugins::trdp::trdp_decode_dataset,
+            $crate::plugins::rtt::commands::rtt_discover_probes,
+            $crate::plugins::rtt::commands::rtt_snapshot,
+            $crate::plugins::rtt::commands::rtt_history,
+            $crate::plugins::rtt::commands::rtt_write,
+            $crate::plugins::rtt::commands::rtt_refresh_channels,
             $crate::plugins::local_shell::resolve_local_shell_session_name,
             $crate::plugins::ssh::commands::sftp_list_dir_cmd,
             $crate::plugins::ssh::commands::sftp_stat_cmd,
@@ -203,6 +208,21 @@ pub fn build_runtime() -> PluginRuntime {
     runtime
         .register_contribution(&trdp_id, trdp::session_config_handler())
         .unwrap_or_else(|error| panic!("注册 TRDP Session 配置 contribution 失败: {error}"));
+
+    let rtt_id = runtime
+        .register_manifest(parse_manifest(include_str!(
+            "../../../src/plugin-manifests/rtt.json"
+        )))
+        .unwrap_or_else(|error| panic!("注册 RTT 插件失败: {error}"));
+    runtime
+        .register_contribution(&rtt_id, rtt::session_connector as SessionConnectHandler)
+        .unwrap_or_else(|error| panic!("注册 RTT 连接 contribution 失败: {error}"));
+    runtime
+        .register_contribution(&rtt_id, rtt::RttPlugin::new())
+        .unwrap_or_else(|error| panic!("注册 RTT runtime contribution 失败: {error}"));
+    runtime
+        .register_contribution(&rtt_id, rtt::session_config_handler())
+        .unwrap_or_else(|error| panic!("注册 RTT Session 配置 contribution 失败: {error}"));
 
     runtime
 }

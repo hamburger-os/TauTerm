@@ -1,0 +1,16 @@
+{
+  "id": "rtt",
+  "name": "RTT 调试助手",
+  "version": "1.0.0",
+  "category": "embedded_debug",
+  "description": "RTT · Real Time Transfer",
+  "icon": "code",
+  "content_type": "custom",
+  "send_bar": false,
+  "capabilities": [
+    "connection",
+    "embedded_debug",
+    "bidirectional"
+  ],
+  "transfer_protocols": []
+}
