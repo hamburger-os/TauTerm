@@ -80,6 +80,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const connected = tab?.state === "connected" || tab?.state === "transferring";
+  const runtimeReadable = connected || tab?.disconnectInfo?.retain_terminal === true;
   const [snapshot, setSnapshot] = useState<RttSnapshot | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
@@ -98,15 +99,15 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   }, []);
 
   const refreshSnapshot = useCallback(async () => {
-    if (!connected) return;
+    if (!runtimeReadable) return;
     try {
       const next = await invoke<RttSnapshot>("rtt_snapshot", { sessionId });
       setSnapshot(next);
       setError(next.last_error?.message ?? null);
     } catch (cause) {
-      setError(causeMessage(cause));
+      if (connected) setError(causeMessage(cause));
     }
-  }, [connected, sessionId]);
+  }, [connected, runtimeReadable, sessionId]);
 
   useEffect(() => {
     historiesRef.current.clear();
@@ -154,7 +155,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   }, [selectedChannel, snapshot?.channels]);
 
   useEffect(() => {
-    if (!connected || selectedChannel === null || loadedRef.current.has(selectedChannel)) return;
+    if (!runtimeReadable || selectedChannel === null || loadedRef.current.has(selectedChannel)) return;
     loadedRef.current.add(selectedChannel);
     void invoke<RttHistoryResponse>("rtt_history", {
       sessionId,
@@ -162,9 +163,9 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
       afterSequence: null,
     }).then(history => appendChunks(selectedChannel, history.chunks)).catch(cause => {
       loadedRef.current.delete(selectedChannel);
-      setError(causeMessage(cause));
+      if (connected) setError(causeMessage(cause));
     });
-  }, [appendChunks, connected, selectedChannel, sessionId]);
+  }, [appendChunks, connected, runtimeReadable, selectedChannel, sessionId]);
 
   const channels = snapshot?.channels ?? [];
   const channel = channels.find(item => item.index === selectedChannel) ?? null;
