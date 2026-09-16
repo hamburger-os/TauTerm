@@ -1,0 +1,132 @@
+name: Final Plugin Boundary Review
+
+on:
+  push:
+    branches:
+      - refactor/plugin-boundary-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Close final frontend plugin boundary
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src/core/plugin-registry.ts',
+              '''  reconnectGuard?: (\n    context: SessionReconnectContext,\n  ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;\n''',
+              '''  reconnectGuard?: (\n    context: SessionReconnectContext,\n  ) => SessionReconnectGuardResult | Promise<SessionReconnectGuardResult>;\n  /** 对声明 elevated_session 的插件，由插件判断当前配置是否允许创建提权 Session。 */\n  canCreateElevatedSession?: (params: Record<string, unknown>) => boolean;\n''',
+              'plugin elevation contribution',
+          )
+
+          replace_once(
+              'src/plugins/local-shell/index.ts',
+              '''  resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),\n''',
+              '''  resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),\n  canCreateElevatedSession: params => params.shell_kind !== "wsl",\n''',
+              'local shell elevation policy',
+          )
+
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '''    const { state: sessionState, parentId, pluginId } = menu.session;\n    const capabilities = pluginRegistry.get(pluginId)?.manifest.capabilities ?? [];\n    const supportsMultiple = capabilities.includes("multi_session");\n    const supportsElevation = capabilities.includes("elevated_session")\n      && menu.session.params?.shell_kind !== "wsl";\n''',
+              '''    const { state: sessionState, parentId, pluginId } = menu.session;\n    const registration = pluginRegistry.get(pluginId);\n    const capabilities = registration?.manifest.capabilities ?? [];\n    const supportsMultiple = capabilities.includes("multi_session");\n    const supportsElevation = capabilities.includes("elevated_session")\n      && (registration?.canCreateElevatedSession?.(menu.session.params ?? {}) ?? true);\n''',
+              'sidebar elevation visibility',
+          )
+
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '''        const supportsElevation = tab\n          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("elevated_session")\n            && tab.params?.shell_kind !== "wsl"\n          : false;\n''',
+              '''        const registration = tab ? pluginRegistry.get(tab.pluginId) : undefined;\n        const supportsElevation = Boolean(\n          tab\n          && registration?.manifest.capabilities.includes("elevated_session")\n          && (registration.canCreateElevatedSession?.(tab.params ?? {}) ?? true),\n        );\n''',
+              'sidebar elevation action',
+          )
+
+          replace_once(
+              'src/components/Layout/SessionSidebar.tsx',
+              '''    // ── 父级 SSH / TFTP / Serial 会话 ──\n''',
+              '''    // ── 根会话菜单 ──\n''',
+              'sidebar protocol comment',
+          )
+
+          replace_once(
+              'src/components/Layout/DisconnectedSessionContextMenu.tsx',
+              '''    const capabilities = pluginRegistry.get(tab.pluginId)?.manifest.capabilities ?? [];\n    const supportsElevation = capabilities.includes("elevated_session")\n      && tab.params?.shell_kind !== "wsl";\n''',
+              '''    const registration = pluginRegistry.get(tab.pluginId);\n    const capabilities = registration?.manifest.capabilities ?? [];\n    const supportsElevation = capabilities.includes("elevated_session")\n      && (registration?.canCreateElevatedSession?.(tab.params ?? {}) ?? true);\n''',
+              'pane menu elevation policy',
+          )
+
+          replace_once(
+              'src/context/SessionContext.tsx',
+              '''  /** Local Shell 子会话是否经系统提权 helper 启动。 */\n  elevated?: boolean;\n''',
+              '''  /** 子 channel 是否以提升权限运行；仅对声明对应能力的插件有意义。 */\n  elevated?: boolean;\n''',
+              'generic elevated metadata comment',
+          )
+
+          replace_once(
+              'scripts/check-workspace-ui-contract.mjs',
+              '''const presentationHelper = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "sessionPresentation.ts"),\n  "utf8",\n);\n''',
+              '''const presentationHelper = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "sessionPresentation.ts"),\n  "utf8",\n);\nconst sessionContext = await readFile(\n  path.join(ROOT, "src", "context", "SessionContext.tsx"),\n  "utf8",\n);\nconst disconnectedSessionMenu = await readFile(\n  path.join(ROOT, "src", "components", "Layout", "DisconnectedSessionContextMenu.tsx"),\n  "utf8",\n);\n''',
+              'workspace contract sources',
+          )
+
+          replace_once(
+              'scripts/check-workspace-ui-contract.mjs',
+              '''assert.doesNotMatch(\n  presentationHelper,\n  /pluginId\\s*===\\s*["'](?:ssh|iperf|trdp|network|serial|modbus)["']/,\n  "Common Session presentation must not contain built-in protocol branches",\n);\n''',
+              '''assert.doesNotMatch(\n  presentationHelper,\n  /pluginId\\s*===\\s*["'](?:ssh|iperf|trdp|network|serial|modbus)["']/,\n  "Common Session presentation must not contain built-in protocol branches",\n);\nfor (const [label, source] of [\n  ["SessionSidebar", sidebar],\n  ["SplitView", splitView],\n  ["SessionContext", sessionContext],\n  ["DisconnectedSessionContextMenu", disconnectedSessionMenu],\n  ["sessionPresentation", presentationHelper],\n]) {\n  assert.doesNotMatch(\n    source,\n    /\\bshell_kind\\b/,\n    `${label} must not interpret Local Shell private configuration fields`,\n  );\n}\nassert.match(\n  sidebar,\n  /canCreateElevatedSession/,\n  "SessionSidebar must delegate elevated-session policy to the plugin contribution",\n);\nassert.match(\n  disconnectedSessionMenu,\n  /canCreateElevatedSession/,\n  "Disconnected Pane menu must delegate elevated-session policy to the plugin contribution",\n);\n''',
+              'workspace plugin-param boundary contract',
+          )
+
+          replace_once(
+              'docs/modules/UI_FOUNDATION.md',
+              '''- 协议模块声明内容与能力，不直接拥有整个应用导航。\n''',
+              '''- 协议模块声明内容与能力，不直接拥有整个应用导航。共享 UI 可以消费稳定的跨插件 capability，但 capability 的配置适用性必须由插件 contribution 判定；例如 `elevated_session` 的可用性由 `canCreateElevatedSession` 决定，Workspace 不读取 `shell_kind` 等协议私有参数。\n''',
+              'UI foundation capability boundary',
+          )
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Documentation contract
+        run: npm run docs:check
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Workspace architecture contract
+        run: node scripts/check-workspace-ui-contract.mjs
+      - name: Boundary grep
+        shell: bash
+        run: |
+          if grep -R -n --include='*.ts' --include='*.tsx' '\bshell_kind\b' src/context src/components/Layout; then
+            echo 'Shared Session/Layout code still interprets Local Shell private fields' >&2
+            exit 1
+          fi
+      - name: Commit reviewed boundary and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/final-plugin-boundary-review.yml
+          git add src/core/plugin-registry.ts src/plugins/local-shell/index.ts src/components/Layout/SessionSidebar.tsx src/components/Layout/DisconnectedSessionContextMenu.tsx src/context/SessionContext.tsx scripts/check-workspace-ui-contract.mjs docs/modules/UI_FOUNDATION.md
+          git diff --cached --check
+          git commit -m 'refactor: delegate elevated session policy to plugins'
+          git push origin HEAD:refactor/plugin-boundary-cleanup
