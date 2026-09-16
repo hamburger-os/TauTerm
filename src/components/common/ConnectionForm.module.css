@@ -28,7 +28,7 @@
   height: var(--select-height);
   min-height: var(--select-height);
   padding: var(--select-padding);
-  border-radius: var(--select-radius);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
 }
