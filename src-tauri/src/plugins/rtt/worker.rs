@@ -29,16 +29,29 @@ pub(super) enum WorkerCommand {
     },
 }
 
+pub(super) struct WorkerContext {
+    pub config: RttConfig,
+    pub app: AppHandle,
+    pub session_id: String,
+    pub shared: Arc<RttShared>,
+    pub shutting_down: Arc<AtomicBool>,
+    pub worker_exited: Arc<AtomicBool>,
+}
+
 pub(super) fn run(
-    config: RttConfig,
-    app: AppHandle,
-    session_id: String,
-    shared: Arc<RttShared>,
-    shutting_down: Arc<AtomicBool>,
-    worker_exited: Arc<AtomicBool>,
+    context: WorkerContext,
     command_rx: mpsc::Receiver<WorkerCommand>,
     startup_tx: mpsc::SyncSender<Result<(), RttError>>,
 ) {
+    let WorkerContext {
+        config,
+        app,
+        session_id,
+        shared,
+        shutting_down,
+        worker_exited,
+    } = context;
+
     shared.set_phase(RttPhase::OpeningBackend);
     let mut backend = match open_backend(&config) {
         Ok(backend) => backend,
