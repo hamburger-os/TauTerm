@@ -36,6 +36,10 @@ const tftpRegistration = await readFile(
   path.join(ROOT, "src", "plugins", "tftp", "index.ts"),
   "utf8",
 );
+const networkRegistration = await readFile(
+  path.join(ROOT, "src", "plugins", "network", "index.tsx"),
+  "utf8",
+);
 
 assert.doesNotMatch(
   splitView,
@@ -101,6 +105,16 @@ assert.match(
   tftpRegistration,
   /reconnectGuard\s*:/,
   "TFTP must own its reconnect safety policy through PluginRegistration",
+);
+assert.match(
+  networkRegistration,
+  /prepareConnectionParams\s*:/,
+  "Network must own its connection-parameter projection through PluginRegistration",
+);
+assert.match(
+  networkRegistration,
+  /local_port:\s*0/,
+  "Network client sessions must keep ephemeral local-port binding semantics in the plugin contribution",
 );
 
 const baseSession = {
