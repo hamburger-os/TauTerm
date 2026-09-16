@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { copyToClipboard } from "../../utils/clipboard";
-import Icon from "../common/Icon";
+import Icon from "../../components/common/Icon";
 import styles from "./IperfSessionView.module.css";
 
 interface Props {

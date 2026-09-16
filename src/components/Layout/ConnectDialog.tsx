@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import {
   pluginRegistry,
-  type PluginRegistration,
   type SessionConnectOptions,
 } from "../../core/plugin-registry";
 import Icon from "../common/Icon";
@@ -20,15 +19,6 @@ const EMPTY_SESSION_OPTIONS: SessionConnectOptions = {
   transferEnabled: false,
   sendBarEnabled: false,
 };
-
-function defaultSessionOptions(plugin: PluginRegistration | undefined): SessionConnectOptions {
-  if (!plugin) return { ...EMPTY_SESSION_OPTIONS };
-  return plugin.defaultSessionOptions?.() ?? {
-    transferEnabled: false,
-    transferProtocol: plugin.manifest.transfer_protocols[0],
-    sendBarEnabled: plugin.manifest.send_bar,
-  };
-}
 
 /**
  * 通用 Session 配置宿主。
@@ -95,15 +85,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       if (tab) {
         const plugin = pluginRegistry.get(tab.pluginId);
         const params = tab.params ?? {};
-        const defaults = defaultSessionOptions(plugin);
         setSelectedMode(tab.pluginId);
         setPluginParams(plugin?.normalizeConnectionParams?.(params) ?? params);
         setEndpoint(tab.endpoint);
-        setSessionOptions({
-          transferEnabled: tab.transferEnabled ?? defaults.transferEnabled,
-          transferProtocol: tab.transferProtocol ?? defaults.transferProtocol,
-          sendBarEnabled: tab.sendBarEnabled ?? defaults.sendBarEnabled,
-        });
+        setSessionOptions(pluginRegistry.resolveSessionOptions(tab.pluginId, {
+          transferEnabled: tab.transferEnabled,
+          transferProtocol: tab.transferProtocol,
+          sendBarEnabled: tab.sendBarEnabled,
+        }));
         setSessionName(tab.name);
         setStep("config");
         return;
@@ -139,7 +128,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setSelectedMode(modeId);
     setPluginParams(plugin?.defaultConnectionParams?.() ?? {});
     setEndpoint("");
-    setSessionOptions(defaultSessionOptions(plugin));
+    setSessionOptions(pluginRegistry.getDefaultSessionOptions(modeId));
     setSessionName("");
     setStep("config");
     setError(null);
@@ -174,12 +163,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         throw new Error(t("session.endpointRequired", { defaultValue: "A connection endpoint is required" }));
       }
 
-      const transferEnabled = sessionOptions.transferEnabled;
-      const transferProtocol = transferEnabled ? sessionOptions.transferProtocol : undefined;
-      const sendBarEnabled = pluginRegistry.resolveSendBarEnabled(
-        selectedMode,
-        sessionOptions.sendBarEnabled,
-      );
+      const resolvedOptions = pluginRegistry.resolveSessionOptions(selectedMode, sessionOptions);
+      const transferEnabled = resolvedOptions.transferEnabled;
+      const transferProtocol = transferEnabled ? resolvedOptions.transferProtocol : undefined;
+      const sendBarEnabled = resolvedOptions.sendBarEnabled;
       const requestedName = sessionName.trim() || undefined;
 
       if (editSessionId) {

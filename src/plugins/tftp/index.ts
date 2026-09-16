@@ -1,10 +1,8 @@
-/**
- * TFTP 插件前端注册
- */
+/** TFTP frontend plugin definition. */
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import TftpSessionView from "../../components/Tftp/TftpSessionView";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import TftpSessionView from "./TftpSessionView";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/tftp.json";
 import TftpConnectForm, {
@@ -14,7 +12,7 @@ import TftpConnectForm, {
   normalizeTftpParams,
 } from "./TftpConnectForm";
 
-registerPlugin({
+export const tftpPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: TftpConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_TFTP_PARAMS }),
@@ -53,5 +51,3 @@ registerPlugin({
     },
   ],
 });
-
-console.log("[Plugin] TFTP plugin registered");

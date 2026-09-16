@@ -1,7 +1,7 @@
-/** Telnet frontend plugin registration. */
+/** Telnet frontend plugin definition. */
 import { createElement } from "react";
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/telnet.json";
 import TelnetConnectForm, {
   DEFAULT_TELNET_PARAMS,
@@ -11,7 +11,7 @@ import TelnetConnectForm, {
 import { telnetEndpointLabel, telnetSessionTitle } from "./presentation";
 import { telnetRuntimeStore, type TelnetRuntimeSnapshot } from "./runtime-store";
 
-registerPlugin({
+export const telnetPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: TelnetConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_TELNET_PARAMS }),
@@ -49,5 +49,3 @@ registerPlugin({
     },
   },
 });
-
-console.log("[Plugin] Telnet plugin registered");

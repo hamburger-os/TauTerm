@@ -943,10 +943,6 @@ impl ProtocolAdapter for NetworkAdapter {
             teardown_delay: Duration::ZERO,
         })
     }
-
-    fn content_type(&self) -> crate::kernel::plugin_adapter::ContentType {
-        crate::kernel::plugin_adapter::ContentType::Custom
-    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
  * -d/-r 双向测试的反向相带方向徽标（FWD/REV）。
  */
 import { useTranslation } from "react-i18next";
-import Icon from "../common/Icon";
+import Icon from "../../components/common/Icon";
 import { formatMbps } from "./iperf-utils";
 import type { IperfRecord } from "./iperf-events";
 import styles from "./IperfSessionView.module.css";

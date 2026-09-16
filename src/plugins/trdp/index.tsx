@@ -1,5 +1,5 @@
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/trdp.json";
 import TrdpConnectForm from "./TrdpConnectForm";
@@ -32,7 +32,7 @@ function trdpSubtitle(params: Record<string, unknown>): string {
   return `A: ${linkA} · B: ${params.link_b_enabled === true ? linkB : disabled}`;
 }
 
-registerPlugin({
+export const trdpPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: TrdpConnectForm,
   defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
@@ -55,5 +55,3 @@ registerPlugin({
     },
   ],
 });
-
-console.log("[Plugin] TRDP plugin registered");

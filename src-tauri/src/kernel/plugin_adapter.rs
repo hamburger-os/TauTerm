@@ -29,10 +29,28 @@ pub struct EndpointInfo {
     pub params: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Canonical content renderer class declared by the plugin manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContentType {
     Terminal,
     Custom,
+}
+
+impl ContentType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+fn deserialize_content_type<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    ContentType::deserialize(deserializer).map(|value| value.as_str().to_string())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +187,7 @@ pub struct PluginManifest {
     pub category: String,
     pub description: String,
     pub icon: String,
+    #[serde(deserialize_with = "deserialize_content_type")]
     pub content_type: String,
     pub send_bar: bool,
     pub capabilities: Vec<String>,
@@ -190,10 +209,6 @@ pub trait ProtocolAdapter: Send + Sync {
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
         Ok(Vec::new())
-    }
-
-    fn content_type(&self) -> ContentType {
-        ContentType::Terminal
     }
 
     fn teardown_delay(&self) -> std::time::Duration {

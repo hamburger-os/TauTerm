@@ -1,6 +1,6 @@
-/** SSH frontend plugin registration. */
+/** SSH frontend plugin definition. */
 import { createElement } from "react";
-import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
 import SshConnectForm, {
   DEFAULT_SSH_PARAMS,
@@ -23,7 +23,7 @@ function formatHostPort(host: string, port: number): string {
 const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
   activeTab?.state === "connected" || activeTab?.state === "transferring";
 
-registerPlugin({
+export const sshPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: SshConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_SSH_PARAMS }),
@@ -122,5 +122,3 @@ registerPlugin({
     },
   },
 });
-
-console.log("[Plugin] SSH plugin registered");

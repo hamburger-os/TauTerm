@@ -26,7 +26,6 @@ export interface SessionStats {
   txPackets?: number;
 }
 
-
 export interface TabInfo {
   id: string;
   name: string;
@@ -43,11 +42,11 @@ export interface TabInfo {
   connectedAt: number | null;
   /** 异常断开时保留终端现场所需的结构化原因；仅驻留于当前进程内。 */
   disconnectInfo?: DisconnectInfo;
-  /** 是否启用文件传输子系统（默认 true） */
+  /** 是否启用文件传输子系统；缺省值由插件 definition 决定。 */
   transferEnabled?: boolean;
   /** 文件传输协议 ID */
   transferProtocol?: string;
-  /** 是否启用发送栏（默认 true） */
+  /** 是否启用发送栏；缺省值由插件 manifest/definition 决定。 */
   sendBarEnabled?: boolean;
   /** 父会话 ID；非空表示通用子 channel。 */
   parentId?: string | null;
@@ -88,7 +87,6 @@ export interface EndpointInfo {
   params?: Record<string, unknown>;
 }
 
-
 interface SessionState {
   tabs: TabInfo[];
   activeTabId: string | null;
@@ -112,9 +110,9 @@ type SessionAction =
   | { type: "SET_TAB_DISCONNECTED"; id: string; info?: DisconnectInfo }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
-| { type: "CLEAR_TABS" }
-| { type: "REMOVE_CHILD"; id: string; parentId: string }
-| { type: "REMOVE_ALL_CHILDREN"; parentId: string };
+  | { type: "CLEAR_TABS" }
+  | { type: "REMOVE_CHILD"; id: string; parentId: string }
+  | { type: "REMOVE_ALL_CHILDREN"; parentId: string };
 
 function decodeBase64(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -334,7 +332,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, sessionId, initialElevated } = opts;
     const plugin = pluginRegistry.get(pluginId);
     const effectiveParams = plugin?.normalizeConnectionParams?.(params) ?? params;
-    const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pluginId, sendBarEnabled);
+    const sessionOptions = pluginRegistry.resolveSessionOptions(pluginId, {
+      transferEnabled,
+      transferProtocol,
+      sendBarEnabled,
+    });
     dispatch({ type: "SET_ERROR", error: null });
     if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connecting" });
     try {
@@ -344,9 +346,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           params: effectiveParams,
           name,
           pluginId,
-          transferEnabled: transferEnabled ?? true,
-          transferProtocol: transferProtocol ?? null,
-          sendBarEnabled: effectiveSendBarEnabled,
+          transferEnabled: sessionOptions.transferEnabled,
+          transferProtocol: sessionOptions.transferProtocol ?? null,
+          sendBarEnabled: sessionOptions.sendBarEnabled,
           sessionId: sessionId || null,
           initialElevated: initialElevated ?? false,
         },
@@ -399,7 +401,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const plugin = pluginRegistry.get(pluginId);
       const normalizedParams = plugin?.normalizeConnectionParams?.(params) ?? params;
-      const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pluginId, sendBarEnabled);
+      const sessionOptions = pluginRegistry.resolveSessionOptions(pluginId, {
+        transferEnabled,
+        transferProtocol,
+        sendBarEnabled,
+      });
       const pluginName = plugin?.manifest.name || pluginId.toUpperCase();
       const requestedName = name?.trim();
       const presentationName = plugin?.sessionPresentation?.defaultName?.(normalizedParams, endpoint)?.trim();
@@ -413,9 +419,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           params: normalizedParams,
           name: effectiveName,
           pluginId,
-          transferEnabled: transferEnabled ?? true,
-          transferProtocol: transferProtocol ?? null,
-          sendBarEnabled: effectiveSendBarEnabled,
+          transferEnabled: sessionOptions.transferEnabled,
+          transferProtocol: sessionOptions.transferProtocol ?? null,
+          sendBarEnabled: sessionOptions.sendBarEnabled,
         },
       });
       const persistedParams = plugin?.persistedConnectionParams?.(normalizedParams, sessionId) ?? normalizedParams;
@@ -431,9 +437,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           params: persistedParams,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
-          transferEnabled: transferEnabled ?? true,
-          transferProtocol,
-          sendBarEnabled: effectiveSendBarEnabled,
+          transferEnabled: sessionOptions.transferEnabled,
+          transferProtocol: sessionOptions.transferProtocol,
+          sendBarEnabled: sessionOptions.sendBarEnabled,
         },
       });
       return sessionId;
@@ -585,7 +591,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     const plugin = pluginRegistry.get(effectivePluginId);
     const normalizedParams = plugin?.normalizeConnectionParams?.(params) ?? params;
-    const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
+    const sessionOptions = pluginRegistry.resolveSessionOptions(effectivePluginId, {
+      transferEnabled: transferEnabled ?? tab?.transferEnabled,
+      transferProtocol: transferProtocol ?? tab?.transferProtocol,
+      sendBarEnabled: sendBarEnabled ?? tab?.sendBarEnabled,
+    });
     try {
       await invoke("save_session_config", {
         request: {
@@ -593,9 +603,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           params: normalizedParams,
           name: effectiveName,
           pluginId: effectivePluginId,
-          transferEnabled: transferEnabled ?? true,
-          transferProtocol: transferProtocol ?? null,
-          sendBarEnabled: effectiveSendBarEnabled,
+          transferEnabled: sessionOptions.transferEnabled,
+          transferProtocol: sessionOptions.transferProtocol ?? null,
+          sendBarEnabled: sessionOptions.sendBarEnabled,
           sessionId,
         },
       });
@@ -611,9 +621,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       endpoint,
       params: persistedParams,
       name: effectiveName,
-      transferEnabled,
-      transferProtocol,
-      sendBarEnabled: effectiveSendBarEnabled,
+      transferEnabled: sessionOptions.transferEnabled,
+      transferProtocol: sessionOptions.transferProtocol,
+      sendBarEnabled: sessionOptions.sendBarEnabled,
       pluginId: effectivePluginId,
     });
 
@@ -625,9 +635,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             params: persistedParams,
             name: effectiveName,
             pluginId: effectivePluginId,
-            transferEnabled: transferEnabled ?? true,
-            transferProtocol: transferProtocol ?? null,
-            sendBarEnabled: effectiveSendBarEnabled,
+            transferEnabled: sessionOptions.transferEnabled,
+            transferProtocol: sessionOptions.transferProtocol ?? null,
+            sendBarEnabled: sessionOptions.sendBarEnabled,
             sessionId,
           },
         });
@@ -680,6 +690,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const tabs: TabInfo[] = saved.map(s => {
         const pluginId = s.plugin_id;
         const params = pluginRegistry.get(pluginId)?.normalizeConnectionParams?.(s.params) ?? s.params;
+        const sessionOptions = pluginRegistry.resolveSessionOptions(pluginId, {
+          transferEnabled: s.transfer_enabled,
+          transferProtocol: s.transfer_protocol,
+          sendBarEnabled: s.send_bar_enabled,
+        });
         return {
           id: s.id,
           name: s.name,
@@ -690,9 +705,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           params,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
-          transferEnabled: s.transfer_enabled ?? true,
-          transferProtocol: s.transfer_protocol,
-          sendBarEnabled: pluginRegistry.resolveSendBarEnabled(pluginId, s.send_bar_enabled),
+          transferEnabled: sessionOptions.transferEnabled,
+          transferProtocol: sessionOptions.transferProtocol,
+          sendBarEnabled: sessionOptions.sendBarEnabled,
         };
       });
       dispatch({ type: "SET_TABS", tabs });
@@ -761,7 +776,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-
       const u2 = await listen<{
         session_id: string;
         endpoint: string;
@@ -781,9 +795,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const sid = event.payload.session_id;
         const eventPluginId = event.payload.plugin_id;
         const eventParams = pluginRegistry.get(eventPluginId)?.normalizeConnectionParams?.(event.payload.params) ?? event.payload.params;
-        const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
         const parentId = event.payload.parent_id ?? null;
         const existingTab = tabsRef.current.find(tab => tab.id === sid);
+        const eventOptions = pluginRegistry.resolveSessionOptions(eventPluginId, {
+          transferEnabled: event.payload.transfer_enabled ?? existingTab?.transferEnabled,
+          transferProtocol: event.payload.transfer_protocol ?? existingTab?.transferProtocol,
+          sendBarEnabled: event.payload.send_bar_enabled ?? existingTab?.sendBarEnabled,
+        });
         if (existingTab) {
           dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
           dispatch({
@@ -792,9 +810,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             endpoint: event.payload.endpoint,
             params: eventParams,
             name: existingTab.name,
-            transferEnabled: event.payload.transfer_enabled,
-            transferProtocol: event.payload.transfer_protocol,
-            sendBarEnabled: eventSendBarEnabled,
+            transferEnabled: eventOptions.transferEnabled,
+            transferProtocol: eventOptions.transferProtocol,
+            sendBarEnabled: eventOptions.sendBarEnabled,
             pluginId: eventPluginId,
             connectedAt: event.payload.connected_at ?? Date.now(),
           });
@@ -814,7 +832,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               connectedAt: event.payload.connected_at ?? Date.now(),
               transferEnabled: event.payload.transfer_enabled ?? false,
               transferProtocol: event.payload.transfer_protocol,
-              sendBarEnabled: eventSendBarEnabled,
+              sendBarEnabled: eventOptions.sendBarEnabled,
               parentId,
               channelIndex: event.payload.channel_index,
               elevated: event.payload.elevated ?? false,
@@ -833,9 +851,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               params: eventParams,
               stats: { txBytes: 0, rxBytes: 0 },
               connectedAt: event.payload.connected_at ?? Date.now(),
-              transferEnabled: event.payload.transfer_enabled ?? true,
-              transferProtocol: event.payload.transfer_protocol,
-              sendBarEnabled: eventSendBarEnabled,
+              transferEnabled: eventOptions.transferEnabled,
+              transferProtocol: eventOptions.transferProtocol,
+              sendBarEnabled: eventOptions.sendBarEnabled,
               isContainer: event.payload.is_container ?? false,
             },
           });
@@ -844,14 +862,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
-
       const u2e = await listen<{ channel_id: string; parent_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", event => {
         if (event.payload.disconnect_info?.retain_terminal) dispatch({ type: "SET_TAB_DISCONNECTED", id: event.payload.channel_id, info: event.payload.disconnect_info });
         else dispatch({ type: "REMOVE_CHILD", id: event.payload.channel_id, parentId: event.payload.parent_id });
       });
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
-
 
       const u3 = await listen<{ session_id: string; reason?: string; disconnect_info?: DisconnectInfo }>("session-disconnected", event => {
         const sid = event.payload.session_id;

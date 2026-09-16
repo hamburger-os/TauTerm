@@ -43,6 +43,7 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 - Network aggregate DataPlane 只为 Session 级脚本/自动回复提供统一接收与发送语义；来源地址、peer ID 等协议视图信息仍归 Network 模块。
 - Network Debug 的目标选择必须被手动发送和脚本共享；目标同步属于运行时副作用，只能发生在已连接 Network Debug 会话。
 - TFTP/iperf 的工作台可见性与常驻服务端连接状态分离；是否允许断连使用由插件的 Workspace contribution 声明，公共 Workspace 不写协议特例。
+- TFTP/iperf 的私有工作台、状态展示和工具组件归各自 `src/plugins/<id>/` 所有；`src/components/` 只保留跨插件共享 UI。
 - TFTP 的保护策略以保守默认值、显式开关和就地风险确认为主；高风险组合必须清楚可见且在启动服务端前得到显式确认，但不额外弹出第二套确认窗口。
 
 ## 代码锚点
@@ -60,8 +61,6 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 - `src/plugins/iperf/`
 - `src-tauri/src/plugins/iperf/`
 - `src/components/Network/`
-- `src/components/Tftp/`
-- `src/components/Iperf/`
 
 ## 何时更新本文
 

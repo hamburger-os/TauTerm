@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
@@ -418,10 +417,6 @@ impl ProtocolAdapter for IperfAdapter {
             })),
             teardown_delay: Duration::from_millis(100),
         })
-    }
-
-    fn content_type(&self) -> ContentType {
-        ContentType::Terminal // 前端通过 manifest.content_type="custom" 路由
     }
 
     fn teardown_delay(&self) -> Duration {

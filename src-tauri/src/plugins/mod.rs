@@ -1,8 +1,9 @@
 //! TauTerm 内建协议插件
 //!
-//! 内建插件在应用 composition root 显式注册到 `PluginRuntime`。通用会话插件实现
-//! `ProtocolAdapter`，专属能力通过类型化 contribution 注册；本模块不维护第二套插件目录。
+//! 每个协议实现保持自包含；`catalog` 是唯一了解完整内建插件集合的 composition 模块。
+//! Kernel、AppState 与应用 bootstrap 不维护第二套具体插件清单。
 
+pub mod catalog;
 pub mod iperf;
 pub mod local_shell;
 pub mod modbus;

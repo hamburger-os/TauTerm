@@ -6,9 +6,8 @@
  */
 import { useTranslation } from "react-i18next";
 import type { TransferState } from "./TftpSessionView";
-import ProgressBar from "../FileTransfer/progress/ProgressBar";
-import Icon from "../common/Icon";
-import type { IconName } from "../common/Icon";
+import ProgressBar from "../../components/FileTransfer/progress/ProgressBar";
+import Icon, { type IconName } from "../../components/common/Icon";
 import styles from "./TftpSessionView.module.css";
 
 function formatSize(bytes: number): string {
@@ -26,11 +25,11 @@ function formatSpeed(bps: number): string {
 function getStatusIcon(status: string): IconName {
   switch (status) {
     case "transferring": return "transfer-active";
-    case "completed":     return "check-circle";
-    case "failed":        return "x-circle";
-    case "cancelled":     return "status-cancelled";
-    case "pending":       return "hourglass";
-    default:              return "info";
+    case "completed": return "check-circle";
+    case "failed": return "x-circle";
+    case "cancelled": return "status-cancelled";
+    case "pending": return "hourglass";
+    default: return "info";
   }
 }
 
@@ -55,62 +54,38 @@ export default function TftpTransferList({ transfers }: Props) {
       <h3>{t("tftp.transfers")}</h3>
       <div className={styles.transferTable}>
         {transfers.map((tf) => {
-          const percent =
-            tf.totalBytes > 0
-              ? Math.min(100, Math.round((tf.bytesTransferred / tf.totalBytes) * 100))
-              : 0;
+          const percent = tf.totalBytes > 0
+            ? Math.min(100, Math.round((tf.bytesTransferred / tf.totalBytes) * 100))
+            : 0;
           const isTransferring = tf.status === "transferring";
 
           return (
             <div key={tf.id} className={styles.transferRow}>
-              {/* 状态图标 */}
               <span className={styles.tfIconCell}>
                 <Icon name={getStatusIcon(tf.status)} size="sm" />
               </span>
-
-              {/* 文件信息区 */}
               <div className={styles.tfFileInfo}>
-                <span title={tf.filename} className={styles.tfFilename}>
-                  {tf.filename}
-                </span>
-
-                {/* 元信息行：方向 + 角色 + 远端地址 */}
+                <span title={tf.filename} className={styles.tfFilename}>{tf.filename}</span>
                 <span className={styles.tfMetaLine}>
-                  <Icon
-                    name={tf.direction === "download" ? "download" : "upload"}
-                    size="sm"
-                  />
-                  {" "}
+                  <Icon name={tf.direction === "download" ? "download" : "upload"} size="sm" />{" "}
                   {tf.isServer ? t("tftp.serverIndicator") : t("tftp.clientIndicator")}
                   {tf.remoteAddr ? ` · ${tf.remoteAddr}` : ""}
                 </span>
-
-                {/* 进度条区域 —— 始终保留高度 */}
                 <div className={styles.tfProgressSlot}>
                   {isTransferring && (
-                    <ProgressBar
-                      percent={percent}
-                      height={3}
-                      indeterminate={tf.totalBytes === 0}
-                    />
+                    <ProgressBar percent={percent} height={3} indeterminate={tf.totalBytes === 0} />
                   )}
                 </div>
               </div>
-
-              {/* 字节数 + 速度 + CRC32 */}
               <span className={styles.tfFileSize}>
-                {tf.status === "pending"
-                  ? "—"
-                  : formatSize(tf.bytesTransferred)}
+                {tf.status === "pending" ? "—" : formatSize(tf.bytesTransferred)}
                 {tf.status === "completed" && tf.avgBytesPerSecond > 0 && (
                   <span className={styles.tfChecksum}>{formatSpeed(tf.avgBytesPerSecond)}</span>
                 )}
                 {isTransferring && tf.bytesPerSecond > 0 && (
                   <span className={styles.tfChecksum}>{formatSpeed(tf.bytesPerSecond)}</span>
                 )}
-                {tf.checksum && (
-                  <span className={styles.tfChecksum}>CRC32:{tf.checksum}</span>
-                )}
+                {tf.checksum && <span className={styles.tfChecksum}>CRC32:{tf.checksum}</span>}
               </span>
             </div>
           );

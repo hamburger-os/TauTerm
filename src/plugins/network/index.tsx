@@ -1,4 +1,4 @@
-/** Network Debug frontend plugin registration. */
+/** Network Debug frontend plugin definition. */
 import { useTranslation } from "react-i18next";
 import NetworkDebugSessionView from "../../components/Network/NetworkDebugSessionView";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../../components/Layout/StatusBarPrimitives";
 import { useSession } from "../../context/SessionContext";
 import {
-  registerPlugin,
+  definePlugin,
   type PluginManifest,
   type StatusBarContext,
   type StatusBarItem,
@@ -138,7 +138,7 @@ const statusBarItems: StatusBarItem[] = [
   },
 ];
 
-registerPlugin({
+export const networkPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: NetworkConnectForm,
   defaultConnectionParams: () => ({ ...DEFAULT_NETWORK_PARAMS }),
@@ -213,5 +213,3 @@ registerPlugin({
   rightSidebar: { available: () => true },
   statusBarItems,
 });
-
-console.log("[Plugin] Network debug plugin registered");
