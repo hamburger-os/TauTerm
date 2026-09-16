@@ -93,18 +93,28 @@ impl HistoryStore {
 
     fn response(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
         let history = self.channels.get(&channel_index);
-        let chunks = history
-            .into_iter()
-            .flat_map(|history| history.chunks.iter())
-            .filter(|chunk| after_sequence.is_none_or(|sequence| chunk.sequence > sequence))
-            .take(MAX_HISTORY_RESPONSE_CHUNKS)
-            .map(|chunk| RttChunkDto {
-                sequence: chunk.sequence,
-                timestamp_ms: chunk.timestamp_ms,
-                channel_index: chunk.channel_index,
-                data_b64: BASE64.encode(&chunk.data),
-            })
-            .collect();
+        let chunks = match (history, after_sequence) {
+            (Some(history), Some(sequence)) => history
+                .chunks
+                .iter()
+                .filter(|chunk| chunk.sequence > sequence)
+                .take(MAX_HISTORY_RESPONSE_CHUNKS)
+                .collect::<Vec<_>>(),
+            (Some(history), None) => history
+                .chunks
+                .iter()
+                .skip(history.chunks.len().saturating_sub(MAX_HISTORY_RESPONSE_CHUNKS))
+                .collect::<Vec<_>>(),
+            (None, _) => Vec::new(),
+        }
+        .into_iter()
+        .map(|chunk| RttChunkDto {
+            sequence: chunk.sequence,
+            timestamp_ms: chunk.timestamp_ms,
+            channel_index: chunk.channel_index,
+            data_b64: BASE64.encode(&chunk.data),
+        })
+        .collect();
         RttHistoryResponse {
             chunks,
             oldest_sequence: history
@@ -401,5 +411,22 @@ mod tests {
         assert!(response.dropped_chunks > 0);
         assert!(response.dropped_bytes > 0);
         assert!(response.oldest_sequence.unwrap_or_default() > 1);
+    }
+
+    #[test]
+    fn initial_history_response_prefers_latest_chunks() {
+        let mut history = HistoryStore::default();
+        for sequence in 1..=600u64 {
+            history.push(StoredRttChunk {
+                sequence,
+                timestamp_ms: sequence,
+                channel_index: 0,
+                data: vec![0x11],
+            });
+        }
+        let response = history.response(0, None);
+        assert_eq!(response.chunks.len(), MAX_HISTORY_RESPONSE_CHUNKS);
+        assert_eq!(response.chunks.first().map(|chunk| chunk.sequence), Some(89));
+        assert_eq!(response.chunks.last().map(|chunk| chunk.sequence), Some(600));
     }
 }
