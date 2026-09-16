@@ -13,7 +13,7 @@ React 应用由全局上下文和通用组件组成：
 - `App.tsx` 负责桌面应用壳与顶层组合；
 - `TabContentDispatcher` / Workspace 将 Session 映射到 Pane；
 - renderer 层统一承载 Terminal、Custom、文件浏览和统计类内容；Pane 是显示槽位而不是 Session 实例身份，`CustomRenderer` 以 `pluginId + sessionId` 给插件视图建立 React identity，同一 Pane 被重新分配到另一个 custom Session 时必须重建插件视图，不能把组件本地状态泄漏给新的 Session；
-- Session 列表与 Pane Header 采用统一的双层身份模型：第一行 `Session.name` 是稳定、可显式重命名的会话身份，默认名称仅在创建时计算一次；第二行是当前配置摘要，允许随 host/port/串口/角色等参数变化。协议默认名与摘要由 `PluginRegistration.sessionPresentation` 声明；需要宿主能力计算默认名时使用 `resolveDefaultSessionName`，应用壳不维护 built-in 协议格式；
+- Session 列表与 Pane Header 采用统一的双层身份模型：第一行 `Session.name` 是稳定、可显式重命名的会话身份，默认名称仅在创建时计算一次；第二行是当前配置摘要，允许随 host/port/串口/角色等参数变化。协议默认名与摘要由 `PluginRegistration.sessionPresentation` 声明；需要宿主能力计算默认名时使用 `resolveDefaultSessionName`，应用壳不维护 built-in 协议格式。新建会话卡片与配置窗口标题统一使用 `PluginManifest.name` 作为 Session 类型显示名；`description` 只描述能力，不承担类型身份；
 - 前端只有一个运行时 `PluginRegistry`。协议的 presentation、运行态、发送目标、应用覆盖层和右侧栏面板都由 registration contribution 声明；`App.tsx` / `SessionRightSidebar` 只挂载这些 contribution，不识别 SSH、Network、Local Shell 等具体插件 ID；
 - Settings 集中管理外观、语言、日志、安全、快捷键和版本信息；
 - i18next 维护 `en-US` / `zh-CN` 两套公共资源；协议插件可通过 `PluginRegistration.locales` 注册自己的双语资源，Plugin Registry 在注册时把资源注入同一个 i18n 实例，协议专属文案因此不需要堆进全局 locale；
@@ -22,9 +22,9 @@ React 应用由全局上下文和通用组件组成：
 - Terminal renderer 的 xterm 实例只在宿主节点仍连接到文档且具有非零可测量尺寸后创建。`open` 后的初始 fit、Pane/窗口 resize、字体变化、Pane 重新激活和 imperative `fit()` 全部进入同一个 RAF 合并调度器；ResizeObserver 只负责请求调度，不直接同步调用 FitAddon。cleanup 会先取消待执行 RAF、断开 observer/listener、清除 resize timer，再释放 xterm，确保 React StrictMode 的开发期 effect 探测、隐藏 Pane 和快速切换不会让已销毁 renderer 继续读取 dimensions；
 - 所有终端粘贴入口统一经 xterm `paste()`；当内容包含换行且当前终端未启用 Bracketed Paste Mode（DECSET 2004），或粘贴内容超过 5 KiB 字符时，先进入安全确认预览；右键复制/粘贴/全选/清屏完成后恢复终端焦点；
 - 所有二元确认流程统一使用 `src/components/common/ConfirmDialog.tsx`：Portal、主题外壳、动画、ARIA、焦点陷阱、焦点恢复与动作布局只维护一份，动作文案固定消费 `common.cancel` / `common.confirm`（中文“取消 / 确认”）；文件删除、会话删除、清空日志、终端安全粘贴与 SSH 首次主机密钥均不得自行创建另一套二元确认弹窗；
-- 可理解且可撤销的专业配置风险优先使用就地非阻塞提示；例如 TFTP 的“非回环监听 + 允许写入 + 允许覆盖”只显示行内 warning，不占用 `ConfirmDialog`；
+- 可理解且可撤销的专业配置风险优先使用就地非阻塞提示与就地确认；例如 TFTP 的“非回环监听 + 允许写入 + 允许覆盖”显示行内 warning，并要求在同一配置表单中显式确认风险后才允许提交，不占用 `ConfirmDialog`；
 - 多项互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）仍使用自己的业务选项标签与独立 Cancel，不伪装成二元确认；
-- 通用组件与图标系统供协议模块复用；互斥 Tab / 模式 / 筛选器只消费主题 SSOT 定义的共享 selector 类，业务组件不再各自维护按钮高度、padding 与切换位移动画；
+- 通用组件与图标系统供协议模块复用；互斥 Tab / 模式 / 筛选器只消费主题 SSOT 定义的共享 selector 类，业务组件不再各自维护按钮高度、padding 与切换位移动画。连接配置中的普通 text / number / select 控件统一消费共享 `--select-height` / `--select-padding` 几何，协议表单不得依赖浏览器原生控件高度形成偶然对齐；
 - 原生 checkbox / radio 的可视几何由 `src/styles/selection-controls.css` 全局统一，避免被表格或表单的通用 `input` 尺寸规则放大；协议页面只负责其布局位置，开关型布尔值继续复用全局 `.liquid-glass-toggle`，不在业务 CSS 中再造另一套选择控件；
 - 右侧可折叠工具面板使用 CSS 布局状态完成展开/收起，不为装饰性高度动画持续挂载 ResizeObserver；
 - ErrorBoundary、`window.error` 与 `unhandledrejection` 通过统一诊断桥进入 Rust System Log，并进行重复错误节流；公共错误页只消费 i18n key；
@@ -78,7 +78,7 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 ## 设计边界
 
 - 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。
-- 协议模块声明内容与能力，不直接拥有整个应用导航。Session 创建/编辑也遵循同一边界：`ConnectDialog` 只承载 `connectForm`，默认参数、SessionOptions、校验、提交前准备和 endpoint 解析由 `PluginRegistration` contribution 所有；共享 UI 可以消费稳定的跨插件 capability，但 capability 的配置适用性必须由插件判定，例如 `elevated_session` 的可用性由 `canCreateElevatedSession` 决定，Workspace 不读取 `shell_kind` 等协议私有参数。
+- 协议模块声明内容与能力，不直接拥有整个应用导航。Session 创建/编辑也遵循同一边界：`ConnectDialog` 只承载 `connectForm`，默认参数、SessionOptions、校验、提交前准备和 endpoint 解析由 `PluginRegistration` contribution 所有；Session 类型身份只读取 `PluginManifest.name`，不得再把 `description` 当作卡片名称。共享 UI 可以消费稳定的跨插件 capability，但 capability 的配置适用性必须由插件判定，例如 `elevated_session` 的可用性由 `canCreateElevatedSession` 决定，Workspace 不读取 `shell_kind` 等协议私有参数。
 - Pane 的布局/显示身份与 Session 的业务身份必须分离：Pane 可以切换 Session，但 custom renderer 不得复用前一个 Session 的 React 本地状态；需要跨切换保留的状态必须由明确的 Session-scoped store 持有，而不是依赖组件实例偶然存活。
 - 会话配置更新、连接/重连事件只能刷新动态参数与运行态，不得重新生成已存在根会话的 `Session.name`；名称变化必须来自显式重命名或编辑名称字段。协议若需要不同的默认身份或第二行摘要，应扩展自己的 `sessionPresentation`，而不是在 `SessionSidebar` 中增加协议分支。
 - 用户语言、快捷键和设置项必须通过公共 registry/context 管理。
