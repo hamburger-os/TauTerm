@@ -350,3 +350,100 @@ fn network_connector_rolls_back_failed_runtime_startup() {
         "Network connector must clean up both missing-runtime and runtime-start failures"
     );
 }
+
+#[test]
+fn frontend_plugins_are_installed_from_one_explicit_catalog() {
+    let main = read_workspace_source("src/main.tsx");
+    assert!(main.contains("installBuiltinPlugins()"));
+    for legacy_import in [
+        "./plugins/serial",
+        "./plugins/ssh",
+        "./plugins/telnet",
+        "./plugins/local-shell",
+        "./plugins/tftp",
+        "./plugins/iperf",
+        "./plugins/network",
+        "./plugins/trdp",
+        "./plugins/modbus",
+    ] {
+        assert!(
+            !main.contains(legacy_import),
+            "main.tsx must not register concrete built-in plugin through side-effect import: {legacy_import}"
+        );
+    }
+
+    let registry = read_workspace_source("src/core/plugin-registry.ts");
+    assert!(registry.contains("export function definePlugin("));
+    assert!(registry.contains("export function installPlugins("));
+    assert!(
+        !registry.contains("unregisterPlugin") && !registry.contains("unregister(pluginId"),
+        "compile-time built-ins must not expose fake dynamic-unload APIs"
+    );
+}
+
+#[test]
+fn frontend_and_backend_catalogs_cover_every_canonical_manifest() {
+    let frontend_catalog = read_workspace_source("src/plugins/catalog.ts");
+    let backend_catalog = read_source("plugins/catalog.rs");
+    let manifests_dir = workspace_path("src/plugin-manifests");
+
+    for entry in std::fs::read_dir(manifests_dir).expect("plugin manifests directory") {
+        let path = entry.expect("plugin manifest entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("manifest filename");
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("manifest stem");
+
+        assert!(
+            frontend_catalog.contains(&format!(r#"from "./{stem}""#)),
+            "frontend catalog must include canonical manifest plugin '{stem}'"
+        );
+        assert!(
+            backend_catalog.contains(&format!("src/plugin-manifests/{file_name}")),
+            "backend catalog must include canonical manifest '{file_name}'"
+        );
+    }
+}
+
+#[test]
+fn application_bootstrap_does_not_assemble_concrete_protocol_adapters() {
+    let source = include_str!("lib.rs");
+    assert!(source.contains("plugins::catalog::build_runtime()"));
+    assert!(source.contains("plugins::catalog::configure_persistence"));
+    assert!(source.contains("plugins::catalog::attach_app_handle"));
+
+    for forbidden in [
+        "SerialAdapter::new",
+        "SshAdapter::new",
+        "TelnetAdapter::new",
+        "TftpAdapter::new",
+        "IperfAdapter::new",
+        "NetworkAdapter::new",
+        "ModbusAdapter::new",
+        ".configure_known_hosts(",
+        ".inject_app_handle(",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "lib.rs must delegate concrete plugin assembly/lifecycle to plugins::catalog: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn connect_dialog_uses_registry_session_option_policy() {
+    let source = read_workspace_source("src/components/Layout/ConnectDialog.tsx");
+    assert!(source.contains("pluginRegistry.getDefaultSessionOptions(modeId)"));
+    assert!(source.contains("pluginRegistry.resolveSessionOptions"));
+    assert!(
+        !source.contains("function defaultSessionOptions("),
+        "ConnectDialog must not maintain a second copy of plugin default-session policy"
+    );
+}
