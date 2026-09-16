@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
@@ -174,10 +173,6 @@ impl ProtocolAdapter for ModbusAdapter {
             })),
             teardown_delay: std::time::Duration::ZERO,
         })
-    }
-
-    fn content_type(&self) -> ContentType {
-        ContentType::Custom
     }
 }
 
