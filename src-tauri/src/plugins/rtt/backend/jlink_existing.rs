@@ -35,7 +35,7 @@ impl JlinkExistingRttBackend {
                 .set_write_timeout(Some(Duration::from_millis(1_000)))
                 .map_err(|error| RttError::backend(error.to_string()))?;
             stream
-                .write_all(format!("RTTCh;{channel}\n").as_bytes())
+                .write_all(jlink_telnet_channel_config(*channel).as_bytes())
                 .map_err(|error| {
                     RttError::new(
                         RttErrorCode::JlinkChannelConfigFailed,
@@ -70,6 +70,10 @@ impl JlinkExistingRttBackend {
             channels,
         })
     }
+}
+
+fn jlink_telnet_channel_config(channel: u32) -> String {
+    format!("$$SEGGER_TELNET_ConfigStr=RTTCh;{channel}$$")
 }
 
 impl RttBackend for JlinkExistingRttBackend {
@@ -146,5 +150,18 @@ impl RttBackend for JlinkExistingRttBackend {
 
     fn shutdown(&mut self) {
         self.streams.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jlink_telnet_channel_config;
+
+    #[test]
+    fn channel_selection_uses_segger_telnet_config_string() {
+        assert_eq!(
+            jlink_telnet_channel_config(3),
+            "$$SEGGER_TELNET_ConfigStr=RTTCh;3$$"
+        );
     }
 }
