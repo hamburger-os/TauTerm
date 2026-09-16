@@ -6,7 +6,7 @@
  * -d/-r 双向测试的反向相带方向徽标（FWD/REV）。
  */
 import { useTranslation } from "react-i18next";
-import Icon from "../common/Icon";
+import Icon from "../../components/common/Icon";
 import { formatMbps } from "./iperf-utils";
 import type { IperfRecord } from "./iperf-events";
 import styles from "./IperfSessionView.module.css";
@@ -39,45 +39,57 @@ export default function IperfRecordList({ records, selectedId, onSelect }: Props
     <div className={`${styles.panel} liquid-glass-card`}>
       <h3>{t("iperf.recordList")}</h3>
       <div className={styles.recordList}>
-        {records.map((r) => (
-          <button
-            key={r.id}
-            className={`${styles.recordItem} ${r.id === selectedId ? styles.recordItemActive : ""}`}
-            onClick={() => onSelect(r.id)}
-          >
-            <div className={styles.recordRow1}>
-              <span className={`${styles.roleBadge} ${r.role === "server" ? styles.roleServer : styles.roleClient}`}>
-                {r.role === "server" ? t("iperf.recordServer") : t("iperf.recordClient")}
-              </span>
-              {r.direction === "rev" && (
-                <span className={styles.directionBadge}>
-                  {t("iperf.directionRev")}
+        {records.map((record) => {
+          const selected = record.id === selectedId;
+          const roleLabel = record.role === "server"
+            ? t("iperf.server")
+            : t("iperf.client");
+          const directionLabel = record.direction === "reverse"
+            ? "REV"
+            : "FWD";
+          const endpoint = record.role === "server"
+            ? record.peerAddr || "—"
+            : record.targetHost || "—";
+          const summary = record.summary;
+          const bandwidth = summary
+            ? formatMbps(summary.bitsPerSecond, units)
+            : record.status === "running"
+              ? t("iperf.testRunning")
+              : "—";
+
+          return (
+            <button
+              key={record.id}
+              type="button"
+              className={`${styles.recordItem} ${selected ? styles.recordItemSelected : ""}`}
+              onClick={() => onSelect(record.id)}
+            >
+              <div className={styles.recordTopLine}>
+                <span className={styles.recordRole}>
+                  {roleLabel}
+                  {record.phaseCount > 1 && (
+                    <span className={styles.directionBadge}>{directionLabel}</span>
+                  )}
                 </span>
-              )}
-              <span className={styles.recordVersion}>{r.version}</span>
-              <span className={styles.recordProtocol}>{r.protocol.toUpperCase()}</span>
-              <span className={styles.recordStatus}>
-                {r.status === "running" && <Icon name="hourglass" size="xs" />}
-                {r.status === "completed" && <Icon name="check-circle" size="xs" />}
-                {r.status === "failed" && <Icon name="x-circle" size="xs" />}
-              </span>
-            </div>
-            <div className={styles.recordRow2}>
-              <span className={styles.recordTime}>
-                {new Date(r.startTime).toLocaleTimeString()}
-              </span>
-              <span className={styles.recordBw}>
-                {r.summary
-                  ? formatMbps(r.summary.avgBandwidthBps, units)
-                  : r.status === "running"
-                    ? "…"
-                    : r.status === "failed"
-                      ? (r.error || t("iperf.testFailed"))
-                      : t("iperf.noData")}
-              </span>
-            </div>
-          </button>
-        ))}
+                <span className={styles.recordStatus}>
+                  <Icon
+                    name={record.status === "running"
+                      ? "transfer-active"
+                      : record.status === "done"
+                        ? "check-circle"
+                        : "x-circle"}
+                    size="sm"
+                  />
+                </span>
+              </div>
+              <div className={styles.recordEndpoint} title={endpoint}>{endpoint}</div>
+              <div className={styles.recordMeta}>
+                <span>{bandwidth}</span>
+                <span>{new Date(record.startedAt).toLocaleTimeString()}</span>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
