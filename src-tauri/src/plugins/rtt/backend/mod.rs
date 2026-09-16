@@ -3,7 +3,7 @@ mod probe_rs;
 
 use super::config::{RttBackendKind, RttConfig};
 use super::error::RttError;
-use super::model::{RttBackendDescriptor, RttChannelInfo, RttReadChunk};
+use super::model::{RttBackendDescriptor, RttChannelInfo, RttProbeInfo, RttReadChunk};
 
 pub trait RttBackend {
     fn descriptor(&self) -> RttBackendDescriptor;
@@ -21,4 +21,8 @@ pub fn open_backend(config: &RttConfig) -> Result<Box<dyn RttBackend>, RttError>
             jlink_existing::JlinkExistingRttBackend::open(config)?,
         )),
     }
+}
+
+pub fn list_probes() -> Vec<RttProbeInfo> {
+    probe_rs::list_probes()
 }
