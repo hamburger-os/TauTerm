@@ -5,7 +5,7 @@
  * 瞬态任务：配置 → 运行 → 实时出结果 → 结束。
  */
 import { useTranslation } from "react-i18next";
-import Icon from "../common/Icon";
+import Icon from "../../components/common/Icon";
 import IperfCommandPreview from "./IperfCommandPreview";
 import {
   buildIperfCommand,
