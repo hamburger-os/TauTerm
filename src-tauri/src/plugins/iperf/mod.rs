@@ -11,6 +11,8 @@
 
 pub const PLUGIN_ID: &str = "iperf";
 
+pub(crate) mod commands;
+
 pub mod client;
 pub mod server;
 

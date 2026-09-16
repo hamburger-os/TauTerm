@@ -32,9 +32,10 @@ export default function DisconnectedSessionContextMenu({
     const tab = state.session;
     if (!tab) return [];
 
-    const capabilities = pluginRegistry.get(tab.pluginId)?.manifest.capabilities ?? [];
+    const registration = pluginRegistry.get(tab.pluginId);
+    const capabilities = registration?.manifest.capabilities ?? [];
     const supportsElevation = capabilities.includes("elevated_session")
-      && tab.params?.shell_kind !== "wsl";
+      && (registration?.canCreateElevatedSession?.(tab.params ?? {}) ?? true);
 
     const items: ContextMenuItem[] = [
       { id: "connect", label: t("contextMenu.connect") || "Connect", icon: "play" },

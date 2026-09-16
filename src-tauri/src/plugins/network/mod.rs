@@ -1,29 +1,32 @@
 //! Network debugging protocol plugin.
 //!
 //! TCP peers own independent DataPlane runtimes. The root network session owns a lightweight
-//! aggregate DataPlane used by scripts/auto-reply and by the common send path. UDP remains a
-//! datagram transport but feeds received payloads into that aggregate DataPlane so upper layers do
-//! not need a second callback bus.
+//! aggregate DataPlane used by scripts/auto-reply and by the common send path. Peer identity,
+//! addressing and Network-specific events remain inside this plugin; SessionStore only owns the
+//! generic child DataPlane/SessionIo lifecycle.
 
 pub const PLUGIN_ID: &str = "network";
 
+pub(crate) mod commands;
+
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::Value;
 use tauri::{Emitter, Manager};
 
-use crate::kernel::data_batcher::base64_encode;
+use crate::kernel::data_batcher::{base64_encode, DataBatcher};
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
-use crate::kernel::session_store::PeerChannelRegistration;
-use crate::session::SessionError;
+use crate::kernel::session_store::{SessionState, SessionStore, SubConnection};
+use crate::session::{DisconnectInfo, SessionDataPlane, SessionError, SessionIo};
 use crate::transport::tcp::{connect_tcp, TcpConnectConfig, TcpDriver, TcpListenerTransport};
 use crate::transport::udp::{resolve_udp, UdpTransport};
 use crate::transport::{
@@ -31,11 +34,35 @@ use crate::transport::{
     TransportErrorKind,
 };
 
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkPeerInfo {
+    pub peer_id: String,
+    pub name: String,
+    pub addr: String,
+    pub local_addr: String,
+    pub state: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub connected_at: Option<u64>,
+}
+
+struct PeerRuntime {
+    index: u32,
+    name: String,
+    addr: String,
+    local_addr: String,
+    io: Arc<SessionIo>,
+    connected_at: Option<u64>,
+    connected: bool,
+}
+
 struct NetworkCore {
     transport: String,
     role: String,
     send_target: Mutex<Option<String>>,
     peer_handles: Arc<Mutex<HashMap<String, DataPlaneHandle>>>,
+    peers: Arc<Mutex<HashMap<String, PeerRuntime>>>,
+    next_peer_index: AtomicU32,
     udp_socket: Mutex<Option<Arc<UdpTransport>>>,
     udp_client_target: Mutex<Option<SocketAddr>>,
 }
@@ -47,6 +74,8 @@ impl NetworkCore {
             role,
             send_target: Mutex::new(None),
             peer_handles: Arc::new(Mutex::new(HashMap::new())),
+            peers: Arc::new(Mutex::new(HashMap::new())),
+            next_peer_index: AtomicU32::new(0),
             udp_socket: Mutex::new(None),
             udp_client_target: Mutex::new(None),
         }
@@ -60,6 +89,66 @@ impl NetworkCore {
 
     fn current_target(&self) -> Option<String> {
         self.send_target.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    fn active_peer_count(&self) -> usize {
+        self.peer_handles
+            .lock()
+            .map(|peers| peers.len())
+            .unwrap_or(0)
+    }
+
+    fn list_peers(&self) -> Vec<NetworkPeerInfo> {
+        let Ok(peers) = self.peers.lock() else {
+            return Vec::new();
+        };
+        let mut peers = peers
+            .iter()
+            .map(|(peer_id, peer)| {
+                (
+                    peer.index,
+                    NetworkPeerInfo {
+                        peer_id: peer_id.clone(),
+                        name: peer.name.clone(),
+                        addr: peer.addr.clone(),
+                        local_addr: peer.local_addr.clone(),
+                        state: if peer.connected {
+                            "connected".to_string()
+                        } else {
+                            "disconnected".to_string()
+                        },
+                        tx_bytes: peer.io.tx_bytes(),
+                        rx_bytes: peer.io.rx_bytes(),
+                        connected_at: peer.connected_at,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        peers.sort_by_key(|(index, _)| *index);
+        peers.into_iter().map(|(_, peer)| peer).collect()
+    }
+
+    fn mark_peer_disconnected(&self, peer_id: &str) {
+        if let Ok(mut handles) = self.peer_handles.lock() {
+            handles.remove(peer_id);
+        }
+        if let Ok(mut peers) = self.peers.lock() {
+            if let Some(peer) = peers.get_mut(peer_id) {
+                peer.connected = false;
+            }
+        }
+        if let Ok(mut target) = self.send_target.lock() {
+            if target.as_deref() == Some(peer_id) {
+                *target = None;
+            }
+        }
+    }
+
+    fn remove_peer(&self, peer_id: &str) {
+        self.mark_peer_disconnected(peer_id);
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.remove(peer_id);
+        }
     }
 
     fn udp_send_to(&self, target: &str, data: &[u8]) -> Result<(), String> {
@@ -279,7 +368,7 @@ impl NetworkRuntime {
                 driver,
                 self.encoding.clone(),
                 self.data_mode.clone(),
-                self.core.peer_handles.clone(),
+                self.core.clone(),
                 self.aggregate_tx.clone(),
             )?;
             spawned += 1;
@@ -297,25 +386,13 @@ impl NetworkRuntime {
             let max_clients = self.max_clients;
             let encoding = self.encoding.clone();
             let data_mode = self.data_mode.clone();
-            let peer_handles = self.core.peer_handles.clone();
+            let core = self.core.clone();
             let mirror_tx = self.aggregate_tx.clone();
             std::thread::spawn(move || {
                 while running.load(Ordering::SeqCst) {
                     match listener.accept() {
                         Ok(Some((driver, _peer))) => {
-                            let connected = app
-                                .state::<crate::AppState>()
-                                .session_store
-                                .lock()
-                                .map(|store| {
-                                    store
-                                        .list_peers(&session_id)
-                                        .iter()
-                                        .filter(|peer| peer.state == "connected")
-                                        .count()
-                                })
-                                .unwrap_or(0);
-                            if client_limit_reached(max_clients, connected) {
+                            if client_limit_reached(max_clients, core.active_peer_count()) {
                                 log::warn!("网络调试: TCP Server 并发达到上限 {max_clients}");
                                 continue;
                             }
@@ -325,7 +402,7 @@ impl NetworkRuntime {
                                 driver,
                                 encoding.clone(),
                                 data_mode.clone(),
-                                peer_handles.clone(),
+                                core.clone(),
                                 mirror_tx.clone(),
                             ) {
                                 log::error!("网络调试: TCP 对端注册失败: {error}");
@@ -388,6 +465,14 @@ impl NetworkRuntime {
         Ok(())
     }
 
+    pub fn list_peers(&self) -> Vec<NetworkPeerInfo> {
+        self.core.list_peers()
+    }
+
+    pub fn remove_peer(&self, peer_id: &str) {
+        self.core.remove_peer(peer_id);
+    }
+
     pub fn udp_send_to(&self, target: &str, data: &[u8]) -> Result<(), String> {
         self.core.udp_send_to(target, data)
     }
@@ -424,7 +509,7 @@ fn register_tcp_peer(
     driver: TcpDriver,
     encoding: String,
     data_mode: String,
-    peer_handles: Arc<Mutex<HashMap<String, DataPlaneHandle>>>,
+    core: Arc<NetworkCore>,
     mirror_tx: mpsc::Sender<Vec<u8>>,
 ) -> Result<String, String> {
     let peer_addr = driver
@@ -436,32 +521,168 @@ fn register_tcp_peer(
         .map(|value| value.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
+    let channel_id = uuid::Uuid::new_v4().to_string();
+    let index = core.next_peer_index.fetch_add(1, Ordering::Relaxed);
+    let peer_name = format!("Peer {}", index + 1);
+    let io = Arc::new(SessionIo::new(
+        Some(runtime.handle.clone()),
+        None,
+        encoding.clone(),
+    ));
+    core.peer_handles
+        .lock()
+        .map_err(|error| error.to_string())?
+        .insert(channel_id.clone(), runtime.handle.clone());
+
     let app_state = app.state::<crate::AppState>();
     let log_tx = app_state
         .log_engine
         .lock()
         .map_err(|error| error.to_string())?
         .sender();
-    let result = app_state
+    let app_data = app.clone();
+    let batcher = DataBatcher::new(move |batched| {
+        let _ = app_data.emit(
+            "session-data",
+            serde_json::json!({
+                "session_id": batched.session_id,
+                "data_b64": batched.data_b64,
+            }),
+        );
+    });
+    let encoding_log = encoding.clone();
+    let data_mode_log = data_mode.clone();
+    let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
+        let payload = data.clone();
+        let mirror_payload = data.clone();
+        batcher.push(session_id.clone(), data);
+        let _ = mirror_tx.send(mirror_payload);
+        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
+            session_id,
+            direction: DataDirection::RX,
+            data_mode: data_mode_log.clone(),
+            encoding: encoding_log.clone(),
+            payload,
+            timestamp: chrono::Local::now(),
+        }));
+    });
+
+    let app_disconnect = app.clone();
+    let parent_for_disconnect = parent_id.to_string();
+    let peer_for_disconnect = channel_id.clone();
+    let io_for_disconnect = io.clone();
+    let core_for_disconnect = core.clone();
+    let disconnect_parent = core.role == "client";
+    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> = Box::new(move |_id, info| {
+        core_for_disconnect.mark_peer_disconnected(&peer_for_disconnect);
+        let mut parent_was_disconnected = false;
+        if let Ok(mut store) = app_disconnect
+            .state::<crate::AppState>()
+            .session_store
+            .lock()
+        {
+            store.mark_sub_disconnected(
+                &parent_for_disconnect,
+                &peer_for_disconnect,
+                info.retain_terminal,
+            );
+            if disconnect_parent
+                && store.session_state(&parent_for_disconnect) == Some(SessionState::Connected)
+            {
+                store.mark_disconnected(&parent_for_disconnect);
+                parent_was_disconnected = true;
+            }
+        }
+        let _ = app_disconnect.emit(
+            "netdbg-peer-left",
+            serde_json::json!({
+                "session_id": parent_for_disconnect,
+                "peer_id": peer_for_disconnect,
+                "tx_bytes": io_for_disconnect.tx_bytes(),
+                "rx_bytes": io_for_disconnect.rx_bytes(),
+            }),
+        );
+        if parent_was_disconnected {
+            let _ = app_disconnect.emit(
+                "session-disconnected",
+                serde_json::json!({
+                    "session_id": parent_for_disconnect,
+                    "reason": info.reason,
+                    "disconnect_info": info,
+                }),
+            );
+        }
+    });
+    let data_plane =
+        SessionDataPlane::attach_paused(runtime, channel_id.clone(), on_data, on_disconnect)
+            .map_err(|error| error.to_string())?;
+    let stats_cancel_flag = Arc::new(AtomicBool::new(false));
+    let connected_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    );
+    SessionStore::spawn_stats_collector(
+        app.clone(),
+        channel_id.clone(),
+        io.clone(),
+        connected_at,
+        stats_cancel_flag.clone(),
+    );
+
+    let mut child = SubConnection::background(
+        channel_id.clone(),
+        peer_name.clone(),
+        data_plane,
+        io.clone(),
+        index,
+    );
+    child.connected_at = connected_at;
+    child.stats_cancel_flag = Some(stats_cancel_flag.clone());
+    if let Err(error) = app_state
         .session_store
         .lock()
         .map_err(|error| error.to_string())?
-        .register_peer_channel(
-            app,
-            log_tx,
-            PeerChannelRegistration {
-                parent_id: parent_id.to_string(),
-                peer_name: String::new(),
-                peer_addr,
-                local_addr,
-                runtime,
-                encoding,
-                data_mode,
-                peer_handles,
-                mirror_tx: Some(mirror_tx),
+        .add_sub_connection(parent_id, child)
+    {
+        stats_cancel_flag.store(true, Ordering::SeqCst);
+        if let Ok(mut handles) = core.peer_handles.lock() {
+            handles.remove(&channel_id);
+        }
+        return Err(error);
+    }
+    core.peers
+        .lock()
+        .map_err(|error| error.to_string())?
+        .insert(
+            channel_id.clone(),
+            PeerRuntime {
+                index,
+                name: peer_name.clone(),
+                addr: peer_addr.clone(),
+                local_addr: local_addr.clone(),
+                io,
+                connected_at,
+                connected: true,
             },
         );
-    result
+    let _ = app.emit(
+        "netdbg-peer-joined",
+        serde_json::json!({
+            "session_id": parent_id,
+            "peer_id": channel_id,
+            "peer_name": peer_name,
+            "peer_addr": peer_addr,
+            "local_addr": local_addr,
+        }),
+    );
+    app_state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?
+        .activate_data_plane(&channel_id)?;
+    Ok(channel_id)
 }
 
 fn emit_udp_datagram(
@@ -507,6 +728,18 @@ impl NetworkAdapter {
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<NetworkRuntime>> {
         self.runtimes.get(session_id)
+    }
+
+    pub fn list_peers(&self, session_id: &str) -> Vec<NetworkPeerInfo> {
+        self.runtime(session_id)
+            .map(|runtime| runtime.list_peers())
+            .unwrap_or_default()
+    }
+}
+
+impl Default for NetworkAdapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -9,6 +9,8 @@ const files = {
   viewer: "src/components/JournaldViewer/hooks/useJournaldViewer.ts",
   panel: "src/components/JournaldViewer/JournaldViewerPanel.tsx",
   sidebar: "src/components/RightSidebar/SessionRightSidebar.tsx",
+  sshPlugin: "src/plugins/ssh/index.ts",
+  sshSidebar: "src/plugins/ssh/SshRightSidebarPanels.tsx",
 };
 
 const source = Object.fromEntries(
@@ -93,10 +95,17 @@ assert.match(source.panel, /virtualRow/);
 assert.match(source.panel, /styles\[priorityToLevelClass\(entry\.priority\)\]/);
 assert.match(source.panel, /t\("common\.retry"\)/);
 
-// Journald remains an optional, lazy right-sidebar tool.
+// Journald remains optional and lazy, but ownership belongs to the SSH plugin.
+// The common sidebar only renders plugin-contributed panels and must not import Journald directly.
+assert.match(source.sidebar, /pluginRegistry\.get\(pluginId\)\?\.rightSidebar\?\.panels/);
+assert.match(source.sidebar, /pluginPanels\.map/);
+assert.doesNotMatch(source.sidebar, /JournaldViewerPanel/);
+assert.match(source.sshPlugin, /id: "ssh-journald"/);
+assert.match(source.sshPlugin, /params\.journald_enabled === true/);
+assert.match(source.sshPlugin, /component: SshJournaldSidebarPanel/);
 assert.match(
-  source.sidebar,
-  /lazy\(\(\) => import\("\.\.\/JournaldViewer\/JournaldViewerPanel"\)\)/,
+  source.sshSidebar,
+  /lazy\(\(\) => import\("\.\.\/\.\.\/components\/JournaldViewer\/JournaldViewerPanel"\)\)/,
 );
 
 console.log("journald viewer contract: ok");

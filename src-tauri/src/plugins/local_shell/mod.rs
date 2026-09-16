@@ -5,6 +5,23 @@
 
 pub const PLUGIN_ID: &str = "local-shell";
 
+pub(crate) mod commands;
+
+pub(crate) fn session_config_handler() -> crate::plugin_application::SessionConfigHandler {
+    crate::plugin_application::SessionConfigHandler {
+        validate: Some(LocalShellAdapter::validate_params),
+        prepare: crate::plugin_application::unchanged_session_config,
+        default_name: Some(|params, _endpoint| LocalShellAdapter::default_session_name(params)),
+        sanitize_saved: None,
+        delete: None,
+    }
+}
+
+#[tauri::command]
+pub fn resolve_local_shell_session_name(params: serde_json::Value) -> Result<String, String> {
+    LocalShellAdapter::default_session_name(&params)
+}
+
 mod driver;
 #[cfg(windows)]
 pub(crate) mod elevated;

@@ -22,6 +22,7 @@ mod ipc_transport;
 mod kernel;
 #[cfg(test)]
 mod performance_contract;
+mod plugin_application;
 mod plugins;
 mod security;
 mod session;
@@ -96,7 +97,7 @@ fn register_builtin_adapter<T>(
     runtime: &mut PluginRuntime,
     raw_manifest: &'static str,
     adapter: T,
-    connector: commands::SessionConnectHandler,
+    connector: plugin_application::SessionConnectHandler,
 ) where
     T: kernel::plugin_adapter::ProtocolAdapter + Any + Send + Sync + 'static,
 {
@@ -114,50 +115,86 @@ fn build_plugin_runtime() -> PluginRuntime {
         &mut runtime,
         include_str!("../../src/plugin-manifests/serial.json"),
         SerialAdapter::new(),
-        commands::serial_session_connector,
+        plugins::serial::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/ssh.json"),
         SshAdapter::new(),
-        commands::ssh_session_connector,
+        plugins::ssh::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/telnet.json"),
         TelnetAdapter::new(),
-        commands::telnet_session_connector,
+        plugins::telnet::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/local-shell.json"),
         LocalShellAdapter::new(),
-        commands::local_shell_session_connector,
+        plugins::local_shell::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/tftp.json"),
         TftpAdapter::new(),
-        commands::tftp_session_connector,
+        plugins::tftp::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/iperf.json"),
         IperfAdapter::new(),
-        commands::iperf_session_connector,
+        plugins::iperf::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/network.json"),
         NetworkAdapter::new(),
-        commands::network_session_connector,
+        plugins::network::commands::session_connector,
     );
     register_builtin_adapter(
         &mut runtime,
         include_str!("../../src/plugin-manifests/modbus.json"),
         ModbusAdapter::new(),
-        commands::modbus_session_connector,
+        plugins::modbus::session_connector,
     );
+
+    for (plugin_id, hook) in [
+        (
+            plugins::tftp::PLUGIN_ID,
+            plugins::tftp::commands::session_disconnected
+                as plugin_application::SessionDisconnectedHook,
+        ),
+        (
+            plugins::iperf::PLUGIN_ID,
+            plugins::iperf::commands::session_disconnected
+                as plugin_application::SessionDisconnectedHook,
+        ),
+    ] {
+        let plugin_id =
+            kernel::plugin_adapter::PluginId::parse(plugin_id).expect("built-in plugin id");
+        runtime
+            .register_contribution(&plugin_id, hook)
+            .unwrap_or_else(|error| panic!("注册 Session 断开 contribution 失败: {error}"));
+    }
+
+    for (plugin_id, handler) in [
+        (
+            plugins::ssh::PLUGIN_ID,
+            plugins::ssh::application::session_config_handler(),
+        ),
+        (
+            plugins::local_shell::PLUGIN_ID,
+            plugins::local_shell::session_config_handler(),
+        ),
+    ] {
+        let plugin_id =
+            kernel::plugin_adapter::PluginId::parse(plugin_id).expect("built-in plugin id");
+        runtime
+            .register_contribution(&plugin_id, handler)
+            .unwrap_or_else(|error| panic!("注册 Session 配置 contribution 失败: {error}"));
+    }
 
     let trdp_id = runtime
         .register_manifest(parse_builtin_manifest(include_str!(
@@ -167,9 +204,15 @@ fn build_plugin_runtime() -> PluginRuntime {
     runtime
         .register_contribution(
             &trdp_id,
-            commands::trdp_session_connector as commands::SessionConnectHandler,
+            plugins::trdp::session_connector as plugin_application::SessionConnectHandler,
         )
         .unwrap_or_else(|error| panic!("注册 TRDP 连接 contribution 失败: {error}"));
+    runtime
+        .register_contribution(&trdp_id, plugins::trdp::TrdpPlugin::new())
+        .unwrap_or_else(|error| panic!("注册 TRDP runtime contribution 失败: {error}"));
+    runtime
+        .register_contribution(&trdp_id, plugins::trdp::session_config_handler())
+        .unwrap_or_else(|error| panic!("注册 TRDP Session 配置 contribution 失败: {error}"));
 
     runtime
 }
@@ -520,12 +563,11 @@ pub fn run() {
             commands::get_tabs,
             commands::open_channel,
             ipc_transport::close_channel,
-            commands::connect_session_network,
-            commands::list_network_peers,
-            commands::close_network_peer,
-            commands::network_udp_send_to,
-            commands::network_udp_send,
-            commands::set_network_send_target,
+            plugins::network::commands::list_network_peers,
+            plugins::network::commands::close_network_peer,
+            plugins::network::commands::network_udp_send_to,
+            plugins::network::commands::network_udp_send,
+            plugins::network::commands::set_network_send_target,
             plugins::modbus::modbus_execute,
             plugins::modbus::modbus_status,
             plugins::modbus::modbus_watch_set,
@@ -545,7 +587,7 @@ pub fn run() {
             plugins::trdp::trdp_decode_dataset,
             commands::load_sessions,
             commands::save_session_config,
-            commands::resolve_local_shell_session_name,
+            plugins::local_shell::resolve_local_shell_session_name,
             commands::delete_session_config,
             commands::file_transfer_send,
             commands::file_transfer_receive,
@@ -579,36 +621,36 @@ pub fn run() {
             commands::stop_script_engine,
             commands::rules_to_script,
             commands::test_match,
-            commands::sftp_list_dir_cmd,
-            commands::sftp_stat_cmd,
-            commands::sftp_read_head_cmd,
-            commands::sftp_chmod_cmd,
-            commands::sftp_delete_cmd,
-            commands::sftp_rename_cmd,
-            commands::sftp_mkdir_cmd,
-            commands::sftp_new_file_cmd,
-            commands::sftp_delete_batch_cmd,
-            commands::sftp_delete_recursive_cmd,
-            commands::start_journald_stream,
-            commands::stop_journald_stream,
-            commands::journald_query_cmd,
-            commands::start_journald_export,
-            commands::stop_journald_export,
-            commands::get_ssh_home_dir,
+            plugins::ssh::commands::sftp_list_dir_cmd,
+            plugins::ssh::commands::sftp_stat_cmd,
+            plugins::ssh::commands::sftp_read_head_cmd,
+            plugins::ssh::commands::sftp_chmod_cmd,
+            plugins::ssh::commands::sftp_delete_cmd,
+            plugins::ssh::commands::sftp_rename_cmd,
+            plugins::ssh::commands::sftp_mkdir_cmd,
+            plugins::ssh::commands::sftp_new_file_cmd,
+            plugins::ssh::commands::sftp_delete_batch_cmd,
+            plugins::ssh::commands::sftp_delete_recursive_cmd,
+            plugins::ssh::commands::start_journald_stream,
+            plugins::ssh::commands::stop_journald_stream,
+            plugins::ssh::commands::journald_query_cmd,
+            plugins::ssh::commands::start_journald_export,
+            plugins::ssh::commands::stop_journald_export,
+            plugins::ssh::commands::get_ssh_home_dir,
             ipc_transport::resize_pty,
-            commands::confirm_host_key,
-            commands::tftp_server_start,
-            commands::tftp_server_stop,
-            commands::tftp_client_get,
-            commands::tftp_client_put,
-            commands::tftp_update_params,
-            commands::tftp_get_status,
-            commands::iperf_server_start,
-            commands::iperf_server_stop,
-            commands::iperf_client_run,
-            commands::iperf_client_stop,
-            commands::iperf_update_params,
-            commands::iperf_get_status,
+            plugins::ssh::commands::confirm_host_key,
+            plugins::tftp::commands::tftp_server_start,
+            plugins::tftp::commands::tftp_server_stop,
+            plugins::tftp::commands::tftp_client_get,
+            plugins::tftp::commands::tftp_client_put,
+            plugins::tftp::commands::tftp_update_params,
+            plugins::tftp::commands::tftp_get_status,
+            plugins::iperf::commands::iperf_server_start,
+            plugins::iperf::commands::iperf_server_stop,
+            plugins::iperf::commands::iperf_client_run,
+            plugins::iperf::commands::iperf_client_stop,
+            plugins::iperf::commands::iperf_update_params,
+            plugins::iperf::commands::iperf_get_status,
             diagnostics::export_diagnostics,
         ])
         .build(tauri::generate_context!())

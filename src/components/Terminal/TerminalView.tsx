@@ -6,6 +6,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { useKeyboard } from "../../hooks/useKeyboard";
 import { ACTION_IDS } from "../../shortcuts/actionIds";
 import { PendingSessionData } from "../../core/pending-session-data";
+import { pluginRegistry } from "../../core/plugin-registry";
 import type { PaneRect } from "../../core/split-layout";
 import Icon from "../common/Icon";
 import TerminalInstance from "./Terminal";
@@ -462,7 +463,9 @@ export default function TerminalView({
         pushDualLine(sessionId, "TX", data, decoded);
         return;
       }
-      if (tab.localEcho) {
+      const plugin = pluginRegistry.get(tab.pluginId);
+      const runtimeSnapshot = plugin?.runtimeStore?.getSnapshot(sessionId);
+      if (plugin?.terminalLocalEcho?.(runtimeSnapshot)) {
         const writeFn = writeRefs.current.get(sessionId);
         if (writeFn) {
           const label = typeof tab?.params?.encoding === "string" ? tab.params.encoding : "utf-8";

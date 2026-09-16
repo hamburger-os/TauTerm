@@ -1,9 +1,4 @@
-/**
- * 网络调试插件前端注册
- *
- * content_type: "custom" → CustomRenderer → NetworkDebugSessionView
- * 单标签 = 对端列表 + 选中对端详情；TCP/UDP 全角色。
- */
+/** Network Debug frontend plugin registration. */
 import { useTranslation } from "react-i18next";
 import NetworkDebugSessionView from "../../components/Network/NetworkDebugSessionView";
 import {
@@ -18,8 +13,26 @@ import {
   type StatusBarContext,
   type StatusBarItem,
 } from "../../core/plugin-registry";
+import { usePluginRuntime } from "../../core/usePluginRuntime";
+import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/network.json";
 import { formatBytes } from "../../utils/format";
+import NetworkConnectForm, {
+  DEFAULT_NETWORK_PARAMS,
+  isNetworkConnectionConfigValid,
+  normalizeNetworkParams,
+} from "./NetworkConnectForm";
+import NetworkSendTarget from "./NetworkSendTarget";
+import { isNetworkSendTargetVisible } from "./send-target";
+import {
+  clearNetworkPeer,
+  disconnectNetworkPeer,
+  getNetworkRuntime,
+  networkRuntimeStore,
+  selectNetworkPeer,
+  sendNetworkData,
+  type NetworkRuntimeSnapshot,
+} from "./runtime-store";
 
 const PRI = {
   role: 850,
@@ -45,21 +58,16 @@ function RoleBadge({ sessionId }: { sessionId: string }) {
   const tab = state.tabs.find(item => item.id === sessionId);
   const transport = tab?.params?.transport === "udp" ? "UDP" : "TCP";
   const role = (tab?.params?.role as string | undefined) ?? "client";
-  return (
-    <StatusBarBadge>
-      {transport} · {t(role === "server" ? "network.roleServerShort" : "network.roleClientShort")}
-    </StatusBarBadge>
-  );
+  return <StatusBarBadge>{transport} · {t(role === "server" ? "network.roleServerShort" : "network.roleClientShort")}</StatusBarBadge>;
 }
 
 function TcpPeerCount({ sessionId }: { sessionId: string }) {
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
-  const peers = state.networkPeers[sessionId] ?? [];
-  const connected = peers.filter(peer => peer.state === "connected").length;
+  const runtime = usePluginRuntime<NetworkRuntimeSnapshot>("network", sessionId);
+  const connected = runtime.peers.filter(peer => peer.state === "connected").length;
   const maxClients = (tab?.params?.max_clients as number | undefined) ?? 0;
-  const selectedId = state.selectedNetworkPeer[sessionId] ?? null;
-  const selected = peers.find(peer => peer.peerId === selectedId) ?? null;
+  const selected = runtime.peers.find(peer => peer.peerId === runtime.selectedPeerId) ?? null;
   const countText = maxClients > 0 ? `${connected}/${maxClients}` : `${connected}`;
 
   return (
@@ -82,6 +90,29 @@ function UdpPacketCount({ sessionId }: { sessionId: string }) {
       <StatusBarText>↓ {rx} {t("network.packets")}</StatusBarText>
     </StatusBarGroup>
   );
+}
+
+function networkSubtitle(params: Record<string, unknown>, endpoint: string): string {
+  const transport = params.transport === "udp" ? "udp" : "tcp";
+  const role = params.role === "server" ? "server" : "client";
+  if (role === "client") {
+    const host = typeof params.remote_host === "string" && params.remote_host.trim()
+      ? params.remote_host.trim()
+      : "";
+    const port = typeof params.remote_port === "number" && Number.isFinite(params.remote_port)
+      ? params.remote_port
+      : undefined;
+    if (host && port) return `${transport.toUpperCase()} · ${host}:${port}`;
+  } else {
+    const host = typeof params.local_host === "string" && params.local_host.trim()
+      ? params.local_host.trim()
+      : "0.0.0.0";
+    const port = typeof params.local_port === "number" && Number.isFinite(params.local_port)
+      ? params.local_port
+      : undefined;
+    if (port) return `${transport.toUpperCase()} · ${host}:${port}`;
+  }
+  return endpoint;
 }
 
 const statusBarItems: StatusBarItem[] = [
@@ -109,14 +140,77 @@ const statusBarItems: StatusBarItem[] = [
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  connectForm: NetworkConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_NETWORK_PARAMS }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: true }),
+  normalizeConnectionParams: normalizeNetworkParams,
+  prepareConnectionParams: params => {
+    const normalized = normalizeNetworkParams(params);
+    return normalized.role === "client"
+      ? { ...normalized, local_port: 0 }
+      : normalized;
+  },
+  isConnectionConfigValid: isNetworkConnectionConfigValid,
+  resolveEndpoint: params => {
+    const transport = params.transport === "udp" ? "udp" : "tcp";
+    const role = params.role === "server" ? "server" : "client";
+    if (role === "client") {
+      return `${transport}://${String(params.remote_host ?? "").trim()}:${Number(params.remote_port ?? 8080)}`;
+    }
+    return `${transport}://${String(params.local_host ?? "0.0.0.0").trim() || "0.0.0.0"}:${Number(params.local_port ?? 8080)}`;
+  },
   sessionPresentation: {
     defaultName: params => {
       const transport = params.transport === "udp" ? "UDP" : "TCP";
       const role = params.role === "server" ? "Server" : "Client";
       return `Network Debug @ ${transport} ${role}`;
     },
+    subtitle: networkSubtitle,
+  },
+  runtimeStore: networkRuntimeStore,
+  sendData: sendNetworkData,
+  sendTarget: NetworkSendTarget,
+  sendTargetVisible: params => isNetworkSendTargetVisible(params),
+  sessionTree: {
+    groupKey: (params, fallback) => {
+      const transport = params.transport === "udp" ? "udp" : "tcp";
+      const role = params.role === "server" ? "server" : "client";
+      return `${fallback}/${transport}/${role}`;
+    },
+    children: (sessionId, params, runtimeSnapshot) => {
+      if (params.role !== "server") return [];
+      const runtime = runtimeSnapshot as NetworkRuntimeSnapshot;
+      return runtime.peers.map(peer => ({
+        id: peer.peerId,
+        name: peer.name,
+        subtitle: peer.addr,
+        state: peer.state,
+        selected: runtime.selectedPeerId === peer.peerId,
+        onSelect: () => selectNetworkPeer(sessionId, peer.peerId),
+        menuItems: peer.state === "connected"
+          ? [{
+              id: "disconnect",
+              label: i18n.t("network.disconnect", { defaultValue: "Disconnect Peer" }),
+              icon: "stop" as const,
+              run: () => disconnectNetworkPeer(sessionId, peer.peerId),
+            }]
+          : [{
+              id: "remove",
+              label: i18n.t("network.clearClosed", { defaultValue: "Remove Peer" }),
+              icon: "trash" as const,
+              danger: true,
+              run: () => clearNetworkPeer(sessionId, peer.peerId),
+            }],
+      }));
+    },
+    onParentSelect: (sessionId, params) => {
+      if (params.role !== "server") return;
+      const firstConnected = getNetworkRuntime(sessionId).peers.find(peer => peer.state === "connected");
+      selectNetworkPeer(sessionId, firstConnected?.peerId ?? null);
+    },
   },
   customView: NetworkDebugSessionView,
+  rightSidebar: { available: () => true },
   statusBarItems,
 });
 

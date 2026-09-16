@@ -18,11 +18,7 @@ import FileBrowserRenderer from "../../renderers/FileBrowserRenderer";
 import StatsDashboardRenderer from "../../renderers/StatsDashboardRenderer";
 import CustomRenderer from "../../renderers/CustomRenderer";
 import DisconnectedSessionContextMenu from "./DisconnectedSessionContextMenu";
-import {
-  getPaneDisplayLabel,
-  type SessionPresentationLabels,
-  type SessionPresentationNetworkState,
-} from "./sessionPresentation";
+import { getPaneDisplayLabel } from "./sessionPresentation";
 import styles from "./SplitView.module.css";
 
 const MIN_PANE_PX = 160;
@@ -106,9 +102,7 @@ function getConnectionStateFallback(state: TabInfo["state"]): string {
 
 function shouldShowDisconnectedPlaceholder(tab: TabInfo, contentType: string): boolean {
   if (contentType === "terminal") return !terminalHasRuntime(tab);
-  // Network Debug 的断开态以前由自定义 renderer 自己画空状态，导致图标框/字号与其它 Pane 漂移。
-  // 断开时直接复用 SplitView 的统一 PaneEmptyState；连接/连接中仍交给 renderer。
-  return tab.pluginId === "network" && tab.state === "disconnected";
+  return tab.state === "disconnected";
 }
 
 function PaneEmptyState({ message }: { message: string }) {
@@ -181,16 +175,6 @@ export default function SplitView({
     return map;
   }, [sessionState.tabs]);
 
-  const presentationLabels = useMemo<SessionPresentationLabels>(() => ({
-    trdpCapture: t("trdpSidebar.capture"),
-    trdpUnconfigured: t("trdpSidebar.unconfigured"),
-    trdpDisabled: t("trdpSidebar.disabled"),
-  }), [t]);
-
-  const presentationNetworkState = useMemo<SessionPresentationNetworkState>(() => ({
-    networkPeers: sessionState.networkPeers,
-    networkLocalAddrs: sessionState.networkLocalAddrs,
-  }), [sessionState.networkLocalAddrs, sessionState.networkPeers]);
 
   const terminalPlacements = useMemo(() => {
     const result: Record<string, PaneRect> = {};
@@ -311,7 +295,7 @@ export default function SplitView({
     y: paneMenu?.y ?? 0,
     visible: paneMenu !== null,
     session: null,
-    peer: null,
+    extension: null,
   }), [paneMenu]);
 
   const paneMenuItems = useMemo<ContextMenuItem[]>(() => {
@@ -452,7 +436,7 @@ export default function SplitView({
         const showSelection = paneCount > 1 && selected;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
         const paneTitle = tab
-          ? getPaneDisplayLabel(tab, tabsById, presentationLabels, presentationNetworkState)
+          ? getPaneDisplayLabel(tab, tabsById)
           : t("split.emptyPane", "空分屏");
         const paneTitleTooltip = tab?.elevated
           ? `${paneTitle} · ${t("localShell.administrator", "管理员")}`

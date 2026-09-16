@@ -1,28 +1,25 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { useSession, type NetworkPeerEntry } from "../../context/SessionContext";
+import { useSession } from "../../context/SessionContext";
 import { useSplitLayout } from "../../context/SplitLayoutContext";
 import { useContextMenu } from "../../hooks/useContextMenu";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ContextMenu from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import PaneMiniMap from "./PaneMiniMap";
-import {
-  getSessionSubtitle,
-  type SessionPresentationLabels,
-  type SessionPresentationNetworkState,
-} from "./sessionPresentation";
+import { getSessionSubtitle } from "./sessionPresentation";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import type { TabInfo } from "../../context/SessionContext";
-import { pluginRegistry } from "../../core/plugin-registry";
+import { pluginRegistry, type PluginSessionTreeChild } from "../../core/plugin-registry";
+import { usePluginRuntimeRevision } from "../../core/usePluginRuntime";
 import styles from "./SessionSidebar.module.css";
 
 /** 树节点（扁平 TabInfo 渲染时推导；网络对端为 peerChildren，非标签页） */
 interface TreeNode {
   tab: TabInfo;
   children: TabInfo[];
-  peerChildren: NetworkPeerEntry[];
+  extensionChildren: PluginSessionTreeChild[];
 }
 
 interface SessionSidebarProps {
@@ -43,43 +40,24 @@ interface SessionSidebarProps {
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
-  const { state, switchTab, disconnect, deleteSession, reconnectSession, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
+  const { state, switchTab, disconnect, deleteSession, reconnectSession, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel } = useSession();
   const { state: splitLayout, sessionToPane, paneCount, selectPane } = useSplitLayout();
   const [search, setSearch] = useState("");
-  const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
+  const { menu, openMenu, openExtensionMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
   const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
-  const presentationLabels = useMemo<SessionPresentationLabels>(() => ({
-    trdpCapture: t("trdpSidebar.capture"),
-    trdpUnconfigured: t("trdpSidebar.unconfigured"),
-    trdpDisabled: t("trdpSidebar.disabled"),
-  }), [t]);
-  const presentationNetworkState = useMemo<SessionPresentationNetworkState>(() => ({
-    networkPeers: state.networkPeers,
-    networkLocalAddrs: state.networkLocalAddrs,
-  }), [state.networkLocalAddrs, state.networkPeers]);
+  const runtimeRevision = usePluginRuntimeRevision();
 
-  // 构建树形结构（排序：connection_type → [网络会话: 传输层→角色] → endpoint → name）
+  // 构建树形结构。插件可贡献非 Session 的后台实体，但公共层只消费通用节点合同。
   const tree = useMemo<TreeNode[]>(() => {
-    // 网络调试会话按 params 显式分组（transport/role），避免 endpoint 字符串偶然顺序
     const groupKey = (tab: TabInfo): string => {
-      if (tab.pluginId === "network") {
-        const p = (tab.params ?? {}) as Record<string, unknown>;
-        const transport = (p.transport as string | undefined) ?? "tcp";
-        const role = (p.role as string | undefined) ?? "client";
-        return `network/${transport}/${role}`;
-      }
-      return tab.connection_type;
+      const plugin = pluginRegistry.get(tab.pluginId);
+      return plugin?.sessionTree?.groupKey?.(tab.params ?? {}, tab.connection_type)
+        ?? tab.connection_type;
     };
-    // client 是单连接会话（无对端树）；仅 server 展示对端子节点
-    const isNetworkClient = (tab: TabInfo): boolean => {
-      if (tab.pluginId !== "network") return false;
-      const p = (tab.params ?? {}) as Record<string, unknown>;
-      return ((p.role as string | undefined) ?? "client") === "client";
-    };
-    const roots = [...state.tabs.filter(t => !t.parentId)];
+    const roots = [...state.tabs.filter(tab => !tab.parentId)];
     roots.sort((a, b) => {
       const ga = groupKey(a);
       const gb = groupKey(b);
@@ -88,12 +66,16 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       if (endpointCmp !== 0) return endpointCmp;
       return a.name.localeCompare(b.name);
     });
-    return roots.map(root => ({
-      tab: root,
-      children: state.tabs.filter(t => t.parentId === root.id),
-      peerChildren: isNetworkClient(root) ? [] : (state.networkPeers[root.id] ?? []),
-    }));
-  }, [state.tabs, state.networkPeers]);
+    return roots.map(root => {
+      const plugin = pluginRegistry.get(root.pluginId);
+      const runtime = plugin?.runtimeStore?.getSnapshot(root.id);
+      return {
+        tab: root,
+        children: state.tabs.filter(tab => tab.parentId === root.id),
+        extensionChildren: plugin?.sessionTree?.children(root.id, root.params ?? {}, runtime) ?? [],
+      };
+    });
+  }, [state.tabs, runtimeRevision]);
 
   // 最后一个子项删除后清理 expandedIds
   useEffect(() => {
@@ -102,7 +84,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       let changed = false;
       for (const id of prev) {
         const node = tree.find(n => n.tab.id === id);
-        if (!node || (node.children.length === 0 && node.peerChildren.length === 0)) {
+        if (!node || (node.children.length === 0 && node.extensionChildren.length === 0)) {
           next.delete(id);
           changed = true;
         }
@@ -131,30 +113,20 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     prevTabIdsRef.current = currentIds;
   }, [state.tabs]);
 
-  // 自动展开：网络调试对端加入 → 展开所属容器节点（仅 server 容器，client 无对端树）
-  const prevPeerIdsRef = useRef<Set<string>>(new Set());
-
+  // 插件后台实体新增时自动展开所属根会话。
+  const prevExtensionIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const currentIds = new Set<string>();
-    for (const peers of Object.values(state.networkPeers)) {
-      for (const p of peers) currentIds.add(p.peerId);
+    for (const node of tree) {
+      for (const child of node.extensionChildren) currentIds.add(`${node.tab.id}:${child.id}`);
     }
-    for (const [cid, peers] of Object.entries(state.networkPeers)) {
-      // client 容器不渲染对端子节点：跳过，避免展开空容器
-      const tab = state.tabs.find(t => t.id === cid);
-      const isNetClient = tab?.pluginId === "network"
-        && ((tab.params as Record<string, unknown> | undefined)?.role ?? "client") === "client";
-      if (isNetClient) continue;
-      const hasNew = peers.some(p => !prevPeerIdsRef.current.has(p.peerId));
-      if (hasNew) {
-        setExpandedIds(prev => {
-          if (prev.has(cid)) return prev;
-          return new Set(prev).add(cid);
-        });
+    for (const node of tree) {
+      if (node.extensionChildren.some(child => !prevExtensionIdsRef.current.has(`${node.tab.id}:${child.id}`))) {
+        setExpandedIds(prev => new Set(prev).add(node.tab.id));
       }
     }
-    prevPeerIdsRef.current = currentIds;
-  }, [state.networkPeers, state.tabs]);
+    prevExtensionIdsRef.current = currentIds;
+  }, [tree]);
 
   // 按搜索过滤后的扁平列表（仅用于搜索匹配，树形结构渲染时过滤）
   const searchLower = search.toLowerCase();
@@ -162,19 +134,19 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     if (!search) return tree;
     return tree.filter(node => {
       const parentMatch = node.tab.name.toLowerCase().includes(searchLower)
-        || getSessionSubtitle(node.tab, presentationLabels, presentationNetworkState).toLowerCase().includes(searchLower)
+        || getSessionSubtitle(node.tab).toLowerCase().includes(searchLower)
         || node.tab.endpoint.toLowerCase().includes(searchLower);
       const childMatch = node.children.some(c =>
         c.name.toLowerCase().includes(searchLower)
         || c.endpoint.toLowerCase().includes(searchLower)
       );
-      const peerMatch = node.peerChildren.some(p =>
-        p.name.toLowerCase().includes(searchLower)
-        || p.addr.toLowerCase().includes(searchLower)
+      const extensionMatch = node.extensionChildren.some(child =>
+        child.name.toLowerCase().includes(searchLower)
+        || child.subtitle.toLowerCase().includes(searchLower)
       );
-      return parentMatch || childMatch || peerMatch;
+      return parentMatch || childMatch || extensionMatch;
     });
-  }, [tree, search, presentationLabels, presentationNetworkState]);
+  }, [tree, search, searchLower]);
 
   // 展开/折叠切换
   const toggleExpand = useCallback((id: string, e: React.MouseEvent) => {
@@ -188,41 +160,33 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   }, []);
 
   const handleParentSelect = useCallback((node: TreeNode) => {
-    // 先展开（SSH connected 会话有子项 / 网络容器有对端时）
-    if (node.children.length > 0 || node.peerChildren.length > 0) {
+    if (node.children.length > 0 || node.extensionChildren.length > 0) {
       setExpandedIds(prev => new Set(prev).add(node.tab.id));
     }
-    // SessionContext 统一处理 multi_session 父会话 → 最近活动 Channel；
-    // SplitLayoutContext 监听 activeTabId，若目标已显示则跳到对应 Pane，否则放入当前 selected Pane。
     switchTab(node.tab.id);
-    // 网络 server 容器：参照 SSH 主会话，点击容器自动选中第一个已连接对端；
-    // 无对端时取消选择（UDP 网格回到"全部"时间线 / TCP 空状态）。
-    // client 是单会话（无对端树），点击即切换会话，不应取消选择唯一对端。
-    if (node.tab.pluginId === "network") {
-      const netParams = (node.tab.params ?? {}) as Record<string, unknown>;
-      if (((netParams.role as string | undefined) ?? "client") === "server") {
-        const firstPeer = node.peerChildren.find(p => p.state === "connected");
-        selectNetworkPeer(node.tab.id, firstPeer ? firstPeer.peerId : null);
-      }
-    }
+    const plugin = pluginRegistry.get(node.tab.pluginId);
+    plugin?.sessionTree?.onParentSelect?.(
+      node.tab.id,
+      node.tab.params ?? {},
+      plugin.runtimeStore?.getSnapshot(node.tab.id),
+    );
     onSelectSession?.(node.tab.id);
-  }, [switchTab, onSelectSession, selectNetworkPeer]);
+  }, [switchTab, onSelectSession]);
 
   const handleChildSelect = useCallback((child: TabInfo) => {
     switchTab(child.id);
     onSelectSession?.(child.id);
   }, [switchTab, onSelectSession]);
 
-  /** 网络对端：路由到容器 tab + 选中该对端（详情区/发送栏目标跟随） */
-  const handlePeerChildSelect = useCallback((container: TabInfo, peerId: string) => {
+  const handleExtensionChildSelect = useCallback((container: TabInfo, child: PluginSessionTreeChild) => {
     switchTab(container.id);
-    selectNetworkPeer(container.id, peerId);
+    child.onSelect?.();
     onSelectSession?.(container.id);
-  }, [switchTab, selectNetworkPeer, onSelectSession]);
+  }, [switchTab, onSelectSession]);
 
-  const handlePeerContextMenu = useCallback((e: React.MouseEvent, container: TabInfo, peerId: string) => {
-    openPeerMenu(e, container, container.id, peerId);
-  }, [openPeerMenu]);
+  const handleExtensionContextMenu = useCallback((e: React.MouseEvent, container: TabInfo, childId: string) => {
+    openExtensionMenu(e, container, container.id, childId);
+  }, [openExtensionMenu]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, tab: TabInfo) => {
     e.preventDefault();
@@ -239,26 +203,23 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const getMenuItems = useCallback((): ContextMenuItem[] => {
     if (!menu.session) return [];
 
-    // 网络调试对端树节点
-    if (menu.peer) {
-      const peers = state.networkPeers[menu.peer.containerId] ?? [];
-      const peer = peers.find(p => p.peerId === menu.peer!.peerId);
-      if (!peer) return [];
-      if (peer.state === "connected") {
-        return [
-          { id: "disconnect_peer", label: t("network.disconnect") || "Disconnect Peer", icon: "stop" },
-        ];
-      }
-      return [
-        { id: "clear_peer", label: t("network.clearClosed") || "Remove Peer", icon: "trash", danger: true },
-      ];
+    if (menu.extension) {
+      const node = tree.find(item => item.tab.id === menu.extension!.parentSessionId);
+      const child = node?.extensionChildren.find(item => item.id === menu.extension!.childId);
+      return (child?.menuItems ?? []).map(item => ({
+        id: item.id,
+        label: item.label,
+        icon: item.icon,
+        danger: item.danger,
+      }));
     }
 
     const { state: sessionState, parentId, pluginId } = menu.session;
-    const capabilities = pluginRegistry.get(pluginId)?.manifest.capabilities ?? [];
+    const registration = pluginRegistry.get(pluginId);
+    const capabilities = registration?.manifest.capabilities ?? [];
     const supportsMultiple = capabilities.includes("multi_session");
     const supportsElevation = capabilities.includes("elevated_session")
-      && menu.session.params?.shell_kind !== "wsl";
+      && (registration?.canCreateElevatedSession?.(menu.session.params ?? {}) ?? true);
 
     // 子 channel 菜单
     if (parentId) {
@@ -267,7 +228,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       ];
     }
 
-    // ── 父级 SSH / TFTP / Serial 会话 ──
+    // ── 根会话菜单 ──
     if (sessionState === "connected" || sessionState === "transferring") {
       const isLogging = loggingSessions.has(menu.session.id);
       const supportsLogging = capabilities.includes("session_logging");
@@ -302,9 +263,15 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     }
     items.push({ id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true });
     return items;
-  }, [menu.session, menu.peer, state.networkPeers, t, loggingSessions]);
+  }, [menu.session, menu.extension, tree, t, loggingSessions]);
 
   const handleMenuSelect = useCallback(async (itemId: string) => {
+    if (menu.extension) {
+      const node = tree.find(item => item.tab.id === menu.extension!.parentSessionId);
+      const child = node?.extensionChildren.find(item => item.id === menu.extension!.childId);
+      await child?.menuItems?.find(item => item.id === itemId)?.run();
+      return;
+    }
     const sessionId = menu.session?.id || "";
 
     switch (itemId) {
@@ -327,10 +294,12 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       }
       case "connect_elevated": {
         const tab = state.tabs.find(t => t.id === sessionId);
-        const supportsElevation = tab
-          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("elevated_session")
-            && tab.params?.shell_kind !== "wsl"
-          : false;
+        const registration = tab ? pluginRegistry.get(tab.pluginId) : undefined;
+        const supportsElevation = Boolean(
+          tab
+          && registration?.manifest.capabilities.includes("elevated_session")
+          && (registration.canCreateElevatedSession?.(tab.params ?? {}) ?? true),
+        );
         if (!tab || !supportsElevation) break;
         if (tab.state === "connected" || tab.state === "transferring") {
           // 与普通“新建终端”一致：保留右键前 Pane 作为新管理员终端落点。
@@ -366,22 +335,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         }
         break;
       }
-      case "disconnect_peer": {
-        const mp = menu.peer;
-        if (mp) {
-          await disconnectNetworkPeer(mp.containerId, mp.peerId);
-        }
-        break;
-      }
-      case "clear_peer": {
-        const mp = menu.peer;
-        if (mp) {
-          await clearNetworkPeer(mp.containerId, mp.peerId);
-        }
-        break;
-      }
     }
-  }, [menu.session, menu.peer, state.tabs, reconnectSession, disconnect, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
+  }, [menu.session, menu.extension, tree, state.tabs, reconnectSession, disconnect, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog]);
 
   const confirmSessionDelete = useCallback(() => {
     const sessionId = pendingDeleteSessionId;
@@ -421,16 +376,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         ) : (
           filteredTree.map(node => {
             const isExpanded = expandedIds.has(node.tab.id);
-            const hasChildren = node.children.length > 0 || node.peerChildren.length > 0;
-            const isNetwork = node.tab.pluginId === "network";
+            const hasChildren = node.children.length > 0 || node.extensionChildren.length > 0;
             const supportsMultiple = pluginRegistry
               .get(node.tab.pluginId)?.manifest.capabilities.includes("multi_session") ?? false;
-            const canExpand = hasChildren && (supportsMultiple || isNetwork);
-            const parentEndpoint = getSessionSubtitle(
-              node.tab,
-              presentationLabels,
-              presentationNetworkState,
-            );
+            const canExpand = (node.children.length > 0 && supportsMultiple) || node.extensionChildren.length > 0;
+            const parentEndpoint = getSessionSubtitle(node.tab);
             const parentPaneId = sessionToPane[node.tab.id];
 
             return (
@@ -543,30 +493,30 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                       </motion.div>
                       );
                     })}
-                    {/* 网络调试对端（非标签页树节点） */}
-                    {node.peerChildren.map(p => (
+                    {/* 插件后台实体（不是 Session tab） */}
+                    {node.extensionChildren.map(child => (
                       <motion.div
-                        key={p.peerId}
-                        className={`${styles.childItem} ${state.selectedNetworkPeer[node.tab.id] === p.peerId ? styles.active : ""}`}
+                        key={child.id}
+                        className={`${styles.childItem} ${child.selected ? styles.active : ""}`}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={() => handlePeerChildSelect(node.tab, p.peerId)}
-                        onContextMenu={(e) => handlePeerContextMenu(e, node.tab, p.peerId)}
+                        onClick={() => handleExtensionChildSelect(node.tab, child)}
+                        onContextMenu={(e) => handleExtensionContextMenu(e, node.tab, child.id)}
                       >
                         <div className={styles.itemLeft}>
                           <Icon
-                            name={p.state === "connected" ? "status-connected" : "status-disconnected"}
+                            name={child.state === "connected" ? "status-connected" : child.state === "connecting" ? "status-connecting" : "status-disconnected"}
                             size={8}
                           />
                           <div className={styles.itemText}>
-                            <div className={styles.itemName} title={p.name}>{p.name}</div>
-                            <div className={styles.itemEndpoint} title={p.addr}>{p.addr}</div>
+                            <div className={styles.itemName} title={child.name}>{child.name}</div>
+                            <div className={styles.itemEndpoint} title={child.subtitle}>{child.subtitle}</div>
                           </div>
                         </div>
-                        {state.selectedNetworkPeer[node.tab.id] === p.peerId && (
+                        {child.selected && (
                           <motion.div
                             className={styles.activeBar}
-                            layoutId={`peerBar-${node.tab.id}`}
+                            layoutId={`extensionBar-${node.tab.id}`}
                             transition={{ type: "spring", stiffness: 500, damping: 30 }}
                           />
                         )}

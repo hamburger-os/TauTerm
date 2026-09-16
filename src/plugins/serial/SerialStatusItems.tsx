@@ -7,8 +7,10 @@ import {
   StatusBarText,
 } from "../../components/Layout/StatusBarPrimitives";
 import type { StatusBarContext } from "../../core/plugin-registry";
+import { usePluginRuntime } from "../../core/usePluginRuntime";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { formatPortParams } from "../../utils/format";
+import type { SerialRuntimeSnapshot } from "./runtime-store";
 
 export function SerialLinkStatus({ activeTab }: StatusBarContext) {
   if (!activeTab?.params) return null;
@@ -20,8 +22,9 @@ export function SerialTypeStatus() {
   return <StatusBarBadge>{t("statusBar.typeSerial")}</StatusBarBadge>;
 }
 
-export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
+export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarContext) {
   const { t } = useTranslation();
+  const runtime = usePluginRuntime<SerialRuntimeSnapshot>("serial", sessionId);
   const {
     driverMissing,
     driverInstalling,
@@ -34,11 +37,11 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
   if (!activeTab) return null;
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
   const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
-  const endpoints = activeTab.virtualVirtualEndpoints ?? [];
-  const error = connected ? activeTab.virtualPortError : undefined;
-  const driverError = activeTab.virtualPortErrorKind === "files_missing"
-    || activeTab.virtualPortErrorKind === "permission"
-    || activeTab.virtualPortErrorKind === "driver_missing";
+  const endpoints = runtime.endpoints ?? [];
+  const error = connected ? runtime.error : undefined;
+  const driverError = runtime.errorKind === "files_missing"
+    || runtime.errorKind === "permission"
+    || runtime.errorKind === "driver_missing";
 
   return (
     <StatusBarGroup>
@@ -52,13 +55,13 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
         <>
           <StatusBarText tone="warning" title={error}>
             <Icon name="warning" size="xs" />{" "}
-            {activeTab.virtualPortErrorKind === "files_missing"
+            {runtime.errorKind === "files_missing"
               ? t("serial.virtualPort.filesMissing")
-              : activeTab.virtualPortErrorKind === "permission"
+              : runtime.errorKind === "permission"
                 ? t("serial.virtualPort.permissionRequired")
-                : activeTab.virtualPortErrorKind === "driver_missing"
+                : runtime.errorKind === "driver_missing"
                   ? t("serial.virtualPort.notInstalled")
-                  : activeTab.virtualPortErrorKind === "bridge_failed"
+                  : runtime.errorKind === "bridge_failed"
                     ? t("serial.virtualPortBridgeFailed")
                     : t("serial.virtualPort.createFailed")}
           </StatusBarText>
