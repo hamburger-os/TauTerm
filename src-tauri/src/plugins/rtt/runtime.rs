@@ -104,7 +104,12 @@ impl HistoryStore {
             (Some(history), None) => history
                 .chunks
                 .iter()
-                .skip(history.chunks.len().saturating_sub(MAX_HISTORY_RESPONSE_CHUNKS))
+                .skip(
+                    history
+                        .chunks
+                        .len()
+                        .saturating_sub(MAX_HISTORY_RESPONSE_CHUNKS),
+                )
                 .collect::<Vec<_>>(),
             (None, _) => Vec::new(),
         }
@@ -367,7 +372,10 @@ impl RttRuntime {
             if let Some(tx) = tx_slot.take() {
                 if !self.worker_exited.load(Ordering::Acquire) {
                     let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-                    if tx.try_send(WorkerCommand::Shutdown { reply: reply_tx }).is_ok() {
+                    if tx
+                        .try_send(WorkerCommand::Shutdown { reply: reply_tx })
+                        .is_ok()
+                    {
                         let _ = reply_rx.recv_timeout(Duration::from_secs(2));
                     }
                 }
@@ -433,7 +441,13 @@ mod tests {
         }
         let response = history.response(0, None);
         assert_eq!(response.chunks.len(), MAX_HISTORY_RESPONSE_CHUNKS);
-        assert_eq!(response.chunks.first().map(|chunk| chunk.sequence), Some(89));
-        assert_eq!(response.chunks.last().map(|chunk| chunk.sequence), Some(600));
+        assert_eq!(
+            response.chunks.first().map(|chunk| chunk.sequence),
+            Some(89)
+        );
+        assert_eq!(
+            response.chunks.last().map(|chunk| chunk.sequence),
+            Some(600)
+        );
     }
 }
