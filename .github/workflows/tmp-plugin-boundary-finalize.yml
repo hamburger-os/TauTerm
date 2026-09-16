@@ -21,7 +21,33 @@ jobs:
           fetch-depth: 0
 
       - name: Apply final patch
-        run: python3 scripts/tmp_finalize_plugin_boundary.py
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/tmp_finalize_plugin_boundary.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''needle = "- 插件私有运行态必须留在插件自己的 Session store/hook；公共状态栏上下文只提供 Session ID、连接状态、端点、通用参数和统计等协议无关信息。"
+          if needle not in text:
+              raise SystemExit("UI_FOUNDATION error-policy anchor missing")
+          text = text.replace(
+              needle,
+              needle + "\\n- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。",
+              1,
+          )'''
+          new = '''marker = "## 设计边界\\n\\n"
+          if marker not in text:
+              raise SystemExit("UI_FOUNDATION design-boundary section missing")
+          text = text.replace(
+              marker,
+              marker + "- 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。\\n",
+              1,
+          )'''
+          if old not in text:
+              raise SystemExit("temporary script documentation patch block missing")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python3 scripts/tmp_finalize_plugin_boundary.py
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
