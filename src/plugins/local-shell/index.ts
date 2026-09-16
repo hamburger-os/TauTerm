@@ -46,6 +46,10 @@ registerPlugin({
     return typeof normalized.executable === "string" && normalized.executable.trim().length > 0;
   },
   resolveEndpoint: params => String(params.cwd ?? "").trim(),
+  sessionPresentation: {
+    defaultName: (_params, endpoint) => `Shell @ ${endpoint}`,
+    subtitle: (_params, endpoint) => endpoint,
+  },
   resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),
   canCreateElevatedSession: params => params.shell_kind !== "wsl",
   toolbarItems: [],
