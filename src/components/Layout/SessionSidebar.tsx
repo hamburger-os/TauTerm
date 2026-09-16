@@ -215,10 +215,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     }
 
     const { state: sessionState, parentId, pluginId } = menu.session;
-    const capabilities = pluginRegistry.get(pluginId)?.manifest.capabilities ?? [];
+    const registration = pluginRegistry.get(pluginId);
+    const capabilities = registration?.manifest.capabilities ?? [];
     const supportsMultiple = capabilities.includes("multi_session");
     const supportsElevation = capabilities.includes("elevated_session")
-      && menu.session.params?.shell_kind !== "wsl";
+      && (registration?.canCreateElevatedSession?.(menu.session.params ?? {}) ?? true);
 
     // 子 channel 菜单
     if (parentId) {
@@ -227,7 +228,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       ];
     }
 
-    // ── 父级 SSH / TFTP / Serial 会话 ──
+    // ── 根会话菜单 ──
     if (sessionState === "connected" || sessionState === "transferring") {
       const isLogging = loggingSessions.has(menu.session.id);
       const supportsLogging = capabilities.includes("session_logging");
@@ -293,10 +294,12 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       }
       case "connect_elevated": {
         const tab = state.tabs.find(t => t.id === sessionId);
-        const supportsElevation = tab
-          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("elevated_session")
-            && tab.params?.shell_kind !== "wsl"
-          : false;
+        const registration = tab ? pluginRegistry.get(tab.pluginId) : undefined;
+        const supportsElevation = Boolean(
+          tab
+          && registration?.manifest.capabilities.includes("elevated_session")
+          && (registration.canCreateElevatedSession?.(tab.params ?? {}) ?? true),
+        );
         if (!tab || !supportsElevation) break;
         if (tab.state === "connected" || tab.state === "transferring") {
           // 与普通“新建终端”一致：保留右键前 Pane 作为新管理员终端落点。

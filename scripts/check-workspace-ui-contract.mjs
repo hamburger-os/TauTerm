@@ -20,6 +20,18 @@ const presentationHelper = await readFile(
   path.join(ROOT, "src", "components", "Layout", "sessionPresentation.ts"),
   "utf8",
 );
+const connectDialog = await readFile(
+  path.join(ROOT, "src", "components", "Layout", "ConnectDialog.tsx"),
+  "utf8",
+);
+const sessionContext = await readFile(
+  path.join(ROOT, "src", "context", "SessionContext.tsx"),
+  "utf8",
+);
+const disconnectedSessionMenu = await readFile(
+  path.join(ROOT, "src", "components", "Layout", "DisconnectedSessionContextMenu.tsx"),
+  "utf8",
+);
 
 assert.doesNotMatch(
   splitView,
@@ -57,6 +69,26 @@ assert.doesNotMatch(
   "Common Session presentation must not contain built-in protocol branches",
 );
 
+for (const [label, source] of [
+  ["SessionSidebar", sidebar],
+  ["SplitView", splitView],
+  ["SessionContext", sessionContext],
+  ["DisconnectedSessionContextMenu", disconnectedSessionMenu],
+  ["sessionPresentation", presentationHelper],
+]) {
+  assert.doesNotMatch(source, /\bshell_kind\b/, `${label} must not interpret Local Shell private configuration fields`);
+}
+assert.doesNotMatch(
+  connectDialog,
+  /\b(?:isSerial|isSsh|isTftp|isTelnet|isIperf|isNetwork|isTrdp|isLocalShell)\b|["'](?:serial|ssh|tftp|telnet|iperf|network|trdp|modbus|local-shell)["']/,
+  "ConnectDialog must not contain built-in plugin branches or IDs",
+);
+for (const contribution of ["defaultConnectionParams", "prepareConnectionParams", "resolveEndpoint"]) {
+  assert.ok(connectDialog.includes(contribution), `ConnectDialog must delegate ${contribution} to PluginRegistration`);
+}
+assert.match(sidebar, /canCreateElevatedSession/, "SessionSidebar must delegate elevated-session policy to the plugin contribution");
+assert.match(disconnectedSessionMenu, /canCreateElevatedSession/, "Disconnected Pane menu must delegate elevated-session policy to the plugin contribution");
+
 const baseSession = {
   endpoint: "COM1",
   params: {},
@@ -86,7 +118,7 @@ assert.equal(
   "Child terminal identity must continue to use its runtime endpoint",
 );
 
-for (const plugin of ["ssh", "iperf", "trdp", "network", "serial", "modbus"]) {
+for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "network", "serial", "modbus"]) {
   const extension = plugin === "modbus" || plugin === "trdp" || plugin === "network" ? "tsx" : "ts";
   const source = await readFile(
     path.join(ROOT, "src", "plugins", plugin, `index.${extension}`),
@@ -96,6 +128,11 @@ for (const plugin of ["ssh", "iperf", "trdp", "network", "serial", "modbus"]) {
     source,
     /sessionPresentation\s*:/,
     `${plugin} must own its Session presentation contribution`,
+  );
+  assert.match(
+    source,
+    /connectForm\s*:/,
+    `${plugin} must own its connection form contribution`,
   );
 }
 
