@@ -9,6 +9,7 @@ use probe_rs::probe::{list::Lister, DebugProbeSelector, WireProtocol};
 use probe_rs::rtt::{try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion};
 use probe_rs::{Permissions, Session};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 pub struct ProbeRsRttBackend {
     session: Session,
@@ -16,6 +17,8 @@ pub struct ProbeRsRttBackend {
     core_index: usize,
     target: String,
     probe_label: String,
+    region: ScanRegion,
+    attach_timeout: Duration,
     channels: Vec<RttChannelInfo>,
 }
 
@@ -123,6 +126,8 @@ impl ProbeRsRttBackend {
             core_index: config.core_index,
             target,
             probe_label,
+            region,
+            attach_timeout: config.attach_timeout,
             channels,
         })
     }
@@ -236,7 +241,18 @@ impl RttBackend for ProbeRsRttBackend {
     }
 
     fn refresh_channels(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
-        self.channels = collect_channels(&mut self.rtt)?;
+        let mut core = self.session.core(self.core_index).map_err(|error| {
+            RttError::new(
+                RttErrorCode::ProbeDisconnected,
+                format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
+            )
+        })?;
+        let mut refreshed = try_attach_to_rtt(&mut core, self.attach_timeout, &self.region)
+            .map_err(map_rtt_attach_error)?;
+        drop(core);
+        let channels = collect_channels(&mut refreshed)?;
+        self.rtt = refreshed;
+        self.channels = channels;
         Ok(self.channels.clone())
     }
 }
