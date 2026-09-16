@@ -4,12 +4,14 @@ import ModbusConnectForm from "./ModbusConnectForm";
 import ModbusSessionView from "./ModbusSessionView";
 import ModbusStatusBarItem from "./ModbusStatusBarItem";
 import { modbusLocales } from "./locales";
-import { normalizeModbusSessionParams } from "./model";
+import { defaultModbusSessionParams, normalizeModbusSessionParams } from "./model";
 import { modbusEndpointLabel, modbusSessionTitle } from "./presentation";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: ModbusConnectForm,
+  defaultConnectionParams: () => defaultModbusSessionParams(),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
   isConnectionConfigValid: params => {
     const config = normalizeModbusSessionParams(params);
     if (config.mode === "tcp") {
@@ -20,6 +22,7 @@ registerPlugin({
     }
     return config.serial_port.trim().length > 0;
   },
+  resolveEndpoint: params => modbusEndpointLabel(params),
   sessionPresentation: {
     defaultName: params => modbusSessionTitle(params),
     subtitle: params => modbusEndpointLabel(params),
