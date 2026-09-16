@@ -8,7 +8,7 @@ pub const PLUGIN_ID: &str = "serial";
 pub(crate) mod commands;
 
 use crate::kernel::plugin_adapter::{
-    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
@@ -84,7 +84,7 @@ impl SerialRuntime {
                     manager.pending_orphan_count()
                 );
             }
-        };
+        }
     }
 
     /// 幂等关闭 Serial 私有运行时资源。
@@ -423,10 +423,6 @@ impl ProtocolAdapter for SerialAdapter {
             .collect())
     }
 
-    fn content_type(&self) -> ContentType {
-        ContentType::Terminal
-    }
-
     fn teardown_delay(&self) -> std::time::Duration {
         #[cfg(target_os = "windows")]
         {
@@ -500,11 +496,5 @@ mod tests {
             "Adapter (COM6)"
         );
         assert_eq!(normalize_device_label("设备适配器", "COM5"), "设备适配器");
-    }
-
-    #[test]
-    fn serial_adapter_contract_exposes_terminal_content_type() {
-        let adapter = SerialAdapter::new();
-        assert_eq!(adapter.content_type(), ContentType::Terminal);
     }
 }
