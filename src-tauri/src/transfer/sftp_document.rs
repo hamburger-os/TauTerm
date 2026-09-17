@@ -451,14 +451,7 @@ async fn commit_document_temp(
     }
 
     let backup_snapshot = if expected_version.is_some() {
-        match read_snapshot(
-            session,
-            sftp_cache,
-            &backup_path,
-            DOCUMENT_EDIT_LIMIT + 1,
-        )
-        .await
-        {
+        match read_snapshot(session, sftp_cache, &backup_path, DOCUMENT_EDIT_LIMIT + 1).await {
             Ok(snapshot) => Some(snapshot),
             Err(error) => {
                 let reason = format!("提交前校验远程原文件失败: {}", error);
@@ -478,10 +471,9 @@ async fn commit_document_temp(
         if &current_version != expected {
             return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
                 Ok(()) => Ok(CommitDocumentOutcome::Conflict(current_version)),
-                Err(rollback_error) => Err(format!(
-                    "提交前检测到远程文件并发修改；{}",
-                    rollback_error
-                )),
+                Err(rollback_error) => {
+                    Err(format!("提交前检测到远程文件并发修改；{}", rollback_error))
+                }
             };
         }
     }
