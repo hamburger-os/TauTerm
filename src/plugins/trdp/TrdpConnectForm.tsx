@@ -8,6 +8,8 @@ import styles from "./TrdpConnectForm.module.css";
 import {
   STANDARD_CAPTURE_FILTER,
   captureFilterForPorts,
+  captureInterfaceRef,
+  monitorCaptureInterfaces,
   type CaptureInterface,
 } from "./model";
 
@@ -32,27 +34,46 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   const [captureInterfaces, setCaptureInterfaces] = useState<CaptureInterface[]>([]);
   const [captureInterfacesLoading, setCaptureInterfacesLoading] = useState(false);
   const [captureInterfacesError, setCaptureInterfacesError] = useState<string | null>(null);
+  const captureConfig = monitorCaptureInterfaces(params);
+  const captureInterfaceA = captureConfig.a;
+  const captureInterfaceB = captureConfig.b;
+  const [captureInterfaceBEditorEnabled, setCaptureInterfaceBEditorEnabled] = useState(
+    captureInterfaceB !== null,
+  );
 
-  const patch = (next: Record<string, unknown>) => onChange({
-    mode: "node",
-    link_a_ip: "0.0.0.0",
-    link_b_enabled: false,
-    link_b_ip: "0.0.0.0",
-    pd_port: 17224,
-    md_udp_port: 17225,
-    md_tcp_port: 17225,
-    capture_interface: "",
-    capture_interface_b_enabled: false,
-    capture_interface_b: "",
-    capture_filter_auto: bool(
-      params,
-      "capture_filter_auto",
-      str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
-    ),
-    capture_filter: STANDARD_CAPTURE_FILTER,
-    ...params,
-    ...next,
-  });
+  useEffect(() => {
+    setCaptureInterfaceBEditorEnabled(captureInterfaceB !== null);
+  }, [captureInterfaceB?.deviceName]);
+
+  const patch = (next: Record<string, unknown>) => {
+    const {
+      capture_interface: _legacyCaptureInterface,
+      capture_interface_b_enabled: _legacyCaptureInterfaceBEnabled,
+      capture_interface_b: _legacyCaptureInterfaceB,
+      ...currentParams
+    } = params;
+    void _legacyCaptureInterface;
+    void _legacyCaptureInterfaceBEnabled;
+    void _legacyCaptureInterfaceB;
+    onChange({
+      mode: "node",
+      link_a_ip: "0.0.0.0",
+      link_b_enabled: false,
+      link_b_ip: "0.0.0.0",
+      pd_port: 17224,
+      md_udp_port: 17225,
+      md_tcp_port: 17225,
+      capture_interfaces: { a: null, b: null },
+      capture_filter_auto: bool(
+        params,
+        "capture_filter_auto",
+        str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
+      ),
+      capture_filter: STANDARD_CAPTURE_FILTER,
+      ...currentParams,
+      ...next,
+    });
+  };
 
   async function refreshCaptureInterfaces() {
     setCaptureInterfacesLoading(true);
@@ -87,17 +108,18 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   const pdPort = num(params, "pd_port", 17224);
   const mdUdpPort = num(params, "md_udp_port", 17225);
   const mdTcpPort = num(params, "md_tcp_port", 17225);
-  const captureInterfaceA = str(params, "capture_interface");
-  const captureInterfaceBEnabled = bool(params, "capture_interface_b_enabled");
-  const captureInterfaceB = str(params, "capture_interface_b");
   const captureFilterAuto = bool(
     params,
     "capture_filter_auto",
     str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
   );
   const captureFilter = str(params, "capture_filter", STANDARD_CAPTURE_FILTER);
-  const captureInterfaceAKnown = captureInterfaces.some(item => item.name === captureInterfaceA);
-  const captureInterfaceBKnown = captureInterfaces.some(item => item.name === captureInterfaceB);
+  const captureInterfaceAKnown = captureInterfaces.some(
+    item => item.name === captureInterfaceA?.deviceName,
+  );
+  const captureInterfaceBKnown = captureInterfaces.some(
+    item => item.name === captureInterfaceB?.deviceName,
+  );
 
   const portFields = (
     <div className={styles.ports}>
@@ -225,19 +247,22 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
             <div className={styles.pathRow}>
               <select
                 className={`${styles.select} ${styles.pathInput} liquid-glass-input liquid-glass-select`}
-                value={captureInterfaceA}
+                value={captureInterfaceA?.deviceName ?? ""}
                 onChange={event => {
-                  const next = event.target.value;
+                  const selected = captureInterfaces.find(item => item.name === event.target.value);
+                  const nextA = selected ? captureInterfaceRef(selected) : null;
                   patch({
-                    capture_interface: next,
-                    ...(next === captureInterfaceB ? { capture_interface_b: "" } : {}),
+                    capture_interfaces: {
+                      a: nextA,
+                      b: nextA?.deviceName === captureInterfaceB?.deviceName ? null : captureInterfaceB,
+                    },
                   });
                 }}
                 disabled={captureInterfacesLoading}
               >
                 <option value="">{captureInterfacesLoading ? t("trdp.captureInterfaces.loading") : t("trdp.captureInterfaces.choose")}</option>
                 {captureInterfaceA && !captureInterfaceAKnown && (
-                  <option value={captureInterfaceA}>{captureInterfaceA}</option>
+                  <option value={captureInterfaceA.deviceName}>{captureInterfaceA.displayName}</option>
                 )}
                 {captureInterfaces.map(item => (
                   <option key={item.name} value={item.name}>
@@ -262,28 +287,41 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           <label className={`liquid-glass-toggle ${styles.toggle}`}>
             <input
               type="checkbox"
-              checked={captureInterfaceBEnabled}
-              onChange={event => patch({ capture_interface_b_enabled: event.target.checked })}
+              checked={captureInterfaceBEditorEnabled}
+              onChange={event => {
+                setCaptureInterfaceBEditorEnabled(event.target.checked);
+                if (!event.target.checked) {
+                  patch({ capture_interfaces: { a: captureInterfaceA, b: null } });
+                }
+              }}
             />
             <div />
             <span>{t("trdp.form.captureLinkB")}</span>
           </label>
 
-          {captureInterfaceBEnabled && (
+          {captureInterfaceBEditorEnabled && (
             <div className={styles.field}>
               <label className={styles.label}>{t("trdp.form.captureInterfaceB")}</label>
               <select
                 className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                value={captureInterfaceB}
-                onChange={event => patch({ capture_interface_b: event.target.value })}
+                value={captureInterfaceB?.deviceName ?? ""}
+                onChange={event => {
+                  const selected = captureInterfaces.find(item => item.name === event.target.value);
+                  patch({
+                    capture_interfaces: {
+                      a: captureInterfaceA,
+                      b: selected ? captureInterfaceRef(selected) : null,
+                    },
+                  });
+                }}
                 disabled={captureInterfacesLoading}
               >
                 <option value="">{t("trdp.captureInterfaces.choose")}</option>
-                {captureInterfaceB && !captureInterfaceBKnown && captureInterfaceB !== captureInterfaceA && (
-                  <option value={captureInterfaceB}>{captureInterfaceB}</option>
+                {captureInterfaceB && !captureInterfaceBKnown && captureInterfaceB.deviceName !== captureInterfaceA?.deviceName && (
+                  <option value={captureInterfaceB.deviceName}>{captureInterfaceB.displayName}</option>
                 )}
                 {captureInterfaces
-                  .filter(item => item.name !== captureInterfaceA)
+                  .filter(item => item.name !== captureInterfaceA?.deviceName)
                   .map(item => (
                     <option key={item.name} value={item.name}>
                       {item.description ? `${item.description} — ${item.name}` : item.name}
