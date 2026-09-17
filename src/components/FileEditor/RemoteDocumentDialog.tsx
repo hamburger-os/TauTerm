@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { SftpEntry } from "../FileManager/types";
+import GlassButton from "../common/GlassButton";
 import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import { REMOTE_DOCUMENT_ENCODINGS } from "./documentCodec";
@@ -406,30 +407,32 @@ export default function RemoteDocumentDialog({
           <div className={styles.confirmLayer} role="presentation">
             <div
               ref={closeConfirmRef}
-              className={`${styles.confirmCard} liquid-control-surface`}
+              className={`${styles.confirmCard} liquid-glass`}
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="remote-document-close-confirm-title"
               aria-describedby="remote-document-close-confirm-message"
               tabIndex={-1}
             >
-              <div id="remote-document-close-confirm-title" className={styles.confirmTitle}>{t("common.warning")}</div>
+              <div id="remote-document-close-confirm-title" className={styles.confirmTitle}>
+                {t("fileManager.modified")}
+              </div>
               <div id="remote-document-close-confirm-message" className={styles.confirmMessage}>{entry.name}</div>
-              <div className={styles.confirmActions}>
-                <button
+              <div className={styles.confirmChoices}>
+                <GlassButton
                   type="button"
-                  data-action="cancel"
-                  className="liquid-glass-button"
-                  onClick={dismissCloseConfirm}
+                  variant="danger"
+                  size="md"
+                  className={styles.confirmAction}
+                  onClick={onClose}
                 >
-                  {t("common.cancel")}
-                </button>
-                <button type="button" className="liquid-glass-button" onClick={onClose}>
                   {t("common.close")}
-                </button>
-                <button
+                </GlassButton>
+                <GlassButton
                   type="button"
-                  className="liquid-glass-button liquid-primary-button"
+                  variant="primary"
+                  size="md"
+                  className={styles.confirmAction}
                   disabled={saveDisabled}
                   onClick={async () => {
                     if (await doc.save(false)) {
@@ -440,7 +443,18 @@ export default function RemoteDocumentDialog({
                   }}
                 >
                   {t("common.save")}
-                </button>
+                </GlassButton>
+              </div>
+              <div className={styles.confirmFooter}>
+                <GlassButton
+                  type="button"
+                  variant="ghost"
+                  size="md"
+                  data-action="cancel"
+                  onClick={dismissCloseConfirm}
+                >
+                  {t("common.cancel")}
+                </GlassButton>
               </div>
             </div>
           </div>
