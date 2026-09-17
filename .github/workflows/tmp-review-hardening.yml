@@ -34,7 +34,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src-tauri/src
-          git add -u .github/workflows/tmp-review-hardening.yml
+          git add -A
           git commit -m 'fix: harden privileged virtual-port cleanup'
           git push origin HEAD:fix/virtual-port-bridge-logging
