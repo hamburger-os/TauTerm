@@ -3,7 +3,12 @@ import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/rtt.json";
 import RttConnectForm from "./RttConnectForm";
 import RttSessionView from "./RttSessionView";
-import { defaultRttParams, normalizeRttParams, rttSubtitle } from "./model";
+import {
+  defaultRttParams,
+  normalizeRttParams,
+  rttDefaultSessionName,
+  rttSubtitle,
+} from "./model";
 import { rttLocales } from "./locales";
 
 function validConfig(params: Record<string, unknown>): boolean {
@@ -32,7 +37,7 @@ export const rttPlugin = definePlugin({
   defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
   resolveEndpoint: () => "rtt",
   sessionPresentation: {
-    defaultName: () => "RTT 调试助手",
+    defaultName: params => rttDefaultSessionName(params),
     subtitle: params => rttSubtitle(params),
   },
   locales: rttLocales,
