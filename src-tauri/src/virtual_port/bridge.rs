@@ -160,11 +160,7 @@ fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
     }
 }
 
-fn finish_worker(
-    result: Result<(), String>,
-    cancel: &AtomicBool,
-    errors: &mpsc::Sender<String>,
-) {
+fn finish_worker(result: Result<(), String>, cancel: &AtomicBool, errors: &mpsc::Sender<String>) {
     if let Err(error) = result {
         if !cancel.load(Ordering::SeqCst) {
             let _ = errors.send(error);
