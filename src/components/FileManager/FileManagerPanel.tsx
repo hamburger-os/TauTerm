@@ -2,7 +2,7 @@
  * 文件管理器面板
  *
  * 在右侧栏显示 SFTP 远程文件浏览器。
- * 支持目录浏览、上传、下载、删除、重命名、新建文件/文件夹、
+ * 支持目录浏览、远程文档打开/编辑、上传、下载、删除、重命名、新建文件/文件夹、
  * 多选批量操作、右键菜单、快捷键、传输进度条。
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,13 +31,10 @@ import styles from "./FileManager.module.css";
 const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog"));
 const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
 const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
-const FilePreviewModal = lazy(() => import("./FilePreviewModal"));
+const RemoteDocumentDialog = lazy(() => import("../FileEditor/RemoteDocumentDialog"));
 
-// ── 预览能力判定 ───────────────────────────────────────
-//
-// 预览器本身基于原始字节，支持 Text / HEX；因此不再用文件扩展名把二进制
-// 普通文件挡在入口外。目录、符号链接与特殊文件仍不开放预览。
-function canPreviewEntry(entry: SftpEntry): boolean {
+// 远程文档只打开普通文件。目录有独立导航语义；符号链接和特殊文件保持 no-follow。
+function canOpenDocument(entry: SftpEntry): boolean {
   const entryType = entry.entry_type ?? (entry.is_dir ? "directory" : "file");
   return entryType === "file" && !entry.is_dir;
 }
@@ -194,14 +191,22 @@ export default function FileManagerPanel({
   const [propsLoading, setPropsLoading] = useState(false);
   const propsRequestGenerationRef = useRef(0);
 
-  // ── Preview modal state ───────────────────────────────
-  const [previewVisible, setPreviewVisible] = useState(false);
-  const [previewFileName, setPreviewFileName] = useState("");
-  const [previewData, setPreviewData] = useState<number[] | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewFileSize, setPreviewFileSize] = useState(0);
-  const previewRequestGenerationRef = useRef(0);
+  // ── Remote document state ─────────────────────────────
+  const [documentVisible, setDocumentVisible] = useState(false);
+  const [documentTarget, setDocumentTarget] = useState<SftpEntry | null>(null);
+
+  const handleOpenDocument = useCallback((explicitTarget?: SftpEntry) => {
+    const target = explicitTarget
+      ?? (ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget);
+    if (!target || !canOpenDocument(target)) return;
+    setDocumentTarget(target);
+    setDocumentVisible(true);
+  }, [ctxTarget, ms.selectedEntries]);
+
+  const closeDocument = useCallback(() => {
+    setDocumentVisible(false);
+    setDocumentTarget(null);
+  }, []);
 
   // ── Entry click / double-click ──────────────────────
   const handleEntryClick = useCallback(
@@ -217,10 +222,10 @@ export default function FileManagerPanel({
         fm.navigateTo(entry.path);
         ms.clearSelection();
       } else {
-        fm.downloadFiles([entry]);
+        handleOpenDocument(entry);
       }
     },
-    [fm, ms],
+    [fm, handleOpenDocument, ms],
   );
 
   // ── Parent directory interactions ──────────────────
@@ -593,69 +598,21 @@ export default function FileManagerPanel({
     setPropsInfo(null);
   }, []);
 
-  // ── 文件预览（使用 sftp_read_head 部分读取，无需临时文件）──
-  const handlePreview = useCallback(async () => {
-    const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
-    if (!target || !canPreviewEntry(target)) return;
-
-    const MAX_PREVIEW = 1_048_576; // 1 MB
-    const generation = ++previewRequestGenerationRef.current;
-
-    setPreviewFileName(target.name);
-    setPreviewData(null);
-    setPreviewError(null);
-    setPreviewLoading(true);
-    setPreviewVisible(true);
-    setPreviewFileSize(target.size);
-
-    try {
-      const result = await invoke<{ data: number[]; total_size: number }>(
-        "sftp_read_head_cmd",
-        {
-          sessionId,
-          remotePath: target.path,
-          maxBytes: MAX_PREVIEW,
-        },
-      );
-
-      if (generation !== previewRequestGenerationRef.current) return;
-      setPreviewData(result.data);
-      setPreviewFileSize(result.total_size);
-    } catch (error) {
-      if (generation !== previewRequestGenerationRef.current) return;
-      setPreviewError(String(error));
-    } finally {
-      if (generation === previewRequestGenerationRef.current) {
-        setPreviewLoading(false);
-      }
-    }
-  }, [sessionId, ms, ctxTarget]);
-
-  const closePreview = useCallback(() => {
-    previewRequestGenerationRef.current += 1;
-    setPreviewVisible(false);
-    setPreviewLoading(false);
-    setPreviewData(null);
-    setPreviewError(null);
-  }, []);
-
-  // Connection loss invalidates transient file-service interactions. In
-  // particular, resolve an outstanding conflict prompt so its awaiting upload
-  // flow cannot remain suspended after the SSH/SFTP channel disappears.
+  // Connection loss invalidates transient file-service interactions such as context menus,
+  // property reads and upload conflict prompts. RemoteDocumentDialog is intentionally not
+  // closed here: dirty editor content stays mounted and Save becomes unavailable until reconnect.
   useEffect(() => {
     if (isConnected) return;
     closeContextMenu();
     cancelDelete();
     resolveConflictPolicy(null);
     closeProperties();
-    closePreview();
   }, [
     isConnected,
     closeContextMenu,
     cancelDelete,
     resolveConflictPolicy,
     closeProperties,
-    closePreview,
   ]);
 
   // ── Inline prompt actions ───────────────────────────
@@ -780,14 +737,15 @@ export default function FileManagerPanel({
           { id: "properties", label: t("fileManager.properties") },
         ];
       }
-      // File
-      const items: ContextMenuItem[] = [
-        { id: "download", label: t("fileManager.download") },
-      ];
-      if (canPreviewEntry(ctxTarget)) {
-        items.push({ id: "preview", label: t("fileManager.preview") });
+      const items: ContextMenuItem[] = [];
+      if (canOpenDocument(ctxTarget)) {
+        items.push(
+          { id: "open", label: t("fileManager.open") },
+          { id: "sep-open-dl", label: "", type: "separator" },
+        );
       }
       items.push(
+        { id: "download", label: t("fileManager.download") },
         { id: "sep5", label: "", type: "separator" },
         { id: "rename", label: t("fileManager.rename") },
         { id: "copyPath", label: t("fileManager.copyPath") },
@@ -823,9 +781,11 @@ export default function FileManagerPanel({
         case "newFile": handleNewFile(); break;
         case "newFolder": handleNewFolder(); break;
         case "refresh": handleRefresh(); break;
-        case "open": handleOpenDir(); break;
+        case "open":
+          if (ctxTarget?.is_dir) handleOpenDir();
+          else handleOpenDocument();
+          break;
         case "download": handleDownload(); break;
-        case "preview": handlePreview(); break;
         case "rename": handleRename(); break;
         case "copyPath": handleCopyPath(); break;
         case "properties": handleProperties(); break;
@@ -834,8 +794,9 @@ export default function FileManagerPanel({
     },
     [
       closeContextMenu,
+      ctxTarget,
       handleUpload, handleUploadFolder, handleNewFile, handleNewFolder, handleRefresh,
-      handleOpenDir, handleDownload, handlePreview, handleRename,
+      handleOpenDir, handleOpenDocument, handleDownload, handleRename,
       handleCopyPath, handleProperties, handleDelete,
     ],
   );
@@ -1076,16 +1037,16 @@ export default function FileManagerPanel({
           />
         )}
 
-        {/* 文件预览弹窗（Text / HEX） */}
-        {previewVisible && (
-          <FilePreviewModal
+        {documentVisible && documentTarget && (
+          <RemoteDocumentDialog
             visible
-            fileName={previewFileName}
-            data={previewData}
-            loading={previewLoading}
-            error={previewError}
-            fileSize={previewFileSize}
-            onClose={closePreview}
+            sessionId={sessionId}
+            entry={documentTarget}
+            isConnected={isConnected}
+            onClose={closeDocument}
+            onSaved={() => {
+              if (isConnected) void fm.refresh();
+            }}
           />
         )}
       </Suspense>
