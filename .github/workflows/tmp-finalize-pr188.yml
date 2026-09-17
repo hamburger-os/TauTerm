@@ -1,4 +1,4 @@
-name: Temporary finalize PR 188
+name: Finalize PR 188
 
 on:
   push:
@@ -10,49 +10,28 @@ permissions:
 
 jobs:
   finalize:
-    if: github.event.head_commit.message == 'chore: run final PR 188 synchronization'
-    runs-on: windows-2025
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           ref: fix/virtual-port-bridge-logging
 
-      - name: Make cleanup assertion line-ending agnostic
-        shell: pwsh
+      - name: Patch Windows line-ending-sensitive regression test
+        shell: bash
         run: |
-          @'
-          from pathlib import Path
+          python3 -c 'from pathlib import Path; p=Path("src-tauri/src/virtual_port/manager.rs"); t=p.read_text(encoding="utf-8"); old="        let fail_closed = batch.find(\"if errorlevel 1 (\\\\r\\\\n  del /q\").unwrap();"; new="        let fail_closed = batch.find(\"if errorlevel 1 (\").unwrap();"; assert old in t, "cleanup assertion anchor not found"; t=t.replace(old,new,1); old2="        assert!(list < fail_closed && fail_closed < presence);"; new2="        assert!(list < fail_closed && fail_closed < presence);\\n        assert!(batch.contains(\"del /q \\\\\\\"%TAUTERM_VPORT_LIST%\\\\\\\" >nul 2>&1\"));\\n        assert!(batch.contains(\"exit /b 1\"));"; assert old2 in t, "cleanup ordering assertion anchor not found"; p.write_text(t.replace(old2,new2,1),encoding="utf-8")'
 
-          path = Path("src-tauri/src/virtual_port/manager.rs")
-          text = path.read_text(encoding="utf-8")
-          old = '        let fail_closed = batch.find("if errorlevel 1 (\\r\\n  del /q").unwrap();'
-          new = '        let fail_closed = batch.find("if errorlevel 1 (").unwrap();'
-          if old not in text:
-              raise SystemExit("cleanup assertion anchor not found")
-          text = text.replace(old, new, 1)
-
-          old_assert = '        assert!(list < fail_closed && fail_closed < presence);'
-          new_assert = '''        assert!(list < fail_closed && fail_closed < presence);
-                  assert!(batch.contains("del /q \\\"%TAUTERM_VPORT_LIST%\\\" >nul 2>&1"));
-                  assert!(batch.contains("exit /b 1"));'''
-          if old_assert not in text:
-              raise SystemExit("cleanup ordering assertion anchor not found")
-          text = text.replace(old_assert, new_assert, 1)
-          path.write_text(text, encoding="utf-8")
-          '@ | python -
-
-      - name: Format Rust
-        shell: pwsh
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml
-
-      - name: Verify targeted Windows regression
-        shell: pwsh
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml virtual_port::manager::tests::elevated_cleanup_checks_presence_inside_the_privileged_batch
-
-      - name: Commit regression fix and synchronize master
-        shell: pwsh
+      - name: Format and verify regression
+        shell: bash
         run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          cargo test --locked --manifest-path src-tauri/Cargo.toml virtual_port::manager::tests::elevated_cleanup_checks_presence_inside_the_privileged_batch
+
+      - name: Commit fix, synchronize master, and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "hamburger-os"
           git config user.email "296570182@qq.com"
           git add src-tauri/src/virtual_port/manager.rs
