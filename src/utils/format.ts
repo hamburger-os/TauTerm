@@ -6,25 +6,51 @@
 
 const BINARY_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"] as const;
 
-function formatBinary(value: number, suffix: string): string {
-  if (!Number.isFinite(value) || value <= 0) return `0 B${suffix}`;
+interface BinaryQuantity {
+  scaled: number;
+  unit: (typeof BINARY_UNITS)[number];
+  unitIndex: number;
+}
+
+function scaleBinary(value: number): BinaryQuantity | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const rawUnitIndex = Math.floor(Math.log(value) / Math.log(1024));
   const unitIndex = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
+    Math.max(rawUnitIndex, 0),
     BINARY_UNITS.length - 1,
   );
-  const scaled = value / Math.pow(1024, unitIndex);
-  const text = unitIndex === 0 ? String(Math.round(scaled)) : scaled.toFixed(1);
-  return `${text} ${BINARY_UNITS[unitIndex]}${suffix}`;
+
+  return {
+    scaled: value / Math.pow(1024, unitIndex),
+    unit: BINARY_UNITS[unitIndex],
+    unitIndex,
+  };
 }
 
 /** 格式化字节数（自动选择 B/KiB/MiB/GiB/TiB） */
 export function formatBytes(bytes: number): string {
-  return formatBinary(bytes, "");
+  const quantity = scaleBinary(bytes);
+  if (!quantity) return "0 B";
+
+  const text = quantity.unitIndex === 0
+    ? String(Math.round(quantity.scaled))
+    : quantity.scaled.toFixed(1);
+  return `${text} ${quantity.unit}`;
 }
 
 /** 格式化速率（字节/秒，自适应单位 B/s → KiB/s → MiB/s） */
 export function formatRate(bytesPerSecond: number): string {
-  return formatBinary(bytesPerSecond, "/s");
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "0 B/s";
+  if (bytesPerSecond < 1) return "<1 B/s";
+
+  const quantity = scaleBinary(bytesPerSecond);
+  if (!quantity) return "0 B/s";
+
+  const text = quantity.unitIndex === 0
+    ? String(Math.round(quantity.scaled))
+    : quantity.scaled.toFixed(1);
+  return `${text} ${quantity.unit}/s`;
 }
 
 /** 格式化秒数为 HH:MM:SS */
