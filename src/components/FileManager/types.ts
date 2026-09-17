@@ -20,8 +20,3 @@ export type {
   TransferStartAck,
   UnifiedTransferProgressPayload as UnifiedProgressPayload,
 } from '../../types/transfer';
-
-export interface ReadHeadResult {
-  data: number[];
-  total_size: number;
-}
