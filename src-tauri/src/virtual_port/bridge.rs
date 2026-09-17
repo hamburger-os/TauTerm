@@ -143,10 +143,7 @@ fn write_bytes(writer: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
 /// endpoint is not currently opened by another process. Bytes produced while no peer exists are not
 /// historical backlog and are intentionally not queued. Once a peer exists, any write failure is a
 /// bridge integrity failure rather than a best-effort drop.
-fn write_to_virtual_ports(
-    virtual_ports: &mut [BridgeEndpoint],
-    data: &[u8],
-) -> Result<(), String> {
+fn write_to_virtual_ports(virtual_ports: &mut [BridgeEndpoint], data: &[u8]) -> Result<(), String> {
     for endpoint in virtual_ports.iter_mut() {
         if !peer_is_open(endpoint)? {
             continue;

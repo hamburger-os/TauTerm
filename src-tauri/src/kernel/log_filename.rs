@@ -39,7 +39,10 @@ mod tests {
 
     #[test]
     fn chronological_prefix_sorts_by_segment_creation_time() {
-        let first = Local.timestamp_millis_opt(1_800_000_000_001).single().unwrap();
+        let first = Local
+            .timestamp_millis_opt(1_800_000_000_001)
+            .single()
+            .unwrap();
         let second = first + Duration::milliseconds(1);
 
         let first_name = system_segment_file_name(&first, 999);
@@ -49,7 +52,10 @@ mod tests {
 
     #[test]
     fn system_and_session_share_the_same_timestamp_prefix_contract() {
-        let timestamp = Local.timestamp_millis_opt(1_800_000_000_123).single().unwrap();
+        let timestamp = Local
+            .timestamp_millis_opt(1_800_000_000_123)
+            .single()
+            .unwrap();
         let prefix = format!("TauTerm_{}_", timestamp_key(&timestamp));
         assert!(system_segment_file_name(&timestamp, 0).starts_with(&prefix));
         assert!(session_segment_file_name(&timestamp, "abc", "deadbeef", 0).starts_with(&prefix));
