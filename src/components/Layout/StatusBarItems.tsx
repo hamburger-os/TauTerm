@@ -42,27 +42,30 @@ export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
  * transferring state 中，这里先确保视觉语义不再把“正在传输”误画成连接异常。
  */
 export function SessionActivityStatus({ tab }: { tab: StatusBarTab | null }) {
+  const { t } = useTranslation();
   if (tab?.state !== "transferring") return null;
-  return <StatusBarBadge tone="warning">TRANSFER</StatusBarBadge>;
+  return <StatusBarBadge tone="warning">{t("statusBar.transferring")}</StatusBarBadge>;
 }
 
 export function SessionUptimeStatus({ tab }: { tab: StatusBarTab | null }) {
   const connected = isConnected(tab);
-  const [uptime, setUptime] = useState(0);
+  const connectedAt = connected ? tab?.connectedAt : undefined;
+  const [, setTick] = useState(0);
 
   useEffect(() => {
-    if (!tab?.id || !connected || !tab.connectedAt) {
-      setUptime(0);
-      return;
-    }
+    if (!tab?.id || !connectedAt) return;
 
-    const tick = () => setUptime(Math.max(0, Math.floor((Date.now() - tab.connectedAt!) / 1000)));
+    const tick = () => setTick(value => value + 1);
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [tab?.id, tab?.connectedAt, connected]);
+  }, [tab?.id, connectedAt]);
 
-  if (!connected || uptime <= 0) return null;
+  const uptime = tab?.id && connectedAt
+    ? Math.max(0, Math.floor((Date.now() - connectedAt) / 1000))
+    : 0;
+
+  if (uptime <= 0) return null;
   return (
     <StatusBarText>
       <Icon name="stopwatch" size="sm" /> {formatUptime(uptime)}
