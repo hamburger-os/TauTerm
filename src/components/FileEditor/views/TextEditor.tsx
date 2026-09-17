@@ -9,13 +9,29 @@ interface TextEditorProps {
   onCursorChange: (line: number, column: number) => void;
 }
 
+const MAX_GUTTER_LINES = 20_000;
+
+export function countTextLines(text: string): number {
+  let lines = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) lines += 1;
+  }
+  return lines;
+}
+
 function cursorPosition(text: string, offset: number): { line: number; column: number } {
   const safeOffset = Math.max(0, Math.min(offset, text.length));
-  const before = text.slice(0, safeOffset);
-  const lines = before.split("\n");
+  let line = 1;
+  let lastLineBreak = -1;
+  for (let index = 0; index < safeOffset; index += 1) {
+    if (text.charCodeAt(index) === 10) {
+      line += 1;
+      lastLineBreak = index;
+    }
+  }
   return {
-    line: lines.length,
-    column: (lines[lines.length - 1]?.length ?? 0) + 1,
+    line,
+    column: safeOffset - lastLineBreak,
   };
 }
 
@@ -28,10 +44,13 @@ export default function TextEditor({
 }: TextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLPreElement>(null);
-  const lineCount = useMemo(() => Math.max(1, value.split("\n").length), [value]);
+  const lineCount = useMemo(() => countTextLines(value), [value]);
+  const showGutter = lineCount <= MAX_GUTTER_LINES;
   const gutter = useMemo(
-    () => Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n"),
-    [lineCount],
+    () => showGutter
+      ? Array.from({ length: lineCount }, (_, index) => String(index + 1)).join("\n")
+      : "",
+    [lineCount, showGutter],
   );
 
   const reportCursor = useCallback(() => {
@@ -57,16 +76,16 @@ export default function TextEditor({
     onChange(next);
     requestAnimationFrame(() => {
       textareaRef.current?.setSelectionRange(start + 1, start + 1);
-      onCursorChange(
-        cursorPosition(next, start + 1).line,
-        cursorPosition(next, start + 1).column,
-      );
+      const cursor = cursorPosition(next, start + 1);
+      onCursorChange(cursor.line, cursor.column);
     });
   }, [onChange, onCursorChange, onSave, readOnly, value]);
 
   return (
-    <div className={styles.editor}>
-      <pre ref={gutterRef} className={styles.gutter} aria-hidden="true">{gutter}</pre>
+    <div className={`${styles.editor} ${showGutter ? "" : styles.editorWithoutGutter}`.trim()}>
+      {showGutter && (
+        <pre ref={gutterRef} className={styles.gutter} aria-hidden="true">{gutter}</pre>
+      )}
       <textarea
         ref={textareaRef}
         className={styles.textarea}
