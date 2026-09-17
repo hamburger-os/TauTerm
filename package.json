@@ -28,13 +28,14 @@
     "release:check": "node scripts/check-version.js --release",
     "postversion": "node scripts/sync-version.js",
     "version:sync": "node scripts/sync-version.js",
-    "check:product-integrity": "node scripts/check-product-integrity.mjs && node --experimental-strip-types scripts/check-workspace-ui-contract.mjs && node scripts/check-confirm-dialogs.mjs && node scripts/check-trdp-monitor-contract.mjs",
+    "check:product-integrity": "node scripts/check-product-integrity.mjs && node --experimental-strip-types scripts/check-workspace-ui-contract.mjs && node scripts/check-confirm-dialogs.mjs && node scripts/check-trdp-monitor-contract.mjs && node --experimental-strip-types scripts/test-status-bar-contract.mjs",
     "check:tauri-blocking": "node scripts/check-tauri-blocking-contract.mjs",
     "check:runtime-errors": "node scripts/check-runtime-error-contract.mjs",
     "check:terminal-clipboard": "node --experimental-strip-types scripts/test-terminal-clipboard.mjs",
     "check:engineering-tools": "node --experimental-strip-types scripts/test-engineering-tools.mjs",
     "check:file-transfer": "node scripts/test-file-transfer-lifecycle.mjs",
     "check:sendbar": "node --experimental-strip-types scripts/test-sendbar-contract.mjs",
+    "check:status-bar": "node --experimental-strip-types scripts/test-status-bar-contract.mjs",
     "check:journald": "node scripts/test-journald-viewer.mjs"
   },
   "dependencies": {
