@@ -1,6 +1,6 @@
 /** Network Debug frontend plugin definition. */
 import { useTranslation } from "react-i18next";
-import NetworkDebugSessionView from "../../components/Network/NetworkDebugSessionView";
+import NetworkDebugSessionView from "./NetworkDebugSessionView";
 import {
   StatusBarBadge,
   StatusBarGroup,

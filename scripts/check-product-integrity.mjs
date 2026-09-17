@@ -112,6 +112,35 @@ assert.doesNotMatch(
   "main.tsx must not register concrete plugins through side-effect imports",
 );
 
+const app = await readFile(path.join(ROOT, "src", "App.tsx"), "utf8");
+const toolbar = await readFile(path.join(ROOT, "src", "components", "Layout", "Toolbar.tsx"), "utf8");
+const keyboard = await readFile(path.join(ROOT, "src", "hooks", "useKeyboard.ts"), "utf8");
+assert.match(
+  keyboard,
+  /const actionCallbacks = new Map<ShortcutActionId, RegisteredAction>/,
+  "shortcut actions must use one shared runtime registry",
+);
+assert.match(
+  app,
+  /onExecute=\{executeAction\}/,
+  "command palette must dispatch through the shared action registry",
+);
+assert.match(
+  app,
+  /<Toolbar onAction=\{executeAction\}/,
+  "toolbar must dispatch through the shared action registry",
+);
+assert.doesNotMatch(
+  app,
+  /handlePaletteExecute|handleToolbarAction/,
+  "App must not duplicate action behavior in per-surface switch handlers",
+);
+assert.doesNotMatch(
+  toolbar,
+  /handleClick\(["'][^"']+["']\)/,
+  "Toolbar must use canonical ShortcutActionId constants instead of a second string action namespace",
+);
+
 const lib = await readFile(path.join(ROOT, "src-tauri", "src", "lib.rs"), "utf8");
 assert.match(lib, /plugins::catalog::build_runtime\(\)/, "Rust bootstrap must install the backend plugin catalog");
 assert.match(lib, /tauterm_invoke_handler!/, "Rust bootstrap must delegate plugin IPC registration to the backend catalog");
@@ -154,23 +183,42 @@ assert.doesNotMatch(
   "generic saved-session IPC must not invent plugin UI capability defaults",
 );
 
-for (const legacyUiDir of ["Tftp", "Iperf"]) {
+const pluginPrivateUiContracts = [
+  {
+    legacyUiDir: "Tftp",
+    pluginId: "tftp",
+    ownedFiles: ["TftpSessionView.tsx"],
+  },
+  {
+    legacyUiDir: "Iperf",
+    pluginId: "iperf",
+    ownedFiles: ["IperfSessionView.tsx"],
+  },
+  {
+    legacyUiDir: "Network",
+    pluginId: "network",
+    ownedFiles: [
+      "NetworkDebugSessionView.tsx",
+      "NetworkDebugSessionView.module.css",
+      "UdpPacketGrid.tsx",
+    ],
+  },
+];
+
+for (const { legacyUiDir, pluginId, ownedFiles } of pluginPrivateUiContracts) {
   assert.equal(
     await exists(path.join(ROOT, "src", "components", legacyUiDir)),
     false,
-    `${legacyUiDir} private UI must live inside its plugin directory`,
+    `${legacyUiDir} private UI must live inside src/plugins/${pluginId}`,
   );
+  for (const file of ownedFiles) {
+    assert.equal(
+      await exists(path.join(ROOT, "src", "plugins", pluginId, file)),
+      true,
+      `${pluginId}: private UI file ${file} must stay plugin-owned`,
+    );
+  }
 }
-assert.equal(
-  await exists(path.join(ROOT, "src", "plugins", "tftp", "TftpSessionView.tsx")),
-  true,
-  "TFTP custom view must be plugin-owned",
-);
-assert.equal(
-  await exists(path.join(ROOT, "src", "plugins", "iperf", "IperfSessionView.tsx")),
-  true,
-  "iperf custom view must be plugin-owned",
-);
 
 const kernelMod = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "mod.rs"), "utf8");
 for (const deadModule of ["tab_host", "window_manager", "ipc_bridge", "shortcut_engine", "i18n_engine"]) {

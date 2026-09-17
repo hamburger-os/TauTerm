@@ -22,6 +22,8 @@ Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文�
 
 `plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。`PluginManifest.name` 是 Session 类型在新建卡片和配置标题中的 canonical 显示身份，`description` 只描述能力。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件；默认参数、提交前参数投影和 endpoint 解析分别由 `defaultConnectionParams`、`prepareConnectionParams` 与 `resolveEndpoint` 贡献。Session 选项默认值只通过 `PluginRegistry.getDefaultSessionOptions/resolveSessionOptions` 解析，公共页面不得再维护第二套 transfer/send-bar 默认策略。插件还可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError`、`sessionPresentation` 与 `workspace.availability` 分别拥有持久化参数投影、重连前置策略、协议错误展示、会话展示格式和断连工作台可见性。统一 Session/UI 层只消费这些通用 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
 
+前端全局动作使用 `ShortcutActionId` 作为 canonical identity。`useKeyboard` 维护唯一的运行时 action registry 与共享 document 键盘监听器；键盘快捷键、命令面板和 Toolbar 只负责选择 Action ID，并通过同一 dispatcher 执行。具体行为只在 action owner 注册一次，不允许各入口再维护平行 `switch`、魔术字符串或“显示了命令但没有执行实现”的占位分支。
+
 ## 关键生命周期
 
 ```mermaid
@@ -50,6 +52,7 @@ stateDiagram-v2
 - 通用前端状态/渲染合同只包含协议无关字段。Serial 虚拟端口、SSH journald/文件服务、Network peer、TRDP A/B 链路等私有运行态不能为了某个 renderer 的便利继续扩张 `StatusBarContext`、通用 presentation helper 或其它公共 registry contract；插件 renderer 应通过自己的 Session/plugin store 获取私有状态。
 - UI 能力由插件 manifest/definition 声明；SendBar、自定义视图、连接配置合法性、断连工作台可见性等不由页面临时猜测。公共页面不得通过 built-in plugin ID 分支决定这些行为。
 - 插件私有工作台、协议视图和工具组件归 `src/plugins/<id>/` 所有；`src/components/` 只保留真正跨插件共享的 UI 组件。
+- 全局动作行为只由 action registry owner 注册一次；Toolbar、命令面板和键盘绑定不得复制行为分发表，也不得使用脱离 `ShortcutActionId` 的第二套 action 名称。
 - 运行时对象不能被持久化为 Session 配置；插件需要从编辑态参数剥离凭据或其它瞬态字段时，通过自己的持久化投影 contribution 完成，公共 Session 层不解释字段名。
 - 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
@@ -74,10 +77,14 @@ stateDiagram-v2
 - `src/core/plugin-registry.ts`
 - `src/plugins/catalog.ts`
 - `src/context/SessionContext.tsx`
+- `src/hooks/useKeyboard.ts`
+- `src/shortcuts/actionIds.ts`
 
 ## 单一来源约束
 
 内建插件静态元数据位于 `src/plugin-manifests/*.json`，TypeScript `PluginDefinition` 与 Rust `PluginRuntime` 都消费这组 canonical manifest。manifest 的 `name`、`description`、`icon`、`content_type`、capabilities 与 transfer protocol 声明不得由公共层二次拼装或用其它字段代替；`ProtocolAdapter` 不再维护第二份 `content_type`。前端 catalog 只叠加 UI/application contribution，重复插件 ID 在批量安装前直接失败；不存在独立的 Session presentation registry。后端 runtime 将 manifest、可选 `ProtocolAdapter` 与类型化 contribution 收敛为单一注册记录，并在启动时校验 Adapter 自声明 ID 与 manifest ID 一致。Session 运行时生命周期仍只由 `SessionStore` 负责。
+
+全局动作的 identity 只来自 `src/shortcuts/actionIds.ts`，运行时行为只来自共享 action registry；快捷键配置、命令面板和 Toolbar 都消费这些 Action ID，不建立第二份行为映射。
 
 分屏/Workspace Layout 的真实 owner 是前端 SplitLayoutContext + `core/split-layout.ts`；不保留未接入运行时的平行 WindowManager/TabHost/IPC 骨架。通用 Tauri invoke/event 是当前 IPC 边界。
 
