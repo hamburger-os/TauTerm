@@ -240,14 +240,14 @@ export default function RemoteDocumentDialog({
                 </label>
 
                 <div className={styles.controlLabel}>
-                  <span title="Byte Order Mark">BOM</span>
+                  <span>BOM</span>
                   <label
                     className={`${styles.bomToggle} liquid-glass-toggle ${bomDisabled ? styles.bomToggleDisabled : ""}`.trim()}
-                    title="Byte Order Mark"
+                    title="BOM"
                   >
                     <input
                       type="checkbox"
-                      aria-label="Byte Order Mark (BOM)"
+                      aria-label="BOM"
                       checked={doc.format.bom}
                       disabled={bomDisabled}
                       onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
