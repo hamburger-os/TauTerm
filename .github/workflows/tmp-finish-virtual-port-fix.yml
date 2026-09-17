@@ -16,25 +16,153 @@ jobs:
         with:
           fetch-depth: 0
           ref: fix/virtual-port-bridge-logging
-      - name: Finish system log naming
+      - name: Finish refactor and log naming
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if new in text:
+                  return text
+              if old not in text:
+                  raise SystemExit(f'{label} anchor not found')
+              return text.replace(old, new, 1)
+
+          def replace_between(text, start, end, replacement, label, offset=0):
+              begin = text.find(start, offset)
+              if begin < 0:
+                  if replacement in text:
+                      return text
+                  raise SystemExit(f'{label} start anchor not found')
+              finish = text.find(end, begin)
+              if finish < 0:
+                  raise SystemExit(f'{label} end anchor not found')
+              return text[:begin] + replacement + text[finish:]
+
           path = Path('src-tauri/src/kernel/log_engine.rs')
           text = path.read_text(encoding='utf-8')
-          old_import = 'use super::log_writer::LogWriter;\n'
-          new_import = 'use super::log_filename::system_segment_file_name;\nuse super::log_writer::LogWriter;\n'
-          if new_import not in text:
-              if old_import not in text:
-                  raise SystemExit('log_engine import anchor not found')
-              text = text.replace(old_import, new_import, 1)
+          text = replace_once(text, 'use super::log_writer::LogWriter;\n', 'use super::log_filename::system_segment_file_name;\nuse super::log_writer::LogWriter;\n', 'log_engine import')
           old_name = '            let file_name = format!(\n                "TauTerm_{}_p{}_{:03}.log",\n                self.date,\n                std::process::id(),\n                self.segment_index\n            );\n'
           new_name = '            let segment_created = Local::now();\n            let file_name = system_segment_file_name(&segment_created, self.segment_index);\n'
-          if new_name not in text:
-              if old_name not in text:
-                  raise SystemExit('system log filename anchor not found')
-              text = text.replace(old_name, new_name, 1)
+          text = replace_once(text, old_name, new_name, 'system log filename')
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('src-tauri/src/virtual_port/manager.rs')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n',
+              '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n    VirtualPortError,\n',
+              'manager import',
+          )
+          replacement = '\n'.join([
+              '    pub fn ensure_endpoints(',
+              '        &mut self,',
+              '        config: &VirtualPortConfig,',
+              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
+              '        if !config.enabled || config.count == 0 {',
+              '            return Ok(Vec::new());',
+              '        }',
+              '        if !self.are_files_present() {',
+              '            return Err(VirtualPortError::FilesMissing);',
+              '        }',
+              '        if !self.detect_driver() {',
+              '            self.install_driver_elevated()',
+              '                .map_err(VirtualPortError::from_backend)?;',
+              '            if !self.detect_driver() {',
+              '                return Err(VirtualPortError::DriverMissing);',
+              '            }',
+              '        }',
+              '        self.create_endpoints_elevated(config)',
+              '            .map_err(VirtualPortError::from_backend)',
+              '    }',
+              '',
+          ])
+          text = replace_between(text, '    pub fn ensure_endpoints(\n', '    /// 扫描空闲连续 COM 号。', replacement, 'manager inherent ensure')
+          impl_offset = text.find('impl VirtualPortBackend for VirtualPortManager')
+          replacement = '\n'.join([
+              '    fn ensure_endpoints(',
+              '        &mut self,',
+              '        config: &VirtualPortConfig,',
+              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
+              '        VirtualPortManager::ensure_endpoints(self, config)',
+              '    }',
+              '',
+          ])
+          text = replace_between(text, '    fn ensure_endpoints(\n', '    fn create_endpoints(\n', replacement, 'manager trait ensure', impl_offset)
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('src-tauri/src/virtual_port/service_backend.rs')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '    VirtualPortBackend, VirtualPortConfig,\n',
+              '    VirtualPortBackend, VirtualPortConfig, VirtualPortError,\n',
+              'service backend import',
+          )
+          replacement = '\n'.join([
+              '    fn ensure_endpoints(',
+              '        &mut self,',
+              '        config: &VirtualPortConfig,',
+              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
+              '        if !config.enabled || config.count == 0 {',
+              '            return Ok(Vec::new());',
+              '        }',
+              '        let status = self.status().map_err(VirtualPortError::from_backend)?;',
+              '        if !status["files_present"].as_bool().unwrap_or(false) {',
+              '            return Err(VirtualPortError::FilesMissing);',
+              '        }',
+              '        if !status["driver_installed"].as_bool().unwrap_or(false) {',
+              '            self.install_driver()',
+              '                .map_err(VirtualPortError::from_backend)?;',
+              '            let status = self.status().map_err(VirtualPortError::from_backend)?;',
+              '            if !status["driver_installed"].as_bool().unwrap_or(false) {',
+              '                return Err(VirtualPortError::DriverMissing);',
+              '            }',
+              '        }',
+              '        self.create_endpoints(config)',
+              '            .map_err(VirtualPortError::from_backend)',
+              '    }',
+              '',
+          ])
+          text = replace_between(text, '    fn ensure_endpoints(\n', '    fn create_endpoints(\n', replacement, 'service backend ensure')
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('src-tauri/src/plugins/serial/mod.rs')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              'use crate::virtual_port::backend::{\n    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n',
+              'use crate::virtual_port::backend::{\n    is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n',
+              'serial import',
+          )
+          start = '        let endpoints = match manager.ensure_endpoints(&config) {\n'
+          end = '        drop(manager);\n\n        if endpoints.is_empty()'
+          replacement = '\n'.join([
+              '        let endpoints = match manager.ensure_endpoints(&config) {',
+              '            Ok(endpoints) => endpoints,',
+              '            Err(error) => {',
+              '                let kind = error.kind();',
+              '                let detail = error.to_string();',
+              '                drop(manager);',
+              '                log::warn!("虚拟端口创建失败 (session={session_id}): {detail}");',
+              '                let _ = app.emit(',
+              '                    "virtual-port-failed",',
+              '                    serde_json::json!({',
+              '                        "session_id": session_id,',
+              '                        "kind": kind,',
+              '                        "reason": detail,',
+              '                    }),',
+              '                );',
+              '                return Ok(Vec::new());',
+              '            }',
+              '        };',
+              '        drop(manager);',
+              '',
+              '        if endpoints.is_empty()',
+          ])
+          text = replace_between(text, start, end, replacement, 'serial typed ensure')
           path.write_text(text, encoding='utf-8')
           PY
       - name: Format Rust
@@ -52,5 +180,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src-tauri/src
-          git commit -m 'fix: finish sortable log naming and format'
+          git commit -m 'refactor: complete virtual-port capability boundary'
           git push origin HEAD:fix/virtual-port-bridge-logging
