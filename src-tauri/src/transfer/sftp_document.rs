@@ -10,12 +10,13 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use crate::kernel::session_store::SessionState;
 use crate::plugins::ssh::handler::SshHandler;
 use crate::plugins::ssh::{SshAdapter, SshRuntime, PLUGIN_ID};
+use crate::transfer::ssh_file_service::sftp_read_head;
 use crate::AppState;
 
 pub const DOCUMENT_PREVIEW_LIMIT: u64 = 1_048_576;
@@ -206,7 +207,7 @@ async fn read_snapshot(
 ) -> Result<RemoteSnapshot, String> {
     ensure_sftp(session, sftp_cache).await?;
 
-    let (mut file, size, modified, permissions) = {
+    let (size, modified, permissions) = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
         let stat = sftp
@@ -216,33 +217,21 @@ async fn read_snapshot(
         if !is_regular_file(stat.permissions, stat.is_dir()) {
             return Err(format!("仅支持打开普通文件: {}", remote_path));
         }
-        let file = sftp
-            .open(remote_path)
-            .await
-            .map_err(|e| format!("打开远程文件 '{}' 失败: {}", remote_path, e))?;
         (
-            file,
             stat.size.unwrap_or(0),
             stat.mtime.map(u64::from),
             stat.permissions,
         )
     };
 
-    let read_len = size.min(max_bytes);
-    let mut data = vec![0u8; read_len as usize];
-    let mut total_read = 0usize;
-    while total_read < data.len() {
-        let read = file
-            .read(&mut data[total_read..])
-            .await
-            .map_err(|e| format!("读取远程文件 '{}' 失败: {}", remote_path, e))?;
-        if read == 0 {
-            break;
-        }
-        total_read += read;
+    let (data, observed_size) = sftp_read_head(session, sftp_cache, remote_path, max_bytes).await?;
+    if observed_size != size {
+        return Err(format!(
+            "远程文件 '{}' 在读取期间发生变化，请重试",
+            remote_path
+        ));
     }
-    data.truncate(total_read);
-    drop(file);
+    let total_read = data.len() as u64;
 
     let unchanged = {
         let cache = sftp_cache.lock().await;
@@ -256,7 +245,7 @@ async fn read_snapshot(
             Err(_) => false,
         }
     };
-    if !unchanged || (size <= max_bytes && total_read as u64 != size) {
+    if !unchanged || (size <= max_bytes && total_read != size) {
         return Err(format!(
             "远程文件 '{}' 在读取期间发生变化，请重试",
             remote_path
