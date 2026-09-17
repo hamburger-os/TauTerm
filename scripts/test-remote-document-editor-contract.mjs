@@ -39,12 +39,21 @@ assert.match(dialog, /requestCloseRef\.current = requestClose/);
 assert.match(dialog, /const confirmCloseStateRef = useRef\(confirmClose\)/);
 assert.match(dialog, /\}, \[dismissCloseConfirm, visible\]\);/);
 
+// A started save is a remote transaction: closing/discarding stays unavailable until it resolves.
+assert.match(dialog, /const requestClose = useCallback\(\(\) => \{[\s\S]{0,260}if \(doc\.saving\) return;/);
+assert.match(dialog, /data-action="close"[\s\S]{0,180}disabled=\{doc\.saving\}/);
+assert.match(dialog, /aria-busy=\{doc\.saving \|\| undefined\}/);
+
 // Unsaved-close confirmation owns its own focus boundary and restores the previous editor control on cancel.
 assert.match(dialog, /const closeConfirmRef = useRef<HTMLDivElement>\(null\)/);
 assert.match(dialog, /const restoreFocusRef = useRef<HTMLElement \| null>\(null\)/);
-assert.match(dialog, /data-action="cancel"[\s\S]{0,160}onClick=\{dismissCloseConfirm\}/);
+assert.match(dialog, /data-action="cancel"[\s\S]{0,180}disabled=\{doc\.saving\}[\s\S]{0,100}onClick=\{dismissCloseConfirm\}/);
 assert.match(dialog, /const focusRoot = confirmCloseStateRef\.current \? closeConfirmRef\.current : dialogRef\.current/);
 assert.match(dialog, /aria-describedby="remote-document-close-confirm-message"/);
+assert.match(dialog, /className=\{`\$\{styles\.confirmCard\} liquid-glass`\}/);
+assert.match(dialog, /variant="danger"[\s\S]{0,180}disabled=\{doc\.saving\}/);
+assert.match(dialog, /className=\{styles\.confirmChoices\}[\s\S]*className=\{styles\.confirmFooter\}/);
+assert.match(dialogStyles, /\.confirmLayer\s*\{[\s\S]{0,240}background:\s*var\(--overlay-bg\)/);
 
 // Layout/theme contract: Close stays in the title bar; Save belongs to the toolbar's far-right compact tier.
 const headerEnd = dialog.indexOf("</header>");
