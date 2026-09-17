@@ -45,6 +45,18 @@ RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端�
 
 SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理或日志读取伪装成终端字节流。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
 
+### 远程文档查看与编辑
+
+文件管理器把普通文件的“预览”和“编辑”统一为 **Remote Document** 工作流，而不是维护两套弹窗和两套字节/编码状态。双击普通文件或选择“打开”会建立一个前端文档会话；目录继续进入目录，符号链接和特殊文件不进入文档系统。
+
+- 文档以远端原始字节快照为读取真相源。Text/HEX 是同一快照的不同视图；文本工作区进入可编辑状态后，文本 buffer 是唯一可变内容，HEX 视图显示该工作内容按当前保存格式序列化后的真实字节，不维护第二份可变 byte buffer。
+- 首次打开最多读取 1 MiB；完整文档上限为 4 MiB。截断快照永远只读，只有显式加载完整文档成功后才允许保存；超过完整文档上限的文件保持有界查看，不允许用前缀覆盖原文件。HEX 为保证渲染成本最多显示 128 KiB。
+- 编码自动判断只信任 BOM 与严格 UTF-8；无法严格识别的区域编码不伪造自动识别结果。用户可以显式“重新按某编码打开”，保存编码则是独立格式属性。默认保存保留读取时的 encoding、BOM 与主导 EOL；改变这些属性属于文档修改。
+- UTF-8 / UTF-16LE / UTF-16BE 由文档格式显式处理 BOM 与字节序；GB18030、Big5、Shift-JIS、EUC-JP/KR、Windows-1252 使用严格编码，遇到不可映射字符时拒绝保存，不以 `?` 静默替换工程文件内容。
+- 文档保存是专用的 SFTP document transaction，不伪装成下载/上传 Transfer 任务，也不占用 `TransferScheduler`。后端先把文本严格序列化到同目录排他临时文件，再完成 flush、权限同步与 commit/rollback。
+- 完整打开后版本 token 由 `size + mtime + CRC32(content)` 组成。非强制保存会在写临时文件前和正式 commit 前各验证一次 expected version；远端文件被其他工具修改时返回 conflict，由 UI 明确选择重新加载或覆盖，禁止 silent lost update。
+- SSH 断开不会销毁已经打开的 dirty 文档；编辑内容仍留在当前 UI 生命周期中，但保存被禁用。重连后保存仍重新校验远端版本，不因“本地还有编辑内容”绕过并发保护。
+
 ### journald 日志查看器
 
 远端日志的数据源只由 `src-tauri/src/plugins/ssh/journald.rs` 负责理解 `journalctl` 语义；前端不直接拼接 journalctl 参数，也不自行推断分页方向：
@@ -69,6 +81,10 @@ flowchart TB
   Parent --> PTY1["远端终端 N"]
   Parent --> PTY2["远端终端 N+1"]
   Auth --> SFTP["SFTP 文件服务"]
+  SFTP --> Browser["文件浏览 / Transfer"]
+  SFTP --> Document["Remote Document"]
+  Document --> Text["Text Editor"]
+  Document --> Hex["HEX Viewer"]
   Auth --> Journal["journald 数据源"]
   Journal --> History["历史分页"]
   Journal --> Realtime["实时批量流"]
@@ -85,15 +101,16 @@ flowchart TB
 - SSH connect future 必须受发起命令本身的 cancellation 生命周期约束，不创建脱离调用方的孤儿连接任务。
 - 多终端共享认证连接，但每个 child terminal 有独立 PTY/I/O 生命周期；远端 EOF 是方向性半关闭，真正 Close 与本端 EOF/Close 握手必须区分。
 - SessionStore capability graph 是 SSH 运行时资源的强 owner；任何按协议维护的 session-id lookup 只能是非持有索引，不能形成第二套资源 ownership。
-- 文件传输和远端日志通过 side-channel/专用服务实现，不侵入终端流。
+- 文件传输、远程文档和远端日志都通过 side-channel/专用服务实现，不侵入终端流；Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。
 - journald 的 cursor、排序方向、stderr/exit status 与 command-line 参数属于后端数据源实现细节；React 只消费规范化页面/批量事件。
 - journald 实时任务的停止必须等后端 operation 完成后才允许同一 Session 重新启动；不要恢复基于固定间隔 polling 或“已在运行中”字符串补偿的旧模型。
-- SFTP 浏览/属性使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。预览只读取普通文件，并在打开远端 handle 后释放 SFTP cache mutex，避免 1 MiB 预览读取阻塞目录浏览。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
+- SFTP 浏览/属性/Remote Document 使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。文档读取只打开普通文件，并在取得远端 handle 后释放 SFTP cache mutex，避免小文件编辑阻塞目录浏览。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
+- Remote Document 的 truncated snapshot、working text、save format、expected version 与 dirty/conflict 状态必须由文档会话统一拥有；FileManager 只表达 Open 意图，不能重新维护 Preview 专用数据状态。
+- Remote Document 保存必须在后端完成严格序列化、expected-version 校验和临时文件 commit/rollback；partial snapshot、编码失败、远端版本冲突或目标类型变化都必须 fail-closed。
 - 文件管理器的新建/重命名交互只接受单一文件名，不能把 `/`、`.` 或 `..` 偷渡成移动/跨目录操作；真正的 move 应作为独立操作语义。新建文件使用排他创建，同名对象存在时返回冲突而不是清空原文件。
 - Keep Both/Skip 的冲突语义必须在最终 commit 时再次成立；目录 Keep Both 必须创建独立根目录，不允许静默合并到已有目录。文件管理器支持文件与目录上传；目录上传保留空目录并默认跳过本地符号链接/特殊文件。
 - 桌面拖放上传使用 Tauri 原生 WebView drag/drop 路径事件，并按窗口 scale factor 把物理坐标映射到 DOM 逻辑坐标；只有文件管理器面板命中的 drop 才接受。拖放路径可能混合文件/目录，因此发生同名冲突时只提供 Keep Both/Skip，不提供目录级危险 Replace。
 - 从 SFTP 远端名称派生本地下载路径时，后端逐组件执行跨平台安全验证；Linux 远端合法的反斜杠文件名不能在 Windows 客户端被重新解释成目录分隔符。
-- 文件预览只从后端取得有上限的原始字节；UI 可切换 Text/HEX，并允许用户选择 UTF-8、UTF-16、GB18030、Big5、Shift-JIS、EUC-JP/KR、Windows-1252 等工程常用编码。无法严格判定区域编码时不伪造“自动识别”结论。
 - 父配置可以持久化；临时 child terminal 的运行状态不能作为 Workspace 可恢复资源。
 - 凭据存储策略由平台安全模块统一负责，SSH 只消费安全凭据接口；运行时配置不能通过 Debug 输出秘密，生命周期结束应主动清理秘密缓冲区。
 - Session Library 与安全凭据虽然属于两个物理存储，但保存/删除流程必须通过显式提交与回滚边界保持可恢复一致性；不能先静默覆盖凭据再尝试保存 Session。
@@ -104,11 +121,13 @@ flowchart TB
 - `src-tauri/src/plugins/ssh/`
 - `src-tauri/src/transfer/sftp_transfer.rs`
 - `src-tauri/src/transfer/ssh_file_service.rs`
+- `src-tauri/src/transfer/sftp_document.rs`
 - `src/components/FileManager/`
+- `src/components/FileEditor/`
 - `src/components/JournaldViewer/`
 
 ## 何时更新本文
 
-修改 SSH 父子会话、认证连接复用、SFTP/远端日志与 SSH 的资源关系、Workspace 恢复语义时，必须同步更新本文。
+修改 SSH 父子会话、认证连接复用、SFTP/远端文档/远端日志与 SSH 的资源关系、Workspace 恢复语义时，必须同步更新本文。
 
 SFTP 的公共传输生命周期见 [TRANSFER.md](TRANSFER.md)，SSH/SFTP 的 RFC/上游依据见 [网络协议知识索引](../knowledge/NETWORK_PROTOCOLS.md)。

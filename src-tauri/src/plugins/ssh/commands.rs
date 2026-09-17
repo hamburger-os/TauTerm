@@ -278,7 +278,7 @@ pub struct JournaldExportRequest {
 use crate::plugins::ssh::SshRuntime;
 use crate::transfer::ssh_file_service::{
     sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_list_dir, sftp_mkdir,
-    sftp_new_file, sftp_read_head, sftp_rename, sftp_stat,
+    sftp_new_file, sftp_rename, sftp_stat,
 };
 
 /// 解析父 Session 后从 SSH 插件自己的 typed registry 获取 runtime。
@@ -325,33 +325,6 @@ pub async fn sftp_stat_cmd(
 ) -> Result<crate::transfer::ssh_file_service::SftpFileInfo, String> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     sftp_stat(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
-}
-
-/// SFTP 读取文件头（用于预览）
-#[derive(serde::Serialize)]
-pub struct ReadHeadResult {
-    pub data: Vec<u8>,
-    pub total_size: u64,
-}
-
-#[tauri::command]
-pub async fn sftp_read_head_cmd(
-    state: State<'_, AppState>,
-    session_id: String,
-    remote_path: String,
-    max_bytes: u64,
-) -> Result<ReadHeadResult, String> {
-    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    // 后端再次收紧上限，不能依赖 WebView 调用方自律。
-    let max_bytes = max_bytes.min(1_048_576);
-    let (data, total_size) = sftp_read_head(
-        &ssh_runtime.session,
-        &ssh_runtime.sftp,
-        &remote_path,
-        max_bytes,
-    )
-    .await?;
-    Ok(ReadHeadResult { data, total_size })
 }
 
 /// SFTP 修改文件权限
