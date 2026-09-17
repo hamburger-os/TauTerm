@@ -14,11 +14,17 @@ use serialport::SerialPort;
 
 use crate::session::SessionIo;
 use crate::transport::DataPlaneEvent;
+use crate::virtual_port::backend::VirtualEndpoint;
 
 const VPORT_READ_TIMEOUT_MS: u64 = 5;
 const PEER_RETRY_DELAY_MS: u64 = 10;
 
 type BridgeErrorHandler = Box<dyn Fn(String) + Send + 'static>;
+
+struct BridgeEndpoint {
+    external_path: String,
+    port: Box<dyn SerialPort>,
+}
 
 pub struct VirtualPortBridge {
     cancel_flag: Arc<AtomicBool>,
@@ -27,18 +33,23 @@ pub struct VirtualPortBridge {
 
 impl VirtualPortBridge {
     pub fn spawn(
-        virtual_port_names: Vec<String>,
+        endpoints: Vec<VirtualEndpoint>,
         baud_rate: u32,
         io: Arc<SessionIo>,
         on_error: BridgeErrorHandler,
     ) -> Result<Self, String> {
         let subscription = io.subscribe().map_err(|error| error.to_string())?;
-        let mut virtual_ports: Vec<Box<dyn SerialPort>> =
-            Vec::with_capacity(virtual_port_names.len());
-        for name in &virtual_port_names {
-            let port = open_bridge_endpoint(name, baud_rate)?;
-            log::info!("Virtual endpoint {} attached to bridge", name);
-            virtual_ports.push(port);
+        let mut virtual_ports = Vec::with_capacity(endpoints.len());
+        for endpoint in endpoints {
+            let port = open_bridge_endpoint(&endpoint.bridge_path, baud_rate)?;
+            log::info!(
+                "Virtual bridge attached for external endpoint {}",
+                endpoint.external_path
+            );
+            virtual_ports.push(BridgeEndpoint {
+                external_path: endpoint.external_path,
+                port,
+            });
         }
         if virtual_ports.is_empty() {
             return Err("no virtual endpoints were available for bridging".into());
@@ -106,30 +117,96 @@ fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort
         .map_err(|e| format!("failed to open virtual endpoint {name}: {e}"))
 }
 
+#[cfg(target_os = "windows")]
+fn peer_is_open(endpoint: &mut BridgeEndpoint) -> Result<bool, String> {
+    endpoint.port.read_data_set_ready().map_err(|error| {
+        format!(
+            "failed to query virtual peer {} presence: {error}",
+            endpoint.external_path
+        )
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn peer_is_open(_endpoint: &mut BridgeEndpoint) -> Result<bool, String> {
+    // PTY masters expose peer absence through read/write EIO instead of modem-status pins.
+    Ok(true)
+}
+
+fn write_bytes(writer: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
+    writer.write_all(data)
+}
+
 /// Fan out physical bytes to every virtual endpoint that currently has a peer.
 ///
-/// A PTY/com0com peer may legitimately be absent before an external tool opens it, or disappear
-/// and reconnect later. That condition is not a bridge/runtime failure. Bytes cannot be delivered
-/// to a peer that does not exist, but other attached peers must continue receiving data and the
-/// endpoint must remain available for a later reconnect.
-fn write_to_virtual_ports(virtual_ports: &mut [Box<dyn SerialPort>], data: &[u8]) {
-    for (index, vport) in virtual_ports.iter_mut().enumerate() {
-        if let Err(error) = vport.write_all(data) {
-            log::trace!(
-                "Virtual endpoint {} has no writable peer yet: {}",
-                index,
-                error
-            );
+/// On Windows the internal com0com endpoint maps DSR to `ropen`, so a false DSR means the external
+/// endpoint is not currently opened by another process. Bytes produced while no peer exists are not
+/// historical backlog and are intentionally not queued. Once a peer exists, any write failure is a
+/// bridge integrity failure rather than a best-effort drop.
+fn write_to_virtual_ports(
+    virtual_ports: &mut [BridgeEndpoint],
+    data: &[u8],
+) -> Result<(), String> {
+    for endpoint in virtual_ports.iter_mut() {
+        if !peer_is_open(endpoint)? {
             continue;
         }
-        if let Err(error) = vport.flush() {
-            log::trace!("Virtual endpoint {} flush unavailable: {}", index, error);
+
+        if let Err(error) = write_bytes(endpoint.port.as_mut(), data) {
+            #[cfg(target_os = "windows")]
+            {
+                return Err(format!(
+                    "virtual peer {} write failed or stalled: {error}",
+                    endpoint.external_path
+                ));
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                // A PTY slave may legitimately be absent before first open or between reconnects.
+                log::trace!(
+                    "Virtual peer {} is not writable yet: {}",
+                    endpoint.external_path,
+                    error
+                );
+            }
         }
+    }
+    Ok(())
+}
+
+fn handle_virtual_read_error(
+    endpoint: &mut BridgeEndpoint,
+    error: &std::io::Error,
+) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if !peer_is_open(endpoint)? {
+            log::trace!(
+                "Virtual peer {} is currently closed: {}",
+                endpoint.external_path,
+                error
+            );
+            return Ok(true);
+        }
+        Err(format!(
+            "virtual peer {} read failed while connected: {error}",
+            endpoint.external_path
+        ))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        log::trace!(
+            "Virtual peer {} is currently unavailable: {}",
+            endpoint.external_path,
+            error
+        );
+        Ok(true)
     }
 }
 
 fn bridge_loop(
-    mut virtual_ports: Vec<Box<dyn SerialPort>>,
+    mut virtual_ports: Vec<BridgeEndpoint>,
     subscription: crate::transport::DataPlaneSubscription,
     io: Arc<SessionIo>,
     cancel: &AtomicBool,
@@ -144,7 +221,7 @@ fn bridge_loop(
         for _ in 0..32 {
             match subscription.try_recv() {
                 Ok(DataPlaneEvent::Data(data)) => {
-                    write_to_virtual_ports(&mut virtual_ports, &data);
+                    write_to_virtual_ports(&mut virtual_ports, &data)?;
                 }
                 Ok(DataPlaneEvent::Closed(_)) => return Ok(()),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -174,8 +251,8 @@ fn bridge_loop(
         }
 
         let mut peer_unavailable = false;
-        for (index, vport) in virtual_ports.iter_mut().enumerate() {
-            match vport.read(&mut read_buf) {
+        for endpoint in virtual_ports.iter_mut() {
+            match endpoint.port.read(&mut read_buf) {
                 Ok(n) if n > 0 => {
                     let data = read_buf[..n].to_vec();
                     match io.send(&data) {
@@ -194,11 +271,7 @@ fn bridge_loop(
                     if e.kind() == std::io::ErrorKind::TimedOut
                         || e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => {
-                    // Unix PTY masters commonly report EIO while no slave is open; Windows virtual
-                    // peers can similarly disappear while the internal endpoint remains valid.
-                    // Keep the bridge alive so external tools can connect/reconnect later.
-                    peer_unavailable = true;
-                    log::trace!("Virtual endpoint {} peer unavailable: {}", index, error);
+                    peer_unavailable |= handle_virtual_read_error(endpoint, &error)?;
                 }
             }
         }
@@ -215,6 +288,8 @@ fn bridge_loop(
 mod tests {
     use std::io;
     use std::io::{Read, Write};
+
+    use super::write_bytes;
 
     struct MockPort {
         buffer: Vec<u8>,
@@ -248,19 +323,20 @@ mod tests {
             self.buffer.extend_from_slice(buf);
             Ok(buf.len())
         }
+
         fn flush(&mut self) -> io::Result<()> {
-            Ok(())
+            panic!("streaming bridge must not flush every physical chunk")
         }
     }
 
     #[test]
-    fn physical_bytes_are_forwarded_losslessly_to_virtual_endpoint() {
+    fn physical_bytes_are_forwarded_losslessly_without_per_chunk_flush() {
         let mut physical = MockPort::new();
         let mut virtual_a = MockPort::new();
         let mut buf = [0u8; 256];
         physical.buffer.extend_from_slice(b"HELLO");
         let n = physical.read(&mut buf).unwrap();
-        virtual_a.write_all(&buf[..n]).unwrap();
+        write_bytes(&mut virtual_a, &buf[..n]).unwrap();
         assert_eq!(&virtual_a.buffer, b"HELLO");
     }
 }
