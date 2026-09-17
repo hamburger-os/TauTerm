@@ -112,6 +112,35 @@ assert.doesNotMatch(
   "main.tsx must not register concrete plugins through side-effect imports",
 );
 
+const app = await readFile(path.join(ROOT, "src", "App.tsx"), "utf8");
+const toolbar = await readFile(path.join(ROOT, "src", "components", "Layout", "Toolbar.tsx"), "utf8");
+const keyboard = await readFile(path.join(ROOT, "src", "hooks", "useKeyboard.ts"), "utf8");
+assert.match(
+  keyboard,
+  /const actionCallbacks = new Map<ShortcutActionId, RegisteredAction>/,
+  "shortcut actions must use one shared runtime registry",
+);
+assert.match(
+  app,
+  /onExecute=\{executeAction\}/,
+  "command palette must dispatch through the shared action registry",
+);
+assert.match(
+  app,
+  /<Toolbar onAction=\{executeAction\}/,
+  "toolbar must dispatch through the shared action registry",
+);
+assert.doesNotMatch(
+  app,
+  /handlePaletteExecute|handleToolbarAction/,
+  "App must not duplicate action behavior in per-surface switch handlers",
+);
+assert.doesNotMatch(
+  toolbar,
+  /handleClick\(["'][^"']+["']\)/,
+  "Toolbar must use canonical ShortcutActionId constants instead of a second string action namespace",
+);
+
 const lib = await readFile(path.join(ROOT, "src-tauri", "src", "lib.rs"), "utf8");
 assert.match(lib, /plugins::catalog::build_runtime\(\)/, "Rust bootstrap must install the backend plugin catalog");
 assert.match(lib, /tauterm_invoke_handler!/, "Rust bootstrap must delegate plugin IPC registration to the backend catalog");
