@@ -77,9 +77,10 @@ export function defaultRttParams(): Record<string, unknown> {
   return {
     backend: "probe_rs",
     probe_selector: "",
+    probe_name: "",
     target: "",
     wire_protocol: "swd",
-    speed_khz: 0,
+    speed_khz: null,
     core_index: 0,
     locator_mode: "auto",
     control_block_address: "",
@@ -93,19 +94,41 @@ export function defaultRttParams(): Record<string, unknown> {
 }
 
 export function normalizeRttParams(params: Record<string, unknown>): Record<string, unknown> {
-  return { ...defaultRttParams(), ...params };
+  const normalized = { ...defaultRttParams(), ...params };
+  const speed = normalized.speed_khz;
+  return {
+    ...normalized,
+    probe_name: typeof normalized.probe_name === "string" ? normalized.probe_name.trim() : "",
+    speed_khz: typeof speed === "number" && Number.isFinite(speed) && speed > 0 ? speed : null,
+  };
+}
+
+export function compactRttProbeName(probe: RttProbeInfo): string {
+  const identifier = probe.identifier.trim();
+  if (identifier) return identifier;
+
+  const displayName = probe.display_name.trim();
+  const separator = displayName.indexOf(" -- ");
+  if (separator > 0) return displayName.slice(0, separator).trim();
+  return displayName || "Debug Probe";
+}
+
+export function rttDefaultSessionName(params: Record<string, unknown>): string {
+  const normalized = normalizeRttParams(params);
+  return normalized.backend === "jlink_existing"
+    ? "RTT @ J-Link Existing"
+    : "RTT @ Debug Probe";
 }
 
 export function rttSubtitle(params: Record<string, unknown>): string {
   const normalized = normalizeRttParams(params);
-  const backend = normalized.backend === "jlink_existing" ? "jlink_existing" : "probe_rs";
-  if (backend === "jlink_existing") {
-    return `J-Link Existing · :${Number(normalized.jlink_port) || 19021}`;
+  if (normalized.backend === "jlink_existing") {
+    return `127.0.0.1:${Number(normalized.jlink_port) || 19021}`;
   }
-  const selector = String(normalized.probe_selector || "Auto");
-  const target = String(normalized.target || "Unconfigured");
-  const wire = String(normalized.wire_protocol || "swd").toUpperCase();
-  return `${selector || "Auto"} · ${target} · ${wire}`;
+
+  const probeName = String(normalized.probe_name || "").trim();
+  if (probeName) return probeName;
+  return String(normalized.probe_selector || "").trim() ? "Debug Probe" : "Auto";
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
