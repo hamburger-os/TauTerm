@@ -211,8 +211,18 @@ fn run_elevated(batch: &str) -> Result<(), String> {
 fn append_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
     let done = format!("remove_done_{bus}");
     batch.push_str(&format!(
-        "\"{setupc}\" list | findstr /B /C:\"CNCA{bus} \" >nul 2>&1\r\n\
-if errorlevel 1 goto {done}\r\n\
+        "set \"TAUTERM_VPORT_LIST=%TEMP%\\tauterm-vport-list-%RANDOM%-%RANDOM%.txt\"\r\n\
+\"{setupc}\" list > \"%TAUTERM_VPORT_LIST%\" 2>&1\r\n\
+if errorlevel 1 (\r\n\
+  del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
+  exit /b 1\r\n\
+)\r\n\
+findstr /B /C:\"CNCA{bus} \" \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
+if errorlevel 1 (\r\n\
+  del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
+  goto {done}\r\n\
+)\r\n\
+del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
 \"{setupc}\" remove {bus} >nul 2>&1\r\n\
 if errorlevel 1 (\r\n\
   \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n\
@@ -224,7 +234,6 @@ if errorlevel 1 (\r\n\
 :{done}\r\n"
     ));
 }
-
 fn append_best_effort_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
     batch.push_str(&format!(
         "\"{setupc}\" remove {bus} >nul 2>&1\r\n\
@@ -1190,8 +1199,11 @@ mod tests {
     fn elevated_cleanup_checks_presence_inside_the_privileged_batch() {
         let mut batch = String::new();
         append_remove_batch(&mut batch, "setupc.exe", 7);
-        assert!(batch.contains("setupc.exe\" list | findstr"));
-        assert!(batch.contains("CNCA7"));
+        let list = batch.find("setupc.exe\" list >").unwrap();
+        let fail_closed = batch.find("if errorlevel 1 (\r\n  del /q").unwrap();
+        let presence = batch.find("findstr /B /C:\"CNCA7 \"").unwrap();
+        assert!(list < fail_closed && fail_closed < presence);
+        assert!(batch.contains("%TEMP%\\tauterm-vport-list-"));
         assert!(batch.contains(":remove_done_7"));
     }
 }

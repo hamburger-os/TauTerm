@@ -28,6 +28,8 @@ const GENERIC_WRITE: u32 = 0x40000000;
 const OPEN_EXISTING: u32 = 3;
 const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
 const WAIT_OBJECT_0: u32 = 0;
+const WAIT_TIMEOUT: u32 = 258;
+const WAIT_FAILED: u32 = 0xFFFF_FFFF;
 const PIPE_IO_TIMEOUT_MS: u32 = 60_000;
 
 fn wide(value: &str) -> Vec<u16> {
@@ -61,17 +63,39 @@ fn open_pipe() -> Result<OwnedHandle, String> {
     Ok(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) })
 }
 
-fn wait_io(handle: RawHandle, overlapped: &OVERLAPPED, operation: &str) -> Result<(), String> {
-    let wait = unsafe { WaitForSingleObject(overlapped.hEvent, PIPE_IO_TIMEOUT_MS) };
-    if wait == WAIT_OBJECT_0 {
-        return Ok(());
-    }
+fn cancel_and_drain_io(handle: RawHandle, overlapped: &OVERLAPPED) {
+    // CancelIo only requests cancellation. Keep OVERLAPPED/event storage alive until the
+    // cancellation completion is observed before the caller closes the event and returns.
     unsafe { CancelIo(handle as HANDLE) };
-    Err(format!(
-        "virtual port service {operation} timed out after {PIPE_IO_TIMEOUT_MS} ms"
-    ))
+    let mut transferred = 0u32;
+    let _ = unsafe { GetOverlappedResult(handle as HANDLE, overlapped, &mut transferred, 1) };
 }
 
+fn wait_io(handle: RawHandle, overlapped: &OVERLAPPED, operation: &str) -> Result<(), String> {
+    let wait = unsafe { WaitForSingleObject(overlapped.hEvent, PIPE_IO_TIMEOUT_MS) };
+    match wait {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_TIMEOUT => {
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} timed out after {PIPE_IO_TIMEOUT_MS} ms"
+            ))
+        }
+        WAIT_FAILED => {
+            let error = unsafe { GetLastError() };
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} wait failed (win32 error {error})"
+            ))
+        }
+        other => {
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} wait returned unexpected status {other}"
+            ))
+        }
+    }
+}
 fn read_exact(handle: RawHandle, buffer: &mut [u8]) -> Result<(), String> {
     let mut total = 0usize;
     while total < buffer.len() {
