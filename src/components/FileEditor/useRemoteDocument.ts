@@ -12,9 +12,7 @@ import {
 } from "../../services/remoteDocumentService";
 import {
   decodeInitialRemoteDocument,
-  decodeRemoteDocument,
-  detectLineEnding,
-  normalizeDocumentText,
+  decodeRemoteDocumentAs,
 } from "./documentCodec";
 
 export type RemoteDocumentMode = "text" | "hex";
@@ -53,6 +51,7 @@ export function useRemoteDocument(
   });
   const [originalFormat, setOriginalFormat] = useState<RemoteDocumentFormat | null>(null);
   const [sourceEncoding, setSourceEncoding] = useState<RemoteDocumentEncoding>("utf-8");
+  const [sourceEncodingExplicit, setSourceEncodingExplicit] = useState(false);
   const [encodingConfirmed, setEncodingConfirmed] = useState(false);
   const [binaryLikely, setBinaryLikely] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,15 +82,21 @@ export function useRemoteDocument(
       && !binaryLikely,
   );
 
-  const applyReadResult = useCallback((result: RemoteDocumentReadResult) => {
+  const applyReadResult = useCallback((
+    result: RemoteDocumentReadResult,
+    explicitEncoding: RemoteDocumentEncoding | null = null,
+  ) => {
     const bytes = new Uint8Array(result.data);
-    const decoded = decodeInitialRemoteDocument(bytes, result.truncated);
+    const decoded = explicitEncoding
+      ? decodeRemoteDocumentAs(bytes, explicitEncoding, result.truncated)
+      : decodeInitialRemoteDocument(bytes, result.truncated);
     setSnapshot({ ...result, bytes });
     setText(decoded.text);
     setOriginalText(decoded.text);
     setFormat(decoded.format);
     setOriginalFormat(decoded.format);
     setSourceEncoding(decoded.format.encoding);
+    setSourceEncodingExplicit(explicitEncoding !== null);
     setEncodingConfirmed(decoded.encodingConfirmed);
     setBinaryLikely(decoded.binaryLikely);
     setMode(decoded.binaryLikely || !decoded.encodingConfirmed ? "hex" : "text");
@@ -102,7 +107,10 @@ export function useRemoteDocument(
     setHexTruncated(result.totalSize > REMOTE_DOCUMENT_HEX_LIMIT);
   }, []);
 
-  const load = useCallback(async (full: boolean) => {
+  const load = useCallback(async (
+    full: boolean,
+    explicitEncoding: RemoteDocumentEncoding | null = null,
+  ) => {
     const generation = ++generationRef.current;
     hexGenerationRef.current += 1;
     setLoading(true);
@@ -110,7 +118,7 @@ export function useRemoteDocument(
     try {
       const result = await openRemoteDocument(sessionId, remotePath, full);
       if (generation !== generationRef.current) return false;
-      applyReadResult(result);
+      applyReadResult(result, explicitEncoding);
       return true;
     } catch (loadError) {
       if (generation !== generationRef.current) return false;
@@ -126,6 +134,7 @@ export function useRemoteDocument(
     setText("");
     setOriginalText("");
     setOriginalFormat(null);
+    setSourceEncodingExplicit(false);
     setEncodingConfirmed(false);
     setConflict(null);
     setError(null);
@@ -141,56 +150,25 @@ export function useRemoteDocument(
   const reopenAs = useCallback(async (encoding: RemoteDocumentEncoding) => {
     if (dirty) return false;
 
-    let current = snapshot;
+    const current = snapshot;
     if (!current || sourceBytesStale) {
-      const full = Boolean(current && current.totalSize <= REMOTE_DOCUMENT_EDIT_LIMIT && current.editable);
-      if (!await load(full)) return false;
-      // load() commits state asynchronously; use a fresh backend read so this operation never
-      // decodes a stale in-memory byte snapshot after a save.
-      try {
-        const result = await openRemoteDocument(sessionId, remotePath, full);
-        const bytes = new Uint8Array(result.data);
-        current = { ...result, bytes };
-        setSnapshot(current);
-        setSourceBytesStale(false);
-      } catch (reopenError) {
-        setError(String(reopenError));
-        return false;
-      }
+      const full = Boolean(
+        current
+          && current.totalSize <= REMOTE_DOCUMENT_EDIT_LIMIT
+          && current.editable,
+      );
+      return load(full, encoding);
     }
 
-    const decodedRaw = decodeRemoteDocument(current.bytes, encoding, current.truncated);
-    const normalized = normalizeDocumentText(decodedRaw);
-    const nextFormat: RemoteDocumentFormat = {
-      encoding,
-      lineEnding: detectLineEnding(decodedRaw),
-      bom: (
-        (encoding === "utf-8"
-          && current.bytes.length >= 3
-          && current.bytes[0] === 0xef
-          && current.bytes[1] === 0xbb
-          && current.bytes[2] === 0xbf)
-        || (encoding === "utf-16le"
-          && current.bytes.length >= 2
-          && current.bytes[0] === 0xff
-          && current.bytes[1] === 0xfe)
-        || (encoding === "utf-16be"
-          && current.bytes.length >= 2
-          && current.bytes[0] === 0xfe
-          && current.bytes[1] === 0xff)
-      ),
-    };
-    setSourceEncoding(encoding);
-    setEncodingConfirmed(true);
-    setText(normalized);
-    setOriginalText(normalized);
-    setFormat(nextFormat);
-    setOriginalFormat(nextFormat);
-    setBinaryLikely(false);
-    setMode("text");
-    setError(null);
-    return true;
-  }, [dirty, load, remotePath, sessionId, snapshot, sourceBytesStale]);
+    try {
+      applyReadResult(current, encoding);
+      setError(null);
+      return true;
+    } catch (decodeError) {
+      setError(String(decodeError));
+      return false;
+    }
+  }, [applyReadResult, dirty, load, snapshot, sourceBytesStale]);
 
   const updateFormat = useCallback((next: Partial<RemoteDocumentFormat>) => {
     setFormat((previous) => {
@@ -201,6 +179,7 @@ export function useRemoteDocument(
   }, []);
 
   const save = useCallback(async (force = false) => {
+    if (!force && !dirty) return true;
     if (!snapshot || !canEdit || !isConnected || saving) return false;
     if (snapshot.version.contentCrc32 === null) {
       setError("Document version is unavailable; reload the full document before saving.");
@@ -239,6 +218,7 @@ export function useRemoteDocument(
       setOriginalText(text);
       setOriginalFormat(format);
       setSourceEncoding(format.encoding);
+      setSourceEncodingExplicit(true);
       setEncodingConfirmed(true);
       setConflict(null);
       setSourceBytesStale(true);
@@ -250,14 +230,21 @@ export function useRemoteDocument(
     } finally {
       setSaving(false);
     }
-  }, [canEdit, format, isConnected, onSaved, remotePath, saving, sessionId, snapshot, text]);
+  }, [canEdit, dirty, format, isConnected, onSaved, remotePath, saving, sessionId, snapshot, text]);
 
   const reloadFromRemote = useCallback(async () => {
-    if (!snapshot) return load(false);
-    return load(snapshot.totalSize <= REMOTE_DOCUMENT_EDIT_LIMIT && !snapshot.truncated);
-  }, [load, snapshot]);
+    const explicitEncoding = sourceEncodingExplicit ? sourceEncoding : null;
+    if (!snapshot) return load(false, explicitEncoding);
+    return load(
+      snapshot.totalSize <= REMOTE_DOCUMENT_EDIT_LIMIT && !snapshot.truncated,
+      explicitEncoding,
+    );
+  }, [load, snapshot, sourceEncoding, sourceEncodingExplicit]);
 
-  const loadFullForEdit = useCallback(() => load(true), [load]);
+  const loadFullForEdit = useCallback(
+    () => load(true, sourceEncodingExplicit ? sourceEncoding : null),
+    [load, sourceEncoding, sourceEncodingExplicit],
+  );
 
   useEffect(() => {
     if (mode !== "hex" || !snapshot) return;
