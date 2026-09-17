@@ -42,19 +42,21 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   );
 
   useEffect(() => {
-    setCaptureInterfaceBEditorEnabled(captureInterfaceB !== null);
+    if (captureInterfaceB !== null) {
+      setCaptureInterfaceBEditorEnabled(true);
+    }
   }, [captureInterfaceB?.deviceName]);
 
   const patch = (next: Record<string, unknown>) => {
     const {
-      capture_interface: _legacyCaptureInterface,
-      capture_interface_b_enabled: _legacyCaptureInterfaceBEnabled,
-      capture_interface_b: _legacyCaptureInterfaceB,
+      capture_interface: _obsoleteCaptureInterface,
+      capture_interface_b_enabled: _obsoleteCaptureInterfaceBEnabled,
+      capture_interface_b: _obsoleteCaptureInterfaceB,
       ...currentParams
     } = params;
-    void _legacyCaptureInterface;
-    void _legacyCaptureInterfaceBEnabled;
-    void _legacyCaptureInterfaceB;
+    void _obsoleteCaptureInterface;
+    void _obsoleteCaptureInterfaceBEnabled;
+    void _obsoleteCaptureInterfaceB;
     onChange({
       mode: "node",
       link_a_ip: "0.0.0.0",
@@ -251,12 +253,13 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 onChange={event => {
                   const selected = captureInterfaces.find(item => item.name === event.target.value);
                   const nextA = selected ? captureInterfaceRef(selected) : null;
-                  patch({
-                    capture_interfaces: {
-                      a: nextA,
-                      b: nextA?.deviceName === captureInterfaceB?.deviceName ? null : captureInterfaceB,
-                    },
-                  });
+                  const nextB = nextA?.deviceName === captureInterfaceB?.deviceName
+                    ? null
+                    : captureInterfaceB;
+                  if (nextB === null && captureInterfaceB !== null) {
+                    setCaptureInterfaceBEditorEnabled(false);
+                  }
+                  patch({ capture_interfaces: { a: nextA, b: nextB } });
                 }}
                 disabled={captureInterfacesLoading}
               >
@@ -314,7 +317,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                     },
                   });
                 }}
-                disabled={captureInterfacesLoading}
+                disabled={captureInterfacesLoading || captureInterfaceA === null}
               >
                 <option value="">{t("trdp.captureInterfaces.choose")}</option>
                 {captureInterfaceB && !captureInterfaceBKnown && captureInterfaceB.deviceName !== captureInterfaceA?.deviceName && (
@@ -328,6 +331,9 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                     </option>
                   ))}
               </select>
+              {captureInterfaceA === null && (
+                <small className={styles.hint}>{t("trdp.captureInterfaces.choose")}</small>
+              )}
             </div>
           )}
 
