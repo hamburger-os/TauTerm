@@ -352,6 +352,8 @@ fn virtual_to_physical_loop(
 mod tests {
     use std::io;
     use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
 
     use super::{finish_worker, write_bytes};
 
