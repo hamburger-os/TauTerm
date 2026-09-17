@@ -257,7 +257,10 @@ async fn read_snapshot(
         }
     };
     if !unchanged || (size <= max_bytes && total_read as u64 != size) {
-        return Err(format!("远程文件 '{}' 在读取期间发生变化，请重试", remote_path));
+        return Err(format!(
+            "远程文件 '{}' 在读取期间发生变化，请重试",
+            remote_path
+        ));
     }
 
     Ok(RemoteSnapshot {
@@ -350,7 +353,8 @@ fn serialize_text(text: &str, format: &RemoteDocumentFormat) -> Result<Vec<u8>, 
     if output.len() as u64 > DOCUMENT_EDIT_LIMIT {
         return Err(format!(
             "保存后的文档超过可编辑上限（{} bytes > {} bytes）",
-            output.len(), DOCUMENT_EDIT_LIMIT
+            output.len(),
+            DOCUMENT_EDIT_LIMIT
         ));
     }
     Ok(output)
@@ -377,7 +381,12 @@ fn remote_sibling_artifact(path: &str, tag: &str) -> String {
     let (dir, name) = remote_parts(path);
     remote_join(
         dir,
-        &format!(".{}.tauterm-document-{}-{}", name, tag, uuid::Uuid::new_v4()),
+        &format!(
+            ".{}.tauterm-document-{}-{}",
+            name,
+            tag,
+            uuid::Uuid::new_v4()
+        ),
     )
 }
 
@@ -437,7 +446,10 @@ async fn commit_document_temp(
             Ok(())
         }
         Err(commit_error) => match sftp.rename(&backup_path, final_path).await {
-            Ok(()) => Err(format!("提交远程文档 '{}' 失败: {}", final_path, commit_error)),
+            Ok(()) => Err(format!(
+                "提交远程文档 '{}' 失败: {}",
+                final_path, commit_error
+            )),
             Err(rollback_error) => Err(format!(
                 "提交远程文档 '{}' 失败: {}；回滚也失败，原文件仍保留在 '{}': {}",
                 final_path, commit_error, backup_path, rollback_error
@@ -506,7 +518,8 @@ pub async fn sftp_save_document_cmd(
 
     let runtime = get_ssh_runtime(&state, &request.session_id)?;
     let bytes = serialize_text(&request.text, &request.format)?;
-    let before = read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
+    let before =
+        read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
     let before_version = before.version(true);
 
     if !request.force && before_version != request.expected_version {
@@ -544,12 +557,8 @@ pub async fn sftp_save_document_cmd(
     // 文档写入期间远端仍可能被其他工具修改。非 force 保存必须在正式提交前再次
     // 比较完整版本，避免 check-then-write 窗口造成 silent lost update。
     if !request.force {
-        let after_write = read_complete_snapshot(
-            &runtime.session,
-            &runtime.sftp,
-            &request.remote_path,
-        )
-        .await?;
+        let after_write =
+            read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
         let current_version = after_write.version(true);
         if current_version != request.expected_version {
             remove_remote_best_effort(&runtime.sftp, &temp_path).await;
@@ -575,12 +584,14 @@ pub async fn sftp_save_document_cmd(
         }
     }
 
-    if let Err(error) = commit_document_temp(&runtime.sftp, &temp_path, &request.remote_path).await {
+    if let Err(error) = commit_document_temp(&runtime.sftp, &temp_path, &request.remote_path).await
+    {
         remove_remote_best_effort(&runtime.sftp, &temp_path).await;
         return Err(error);
     }
 
-    let saved = read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
+    let saved =
+        read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
     let saved_version = saved.version(true);
     log::info!(
         "SFTP 远程文档保存完成: {} ({} bytes)",
