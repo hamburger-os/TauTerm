@@ -1,0 +1,84 @@
+name: Temporary bridge error review
+
+on:
+  push:
+    branches:
+      - fix/virtual-port-bridge-logging
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: fix/virtual-port-bridge-logging
+      - name: Apply bridge error reporting fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src-tauri/src/virtual_port/bridge.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '''fn finish_worker(result: Result<(), String>, cancel: &AtomicBool, errors: &mpsc::Sender<String>) {
+    if let Err(error) = result {
+        if !cancel.load(Ordering::SeqCst) {
+            let _ = errors.send(error);
+            cancel.store(true, Ordering::SeqCst);
+        }
+    }
+}
+'''
+          new = '''fn finish_worker(result: Result<(), String>, cancel: &AtomicBool, errors: &mpsc::Sender<String>) {
+    if let Err(error) = result {
+        if !cancel.load(Ordering::SeqCst) {
+            // The supervisor owns the transition to cancelled. If the worker flips the flag here,
+            // the supervisor can observe cancellation on a timeout before consuming this error and
+            // exit without emitting `virtual-port-failed`.
+            let _ = errors.send(error);
+        }
+    }
+}
+'''
+          if old not in text:
+              raise SystemExit('finish_worker anchor not found')
+          text = text.replace(old, new, 1)
+          test_anchor = '''    #[test]
+    fn physical_bytes_are_forwarded_losslessly_without_per_chunk_flush() {
+'''
+          test = '''    #[test]
+    fn worker_error_is_queued_before_supervisor_cancels_bridge() {
+        let cancel = AtomicBool::new(false);
+        let (tx, rx) = mpsc::channel();
+        finish_worker(Err("boom".into()), &cancel, &tx);
+        assert_eq!(rx.recv().unwrap(), "boom");
+        assert!(!cancel.load(Ordering::SeqCst));
+    }
+
+'''
+          if test_anchor not in text:
+              raise SystemExit('bridge test anchor not found')
+          text = text.replace(test_anchor, test + test_anchor, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Format and test bridge module
+        shell: bash
+        run: |
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          cargo test --locked --manifest-path src-tauri/Cargo.toml virtual_port::bridge::tests
+      - name: Remove temporary workflow
+        shell: bash
+        run: git rm .github/workflows/tmp-bridge-error-review.yml
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: preserve virtual-port bridge failure reporting'
+          git push origin HEAD:fix/virtual-port-bridge-logging
