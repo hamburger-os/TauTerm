@@ -87,9 +87,11 @@ export function decodeRemoteDocument(
   const bom = detectBom(bytes);
   const source = bom.encoding === encoding ? bytes.subarray(bom.offset) : bytes;
   try {
-    return new TextDecoder(encoding, { fatal: false }).decode(source, { stream: truncated });
+    // Remote Document never turns malformed source bytes into U+FFFD and later writes those
+    // replacements back. A truncated preview may defer only an incomplete final code unit.
+    return new TextDecoder(encoding, { fatal: true }).decode(source, { stream: truncated });
   } catch {
-    return new TextDecoder("utf-8", { fatal: false }).decode(source, { stream: truncated });
+    throw new Error(`无法按 ${encoding.toUpperCase()} 严格解码远程文档，请选择正确的源编码`);
   }
 }
 
@@ -118,22 +120,72 @@ export function normalizeDocumentText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
+function decodedDocument(
+  bytes: Uint8Array,
+  encoding: RemoteDocumentEncoding,
+  bom: boolean,
+  truncated: boolean,
+): DecodedRemoteDocument {
+  const decoded = decodeRemoteDocument(bytes, encoding, truncated);
+  return {
+    text: normalizeDocumentText(decoded),
+    format: {
+      encoding,
+      lineEnding: detectLineEnding(decoded),
+      bom,
+    },
+    binaryLikely: false,
+    encodingConfirmed: true,
+  };
+}
+
+export function decodeRemoteDocumentAs(
+  bytes: Uint8Array,
+  encoding: RemoteDocumentEncoding,
+  truncated = false,
+): DecodedRemoteDocument {
+  const bom = detectBom(bytes);
+  return decodedDocument(bytes, encoding, bom.encoding === encoding && bom.bom, truncated);
+}
+
 export function decodeInitialRemoteDocument(
   bytes: Uint8Array,
   truncated = false,
 ): DecodedRemoteDocument {
   const detected = detectRemoteDocumentEncoding(bytes, truncated);
-  const decoded = decodeRemoteDocument(bytes, detected.encoding, truncated);
-  return {
-    text: normalizeDocumentText(decoded),
-    format: {
-      encoding: detected.encoding,
-      lineEnding: detectLineEnding(decoded),
-      bom: detected.bom,
-    },
-    binaryLikely: looksLikeBinary(bytes),
-    encodingConfirmed: detected.confirmed,
-  };
+  const binaryLikely = looksLikeBinary(bytes);
+  if (!detected.confirmed) {
+    return {
+      text: "",
+      format: {
+        encoding: detected.encoding,
+        lineEnding: "lf",
+        bom: detected.bom,
+      },
+      binaryLikely,
+      encodingConfirmed: false,
+    };
+  }
+
+  try {
+    return {
+      ...decodedDocument(bytes, detected.encoding, detected.bom, truncated),
+      binaryLikely,
+    };
+  } catch {
+    // BOM/UTF-8 detection is only a candidate until strict decoding succeeds. Corrupt text stays
+    // viewable as HEX and can never become editable through replacement-character decoding.
+    return {
+      text: "",
+      format: {
+        encoding: detected.encoding,
+        lineEnding: "lf",
+        bom: detected.bom,
+      },
+      binaryLikely,
+      encodingConfirmed: false,
+    };
+  }
 }
 
 export function formatRemoteDocumentHex(bytes: Uint8Array): string {
