@@ -96,6 +96,15 @@
   flex: 0 0 auto;
 }
 
+.toolbarActions {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .formatControls {
   min-width: 0;
   display: flex;
@@ -121,18 +130,25 @@
 }
 
 .bomControl {
-  min-height: 30px;
+  height: var(--select-height);
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
   font-size: var(--text-xs);
+  flex: 0 0 auto;
 }
 
-.bomControl input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
+.saveButton {
+  height: var(--select-height);
+  min-width: 64px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .notice {
@@ -277,6 +293,7 @@
     flex-direction: column;
   }
 
+  .toolbarActions,
   .formatControls {
     justify-content: flex-start;
   }
