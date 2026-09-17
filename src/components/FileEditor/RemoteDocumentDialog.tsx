@@ -35,6 +35,7 @@ export default function RemoteDocumentDialog({
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeConfirmRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
@@ -63,14 +64,31 @@ export default function RemoteDocumentDialog({
     onClose();
   }, [doc.dirty, onClose]);
 
+  // The keyboard listener is document-scoped, so keep its dynamic decisions in refs instead
+  // of tearing the listener down on every dirty-state change while the user is typing.
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+  const confirmCloseStateRef = useRef(confirmClose);
+  confirmCloseStateRef.current = confirmClose;
+
   const save = useCallback(() => {
     void doc.save(false);
   }, [doc]);
 
   useEffect(() => {
     if (!visible) return;
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     const frame = requestAnimationFrame(() => dialogRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      const previous = previouslyFocusedRef.current;
+      previouslyFocusedRef.current = null;
+      requestAnimationFrame(() => {
+        if (previous?.isConnected) previous.focus();
+      });
+    };
   }, [visible]);
 
   useEffect(() => {
@@ -93,13 +111,13 @@ export default function RemoteDocumentDialog({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        if (confirmClose) dismissCloseConfirm();
-        else requestClose();
+        if (confirmCloseStateRef.current) dismissCloseConfirm();
+        else requestCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
 
-      const focusRoot = confirmClose ? closeConfirmRef.current : dialogRef.current;
+      const focusRoot = confirmCloseStateRef.current ? closeConfirmRef.current : dialogRef.current;
       const focusable = Array.from(
         focusRoot?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
@@ -129,7 +147,7 @@ export default function RemoteDocumentDialog({
     // Bubble-phase handling lets component-level keyboard semantics run first.
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [confirmClose, dismissCloseConfirm, requestClose, visible]);
+  }, [dismissCloseConfirm, visible]);
 
   if (!visible) return null;
 
@@ -347,7 +365,7 @@ export default function RemoteDocumentDialog({
             <TextEditor
               value={doc.text}
               readOnly={!doc.canEdit}
-              autoFocus={doc.canEdit}
+              autoFocus
               onChange={doc.setText}
               onSave={save}
               onCursorChange={(line, column) => {
@@ -392,10 +410,11 @@ export default function RemoteDocumentDialog({
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="remote-document-close-confirm-title"
+              aria-describedby="remote-document-close-confirm-message"
               tabIndex={-1}
             >
               <div id="remote-document-close-confirm-title" className={styles.confirmTitle}>{t("common.warning")}</div>
-              <div className={styles.confirmMessage}>{entry.name}</div>
+              <div id="remote-document-close-confirm-message" className={styles.confirmMessage}>{entry.name}</div>
               <div className={styles.confirmActions}>
                 <button
                   type="button"
