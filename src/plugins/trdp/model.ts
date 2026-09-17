@@ -2,6 +2,11 @@ export type Page = "overview" | "pd" | "md" | "analysis";
 export type LinkChoice = "a" | "b" | "both";
 export type RedundancyState = "leader" | "follower";
 export type CaptureInterface = { name: string; description: string };
+export type CaptureInterfaceRef = { deviceName: string; displayName: string };
+export type MonitorCaptureInterfaces = {
+  a: CaptureInterfaceRef | null;
+  b: CaptureInterfaceRef | null;
+};
 export type ObjectKind =
   | "pd_publisher"
   | "pd_subscriber"
@@ -148,7 +153,6 @@ export type WorkspaceDraft = {
   redundancyGroups: Record<string, RedundancyState>;
 };
 
-
 function workspaceWireObject(object: TrdpObject): Record<string, unknown> {
   return {
     id: object.id,
@@ -241,6 +245,10 @@ export type CaptureResult = {
 };
 export type RuntimeState = {
   objects: Record<string, TrdpObject["state"]>;
+  capture?: {
+    id: string | null;
+    running: boolean;
+  };
 };
 export type StructuredEditor = {
   objectId: string;
@@ -271,6 +279,40 @@ export const LIVE_CAPTURE_FRAME_LIMIT = 50_000;
 
 export function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
   return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
+}
+
+export function captureInterfaceRef(item: CaptureInterface): CaptureInterfaceRef {
+  const displayName = item.description.trim() || item.name.trim();
+  return {
+    deviceName: item.name.trim(),
+    displayName,
+  };
+}
+
+function parsedCaptureInterfaceRef(value: unknown): CaptureInterfaceRef | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const deviceName = typeof record.deviceName === "string" ? record.deviceName.trim() : "";
+  const displayName = typeof record.displayName === "string" ? record.displayName.trim() : "";
+  if (!deviceName) return null;
+  return {
+    deviceName,
+    displayName: displayName || deviceName,
+  };
+}
+
+export function monitorCaptureInterfaces(
+  params: Record<string, unknown> | undefined,
+): MonitorCaptureInterfaces {
+  const raw = params?.capture_interfaces;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { a: null, b: null };
+  }
+  const record = raw as Record<string, unknown>;
+  return {
+    a: parsedCaptureInterfaceRef(record.a),
+    b: parsedCaptureInterfaceRef(record.b),
+  };
 }
 
 export function paramNumber(

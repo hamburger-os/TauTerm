@@ -51,6 +51,7 @@ pub struct TrdpRuntime {
     lifecycle: Arc<Mutex<()>>,
     connected_announced: Arc<AtomicBool>,
     capture_id: Arc<Mutex<Option<String>>>,
+    capture_running: Arc<AtomicBool>,
     capture_control: Mutex<()>,
     object_states: Arc<Mutex<HashMap<String, String>>>,
     confirmable_md_sessions: Arc<Mutex<HashSet<String>>>,
@@ -150,9 +151,22 @@ impl TrdpRuntime {
             lifecycle: Arc::new(Mutex::new(())),
             connected_announced: Arc::new(AtomicBool::new(false)),
             capture_id: Arc::new(Mutex::new(None)),
+            capture_running: Arc::new(AtomicBool::new(false)),
             capture_control: Mutex::new(()),
             object_states: Arc::new(Mutex::new(HashMap::new())),
             confirmable_md_sessions: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn release_owned_capture(&self) {
+        self.capture_running.store(false, Ordering::Release);
+        let capture_id = self
+            .capture_id
+            .lock()
+            .ok()
+            .and_then(|mut capture_id| capture_id.take());
+        if let Some(capture_id) = capture_id {
+            capture::release_capture(&capture_id);
         }
     }
 
@@ -190,6 +204,8 @@ impl TrdpRuntime {
             }
         }
         self.alive.store(false, Ordering::Release);
+        let _capture_guard = self.capture_control.lock().ok();
+        self.release_owned_capture();
         if let Ok(mut states) = self.object_states.lock() {
             states.clear();
         }
@@ -367,6 +383,7 @@ impl TrdpRuntime {
         let event_session_id = session_id.to_string();
         let event_app = app.clone();
         let capture_id = Arc::clone(&self.capture_id);
+        let capture_running = Arc::clone(&self.capture_running);
         let pd_ports = vec![params
             .get("pd_port")
             .and_then(Value::as_u64)
@@ -571,6 +588,14 @@ impl TrdpRuntime {
 
             let lifecycle_guard = lifecycle.lock().ok();
             alive.store(false, Ordering::Release);
+            capture_running.store(false, Ordering::Release);
+            let released_capture = capture_id
+                .lock()
+                .ok()
+                .and_then(|mut capture_id| capture_id.take());
+            if let Some(released_capture) = released_capture {
+                capture::release_capture(&released_capture);
+            }
             if let Ok(mut requests) = pending.lock() {
                 for (_, waiter) in requests.drain() {
                     let _ = waiter.send(Err("TRDP bridge exited before replying".to_string()));
@@ -1182,7 +1207,36 @@ pub fn trdp_command(
             .lock()
             .map_err(|error| error.to_string())?
             .clone();
-        return Ok(json!({ "objects": states }));
+        let capture_id = trdp
+            .capture_id
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
+        let capture_running = trdp.capture_running.load(Ordering::Acquire);
+        return Ok(json!({
+            "objects": states,
+            "capture": {
+                "id": capture_id,
+                "running": capture_running,
+            }
+        }));
+    }
+
+    if operation == "capture_release" {
+        let _control = trdp
+            .capture_control
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if trdp.capture_running.load(Ordering::Acquire) {
+            return Err("TRDP 实时抓包仍在运行，请先停止抓包".to_string());
+        }
+        let had_capture = trdp
+            .capture_id
+            .lock()
+            .map_err(|error| error.to_string())?
+            .is_some();
+        trdp.release_owned_capture();
+        return Ok(json!({ "released": had_capture }));
     }
 
     let runtime_connected = {
@@ -1212,6 +1266,9 @@ pub fn trdp_command(
             .capture_control
             .lock()
             .map_err(|error| error.to_string())?;
+        if trdp.capture_running.load(Ordering::Acquire) {
+            return Err("TRDP 实时抓包已在运行".to_string());
+        }
         let previous_capture = trdp
             .capture_id
             .lock()
@@ -1229,6 +1286,7 @@ pub fn trdp_command(
 
         match trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT) {
             Ok(_) => {
+                trdp.capture_running.store(true, Ordering::Release);
                 if let Some(previous_capture) = previous_capture {
                     capture::release_capture(&previous_capture);
                 }
@@ -1250,7 +1308,11 @@ pub fn trdp_command(
             .capture_control
             .lock()
             .map_err(|error| error.to_string())?;
-        return trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT);
+        let result = trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT);
+        if result.is_ok() {
+            trdp.capture_running.store(false, Ordering::Release);
+        }
+        return result;
     }
 
     if matches!(operation.as_str(), "md_confirm" | "md_abort") {

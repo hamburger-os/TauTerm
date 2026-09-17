@@ -4,23 +4,19 @@ import i18n from "../../i18n";
 import manifestJson from "../../plugin-manifests/trdp.json";
 import TrdpConnectForm from "./TrdpConnectForm";
 import TrdpSessionRouter from "./TrdpSessionRouter";
+import { monitorCaptureInterfaces } from "./model";
 
 function trdpSubtitle(params: Record<string, unknown>): string {
   const unconfigured = String(i18n.t("trdpSidebar.unconfigured"));
   const disabled = String(i18n.t("trdpSidebar.disabled"));
-  const capture = String(i18n.t("trdpSidebar.capture"));
   const mode = params.mode === "monitor" ? "monitor" : "node";
 
   if (mode === "monitor") {
-    const interfaceA = typeof params.capture_interface === "string"
-      ? params.capture_interface.trim()
-      : "";
-    const interfaceB = typeof params.capture_interface_b === "string"
-      ? params.capture_interface_b.trim()
-      : "";
-    return params.capture_interface_b_enabled === true
-      ? `A: ${interfaceA || unconfigured} · B: ${interfaceB || unconfigured}`
-      : `${capture}: ${interfaceA || unconfigured}`;
+    const capture = monitorCaptureInterfaces(params);
+    if (capture.b) {
+      return `A: ${capture.a?.displayName || unconfigured} · B: ${capture.b.displayName}`;
+    }
+    return capture.a?.displayName || unconfigured;
   }
 
   const linkA = typeof params.link_a_ip === "string" && params.link_a_ip.trim()
