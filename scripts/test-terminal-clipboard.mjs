@@ -149,7 +149,7 @@ assert.match(
 );
 
 const networkViewSource = await readFile(
-  path.join(ROOT, "src", "components", "Network", "NetworkDebugSessionView.tsx"),
+  path.join(ROOT, "src", "plugins", "network", "NetworkDebugSessionView.tsx"),
   "utf8",
 );
 assert.match(networkViewSource, /<DualPane sessionId=\{sessionId\}/);
@@ -164,7 +164,7 @@ assert.match(
 );
 
 const udpGridSource = await readFile(
-  path.join(ROOT, "src", "components", "Network", "UdpPacketGrid.tsx"),
+  path.join(ROOT, "src", "plugins", "network", "UdpPacketGrid.tsx"),
   "utf8",
 );
 assert.match(
