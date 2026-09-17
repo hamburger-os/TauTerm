@@ -38,6 +38,7 @@ export default function RemoteDocumentDialog({
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorColumn, setCursorColumn] = useState(1);
   const doc = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
+  const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
 
   const requestClose = useCallback(() => {
     if (doc.dirty) {
@@ -94,7 +95,6 @@ export default function RemoteDocumentDialog({
 
   if (!visible) return null;
 
-  const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
   const saveDisabled =
     !isConnected
     || !doc.canEdit
