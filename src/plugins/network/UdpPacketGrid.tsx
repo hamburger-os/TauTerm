@@ -7,8 +7,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PacketRow } from "./NetworkDebugSessionView";
-import ScrollToBottomButton from "../Terminal/ScrollToBottomButton";
-import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import ScrollToBottomButton from "../../components/Terminal/ScrollToBottomButton";
+import ContextMenu, { type ContextMenuItem } from "../../components/common/ContextMenu";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import styles from "./NetworkDebugSessionView.module.css";
@@ -61,7 +61,6 @@ export default function UdpPacketGrid({ rows, sessionId }: Props) {
       }),
     );
   }, [contextHex, sessionId]);
-
 
   return (
     <div className={styles.gridContainer}>

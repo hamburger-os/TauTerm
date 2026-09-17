@@ -31,14 +31,14 @@ import {
   subscribeNetworkManualSent,
   type NetworkPeerEntry,
   type NetworkRuntimeSnapshot,
-} from "../../plugins/network/runtime-store";
+} from "./runtime-store";
 import { usePluginSessionStore, type SessionStoreApi } from "../../hooks/usePluginSessionStore";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
-import DualPane, { type DualLine } from "../Terminal/DualPane";
-import ScrollToBottomButton from "../Terminal/ScrollToBottomButton";
-import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import DualPane, { type DualLine } from "../../components/Terminal/DualPane";
+import ScrollToBottomButton from "../../components/Terminal/ScrollToBottomButton";
+import ContextMenu, { type ContextMenuItem } from "../../components/common/ContextMenu";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
-import Icon from "../common/Icon";
+import Icon from "../../components/common/Icon";
 import { dataToDualLine, normalizeDecodedText, StreamFramer } from "../../utils/streamDisplay";
 import UdpPacketGrid from "./UdpPacketGrid";
 import styles from "./NetworkDebugSessionView.module.css";
