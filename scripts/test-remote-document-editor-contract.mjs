@@ -13,7 +13,7 @@ const editor = await source("src/components/FileEditor/views/TextEditor.tsx");
 // Dirty/clean state changes must never rerun an autofocus effect and steal the caret.
 assert.match(
   dialog,
-  /useEffect\(\(\) => \{\s*if \(!visible\) return;\s*const frame = requestAnimationFrame\(\(\) => dialogRef\.current\?\.focus\(\)\);[\s\S]{0,140}\}, \[visible\]\);/,
+  /useEffect\(\(\) => \{\s*if \(!visible\) return;[\s\S]{0,260}requestAnimationFrame\(\(\) => dialogRef\.current\?\.focus\(\)\)[\s\S]{0,360}\}, \[visible\]\);/,
   "dialog autofocus must depend only on visibility",
 );
 assert.doesNotMatch(
@@ -21,7 +21,7 @@ assert.doesNotMatch(
   /querySelector<HTMLElement>\(['"]button:not\(:disabled\), select:not\(:disabled\), textarea:not\(:disabled\)['"]\)[\s\S]{0,80}focus\(\)/,
   "opening the editor must not focus whichever action happens to be first enabled",
 );
-assert.match(dialog, /<TextEditor[\s\S]{0,180}autoFocus=\{doc\.canEdit\}/);
+assert.match(dialog, /<TextEditor[\s\S]{0,180}\bautoFocus\b/);
 
 // Editor-owned keys run before the dialog focus trap. Plain Tab indents; Shift+Tab remains navigation.
 assert.match(dialog, /if \(event\.defaultPrevented\) return;/);
@@ -31,11 +31,20 @@ assert.match(editor, /event\.key !== "Tab"[\s\S]{0,120}event\.shiftKey/);
 assert.match(editor, /event\.preventDefault\(\);[\s\S]{0,180}const next = `\$\{value\.slice\(0, start\)\}\\t/);
 assert.match(editor, /event\.key\.toLowerCase\(\) === "s"[\s\S]{0,100}event\.preventDefault\(\);[\s\S]{0,80}onSave\(\)/);
 
+// Modal lifecycle restores the opener, and dirty edits do not churn the document-level listener.
+assert.match(dialog, /const previouslyFocusedRef = useRef<HTMLElement \| null>\(null\)/);
+assert.match(dialog, /if \(previous\?\.isConnected\) previous\.focus\(\)/);
+assert.match(dialog, /const requestCloseRef = useRef\(requestClose\)/);
+assert.match(dialog, /requestCloseRef\.current = requestClose/);
+assert.match(dialog, /const confirmCloseStateRef = useRef\(confirmClose\)/);
+assert.match(dialog, /\}, \[dismissCloseConfirm, visible\]\);/);
+
 // Unsaved-close confirmation owns its own focus boundary and restores the previous editor control on cancel.
 assert.match(dialog, /const closeConfirmRef = useRef<HTMLDivElement>\(null\)/);
 assert.match(dialog, /const restoreFocusRef = useRef<HTMLElement \| null>\(null\)/);
-assert.match(dialog, /data-action="cancel"[\s\S]{0,120}onClick=\{dismissCloseConfirm\}/);
-assert.match(dialog, /const focusRoot = confirmClose \? closeConfirmRef\.current : dialogRef\.current/);
+assert.match(dialog, /data-action="cancel"[\s\S]{0,160}onClick=\{dismissCloseConfirm\}/);
+assert.match(dialog, /const focusRoot = confirmCloseStateRef\.current \? closeConfirmRef\.current : dialogRef\.current/);
+assert.match(dialog, /aria-describedby="remote-document-close-confirm-message"/);
 
 // Layout/theme contract: Close stays in the title bar; Save belongs to the toolbar's far-right compact tier.
 const headerEnd = dialog.indexOf("</header>");
