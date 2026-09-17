@@ -5,6 +5,13 @@ export interface SessionTrafficRate {
   rx: number;
 }
 
+interface SessionTrafficRateSnapshot {
+  sessionId: string | null;
+  rate: SessionTrafficRate;
+}
+
+const ZERO_RATE: SessionTrafficRate = { tx: 0, rx: 0 };
+
 /**
  * 从 Session 累计字节统计中派生短窗口速率。
  *
@@ -17,7 +24,10 @@ export function useSessionTrafficRate(
   txBytes: number,
   rxBytes: number,
 ): SessionTrafficRate {
-  const [rate, setRate] = useState<SessionTrafficRate>({ tx: 0, rx: 0 });
+  const [snapshot, setSnapshot] = useState<SessionTrafficRateSnapshot>({
+    sessionId: null,
+    rate: ZERO_RATE,
+  });
   const totalsRef = useRef({ tx: txBytes, rx: rxBytes });
   const lastSampleRef = useRef<{ tx: number; rx: number; ts: number } | null>(null);
   const windowRef = useRef<SessionTrafficRate[]>([]);
@@ -27,7 +37,7 @@ export function useSessionTrafficRate(
   useEffect(() => {
     lastSampleRef.current = null;
     windowRef.current = [];
-    setRate({ tx: 0, rx: 0 });
+    setSnapshot({ sessionId: sessionId ?? null, rate: ZERO_RATE });
 
     if (!sessionId || !active) return;
 
@@ -46,9 +56,12 @@ export function useSessionTrafficRate(
           const samples = windowRef.current;
           samples.push(sample);
           if (samples.length > 3) samples.shift();
-          setRate({
-            tx: samples.reduce((sum, item) => sum + item.tx, 0) / samples.length,
-            rx: samples.reduce((sum, item) => sum + item.rx, 0) / samples.length,
+          setSnapshot({
+            sessionId,
+            rate: {
+              tx: samples.reduce((sum, item) => sum + item.tx, 0) / samples.length,
+              rx: samples.reduce((sum, item) => sum + item.rx, 0) / samples.length,
+            },
           });
         }
       }
@@ -61,5 +74,6 @@ export function useSessionTrafficRate(
     return () => window.clearInterval(timer);
   }, [sessionId, active]);
 
-  return rate;
+  if (!active || !sessionId || snapshot.sessionId !== sessionId) return ZERO_RATE;
+  return snapshot.rate;
 }
