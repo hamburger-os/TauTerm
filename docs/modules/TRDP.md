@@ -20,13 +20,13 @@ Monitor 是独立的被动工作区，不复用 Node 的主动对象编辑页面
 
 Monitor 的实时抓包通过 native sidecar 调用系统 pcap 兼容抓包能力，上送 raw frame；Rust 使用同一套 canonical decoder 处理实时帧和离线 pcap/pcapng，并在 Rust 侧保存有上限的 CaptureStore、聚合 Flow/序列/间隔/Jitter 统计。React 只获取聚合结果和分页报文，不把有限 UI 预览当成全量数据。
 
-抓包接口 A/B、是否启用 B、自动/自定义 BPF filter 与 TRDP 端口属于 Monitor Session 配置，在创建/编辑会话时持久化；工作区消费这份配置启动实时抓包，不再维护一套只存在于当前 React 实例中的临时抓包配置。Windows 使用系统安装的 Npcap/wpcap，Linux/macOS 使用系统 libpcap；TauTerm 不捆绑这些系统抓包运行库。
+抓包接口 A/B、自动/自定义 BPF filter 与 TRDP 端口属于 Monitor Session 配置，在创建/编辑会话时持久化。每个抓包接口引用同时保存 native pcap 设备标识与面向用户的显示名称：native runtime 只消费设备标识，配置页、总览和会话卡片只消费显示名称，避免把 Windows NPF GUID 等底层标识泄漏到日常界面。未配置 B 即表示单链路抓包，不再维护独立的“B 已启用”状态。Windows 使用系统安装的 Npcap/wpcap，Linux/macOS 使用系统 libpcap；TauTerm 不捆绑这些系统抓包运行库。
 
 离线 pcap/pcapng、XML 和 Dataset 分析可以在 Session 未连接时使用，因为它们不需要主动网络运行时。实时抓包仍要求 Monitor Session 已连接，并在首次抓包时按需启动 monitor sidecar。
 
 TRDP custom view 在插件边界先按 Session 模式路由到 Node 或 Monitor 工作区，避免把两种责任混在同一交互页面；通用 Custom renderer 仍以 `pluginId + sessionId` 作为视图实例身份，保证不同 Session 的页面、筛选、选中项和临时分析状态彼此隔离。Workspace 在本次应用运行期间按 Session ID 保留已经打开且仍有运行意义的非终端视图，因此从 TRDP 切换到其它会话、清空其 Pane 或把它移动到另一个 Pane 时，不会因为视图卸载而停止 Monitor 抓包或 Node 运行对象；切回同一 Session 时仍停留在原来的总览/PD/MD/分析页面和本次运行期 UI 状态。应用重启后不恢复这些临时 UI 状态，也不会自动恢复抓包或连接。
 
-这种视图保活只是展示连续性，不改变 TRDP 的运行时所有权：实时抓包、Node 对象和 native sidecar 的权威生命周期仍由 TRDP Session runtime 控制；完整抓包数据仍以 Rust CaptureStore 为准。未来即使 Workspace 改变渲染策略，协议后台任务也不应以 Pane 可见性作为启动/停止条件。
+这种视图保活只是展示连续性，不改变 TRDP 的运行时所有权：实时抓包、Node 对象和 native sidecar 的权威生命周期仍由 TRDP Session runtime 控制；完整抓包数据仍以 Rust CaptureStore 为准。runtime 同时保存当前 live capture 的标识与运行状态，视图重新挂载时只做状态 hydration；清理 live capture 也通过 runtime 释放其拥有的 CaptureStore 条目，不把 unsupported 的 UI 命令直接透传给 sidecar。runtime 关闭或 sidecar 异常退出时必须释放自己拥有的 live capture，避免后台任务结束后遗留全局抓包数据。
 
 TRDP custom view 同时按 Pane 宽度和高度适配：2×2 分屏中的短 Pane 使用紧凑密度，宽单 Pane 与 2×2 都优先利用双列 Overview 卡片减少纵向空白；顶部总览/PD/MD/分析导航保持固定几何，不因 selected/hover 改变尺寸。Analysis 的 Flow/Packet 采用同构标题栏和等宽列，表格按角色决定最小宽度与滚动策略；空分析页只展示数据源与空表，选中真实报文后再出现报文检查器。复杂对象编辑和有数据的长表仍保留明确的局部/内容滚动，不通过隐藏有效功能换取适配。
 
@@ -61,6 +61,8 @@ flowchart TB
 - Node 主动运行时动作要求 Connected；Monitor 实时抓包要求 Connected；离线分析不要求连接。
 - Monitor 是被动观察面，不允许复用 Node 的主动对象编辑/发送动作。
 - 切换 Pane/Session 只改变 TRDP 视图可见性，不是停止抓包、停止对象或释放 runtime 的生命周期事件。
+- live capture 的 `capture id / running` 状态和 CaptureStore 所有权属于 Session runtime；React 只能订阅、展示和请求显式 Start/Stop/Release。
+- 抓包接口的 native 设备标识与用户显示名称必须分离；底层标识不能作为会话卡片的人类可读配置摘要。
 - MD Confirm 只能针对当前 Node runtime 实际拥有的可确认 transaction；Monitor 捕获到的 `Mq` 不获得 Confirm 能力。
 - 完整抓包和统计的权威数据在 Rust，不把大文件/全量帧长期放进 React state。
 - helper 路径和抓包动态库加载必须遵守受控信任路径。
