@@ -69,11 +69,13 @@ export default function RemoteDocumentDialog({
   }, [doc.dirty, doc.saving, onClose]);
 
   // The keyboard listener is document-scoped, so keep its dynamic decisions in refs instead
-  // of tearing the listener down on every dirty-state change while the user is typing.
+  // of tearing the listener down on every dirty/saving state change while the user is typing.
   const requestCloseRef = useRef(requestClose);
   requestCloseRef.current = requestClose;
   const confirmCloseStateRef = useRef(confirmClose);
   confirmCloseStateRef.current = confirmClose;
+  const savingStateRef = useRef(doc.saving);
+  savingStateRef.current = doc.saving;
 
   const save = useCallback(() => {
     void doc.save(false);
@@ -115,6 +117,7 @@ export default function RemoteDocumentDialog({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        if (savingStateRef.current) return;
         if (confirmCloseStateRef.current) dismissCloseConfirm();
         else requestCloseRef.current();
         return;
