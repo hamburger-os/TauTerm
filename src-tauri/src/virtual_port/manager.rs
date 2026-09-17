@@ -18,28 +18,18 @@ use super::backend::{
     unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,
 };
 
-#[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
 };
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 
-#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-#[cfg(target_os = "windows")]
 const ERROR_CANCELLED: u32 = 1223;
-#[cfg(target_os = "windows")]
 const WAIT_OBJECT_0: u32 = 0;
-#[cfg(target_os = "windows")]
 const WAIT_TIMEOUT: u32 = 258;
-#[cfg(target_os = "windows")]
 const ELEVATED_TIMEOUT_MS: u32 = 120_000;
 
 const SETUPC_TIMEOUT_SECS: u64 = 30;
@@ -78,7 +68,6 @@ struct DriverState {
 }
 
 pub struct VirtualPortManager {
-    driver_installed: bool,
     active_endpoints: HashSet<VirtualEndpoint>,
     resource_dir: PathBuf,
     state_dir: Option<PathBuf>,
@@ -126,9 +115,8 @@ fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output
         .current_dir(resource_dir)
         .args(args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW);
 
     let child = command
         .spawn()
@@ -147,20 +135,16 @@ fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output
                 pid,
                 SETUPC_TIMEOUT_SECS
             );
-            #[cfg(target_os = "windows")]
-            {
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output();
-            }
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
             Err("setupc.exe execution timed out".into())
         }
         Err(_) => Err("setupc.exe process exited abnormally".into()),
     }
 }
 
-#[cfg(target_os = "windows")]
 fn wide(value: &str) -> Vec<u16> {
     std::ffi::OsStr::new(value)
         .encode_wide()
@@ -169,7 +153,6 @@ fn wide(value: &str) -> Vec<u16> {
 }
 
 /// 用一次 UAC 执行受控批处理。批处理内容只由本模块生成，不接受 UI 传入命令。
-#[cfg(target_os = "windows")]
 fn run_elevated(batch: &str) -> Result<(), String> {
     let batch_path = std::env::temp_dir().join(format!(
         "tauterm-elev-{}.cmd",
@@ -222,21 +205,25 @@ fn run_elevated(batch: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+/// 删除一个 TauTerm 已拥有的 bus。先在同一提权事务中确认 bus 仍存在：已经不存在
+/// 视为清理成功；仍存在时执行 remove，必要时解绑 COM 名称后重试。
 fn append_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
+    let done = format!("remove_done_{bus}");
     batch.push_str(&format!(
-        "\"{setupc}\" remove {bus} >nul 2>&1\r\n\
+        "\"{setupc}\" list | findstr /B /C:\"CNCA{bus} \" >nul 2>&1\r\n\
+if errorlevel 1 goto {done}\r\n\
+\"{setupc}\" remove {bus} >nul 2>&1\r\n\
 if errorlevel 1 (\r\n\
   \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n\
   \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n\
   ping -n 2 127.0.0.1 >nul\r\n\
   \"{setupc}\" remove {bus} >nul 2>&1\r\n\
   if errorlevel 1 exit /b 1\r\n\
-)\r\n"
+)\r\n\
+:{done}\r\n"
     ));
 }
 
-#[cfg(target_os = "windows")]
 fn append_best_effort_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
     batch.push_str(&format!(
         "\"{setupc}\" remove {bus} >nul 2>&1\r\n\
@@ -249,7 +236,6 @@ if errorlevel 1 (\r\n\
     ));
 }
 
-#[cfg(target_os = "windows")]
 fn build_elevated_create_batch(
     resource: &str,
     setupc: &str,
@@ -262,7 +248,7 @@ fn build_elevated_create_batch(
     }
     for endpoint in pairs {
         batch.push_str(&format!(
-            "\"{setupc}\" install {bus} PortName={bridge} PortName={external},PlugInMode=yes\r\n\
+            "\"{setupc}\" install {bus} PortName={bridge},dsr=ropen PortName={external},PlugInMode=yes\r\n\
 if errorlevel 1 goto rollback\r\n",
             bus = endpoint.resource_id,
             bridge = endpoint.bridge_path,
@@ -280,7 +266,6 @@ if errorlevel 1 goto rollback\r\n",
 impl VirtualPortManager {
     pub fn new(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
         let manager = Self {
-            driver_installed: false,
             active_endpoints: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
             state_dir: Some(normalize_windows_path(&state_dir)),
@@ -297,7 +282,6 @@ impl VirtualPortManager {
     /// 视为自己的资源，也不在启动时扫描并删除第三方 com0com 端口对。
     pub fn new_stateless(resource_dir: PathBuf) -> Self {
         Self {
-            driver_installed: false,
             active_endpoints: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
             state_dir: None,
@@ -327,24 +311,9 @@ impl VirtualPortManager {
             && self.resource_dir.join("comport.inf").exists()
     }
 
+    /// 驱动安装状态是 SCM 事实；普通 GUI 不为探测启动 setupc.exe。
     pub fn detect_driver(&self) -> bool {
-        let mut service_query = Command::new("sc");
-        service_query.args(["query", "com0com"]);
-        #[cfg(target_os = "windows")]
-        service_query.creation_flags(CREATE_NO_WINDOW);
-        if service_query
-            .output()
-            .is_ok_and(|output| output.status.success())
-        {
-            return true;
-        }
-
-        if !self.setupc_path().exists() {
-            return false;
-        }
-        run_setupc(&self.resource_dir, &["list"])
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+        super::windows_driver::is_com0com_driver_installed()
     }
 
     fn state_path(&self) -> Option<PathBuf> {
@@ -379,14 +348,12 @@ impl VirtualPortManager {
                 state.owned_endpoints
             }
             Err(error) => {
-                // 预稳定阶段不迁移旧 schema；保留备份便于诊断，随后使用唯一的新模型。
                 let backup = path.with_extension("json.bak");
                 let _ = std::fs::copy(&path, &backup);
                 log::warn!(
                     "virtual-port ownership state has obsolete/corrupt schema ({error}); backed up to {:?}",
                     backup
                 );
-                // 当前版本只接受唯一 ownership schema；不迁移旧 bus-only 状态。
                 self.persist_owned_endpoints(&[]);
                 Vec::new()
             }
@@ -472,7 +439,6 @@ impl VirtualPortManager {
     }
 
     fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) {
-        // owner 消失，但驱动资源可能仍存在：从 active 移除、保留 ownership。
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
         self.remember_owned_endpoints(std::slice::from_ref(endpoint));
@@ -490,8 +456,29 @@ impl VirtualPortManager {
             .collect()
     }
 
-    fn query_driver_state(&self) -> DriverState {
+    /// 不启动 setupc 的本地状态，只包含 TauTerm 自己的 ownership。用于 direct-UAC
+    /// fallback 在提权前分配候选 bus/COM，避免普通进程产生必然的 740 探测噪声。
+    fn local_driver_state(&self) -> DriverState {
         let mut state = DriverState::default();
+        for endpoint in self.load_owned_endpoints() {
+            let bus = endpoint.resource_id;
+            state.buses.insert(bus);
+            state.max_bus = Some(state.max_bus.map_or(bus, |current| current.max(bus)));
+            for path in [&endpoint.bridge_path, &endpoint.external_path] {
+                if let Some(number) = path
+                    .strip_prefix("COM")
+                    .and_then(|number| number.parse::<u32>().ok())
+                {
+                    state.occupied_ports.insert(number);
+                }
+            }
+        }
+        state
+    }
+
+    /// 特权上下文中的完整驱动状态查询。只由 TauTermService/管理员直接路径调用。
+    fn query_driver_state(&self) -> DriverState {
+        let mut state = self.local_driver_state();
         match run_setupc(&self.resource_dir, &["list"]) {
             Ok(output) if output.status.success() => {
                 state.queried = true;
@@ -531,24 +518,6 @@ impl VirtualPortManager {
                 );
             }
             Err(error) => log::warn!("setupc list failed: {error}"),
-        }
-
-        // 查询失败时只使用 TauTerm 自己的 ownership 记录避免 bus 碰撞；绝不把这些
-        // fallback bus 当成“驱动里所有残留”去删除。
-        if !state.queried {
-            for endpoint in self.load_owned_endpoints() {
-                let bus = endpoint.resource_id;
-                state.buses.insert(bus);
-                state.max_bus = Some(state.max_bus.map_or(bus, |current| current.max(bus)));
-                for path in [&endpoint.bridge_path, &endpoint.external_path] {
-                    if let Some(number) = path
-                        .strip_prefix("COM")
-                        .and_then(|number| number.parse::<u32>().ok())
-                    {
-                        state.occupied_ports.insert(number);
-                    }
-                }
-            }
         }
         state
     }
@@ -607,9 +576,9 @@ impl VirtualPortManager {
         bus
     }
 
+    /// 仅供已提权上下文（TauTermService）直接安装驱动。
     pub fn install_driver(&mut self) -> Result<(), String> {
         if self.detect_driver() {
-            self.driver_installed = true;
             return Ok(());
         }
         if !self.are_files_present() {
@@ -627,20 +596,18 @@ impl VirtualPortManager {
             ));
         }
         let _ = run_setupc(&self.resource_dir, &["remove", &bus.to_string()]);
-        self.driver_installed = true;
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
     pub fn install_driver_elevated(&mut self) -> Result<(), String> {
         if self.detect_driver() {
-            self.driver_installed = true;
             return Ok(());
         }
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
-        let driver = self.query_driver_state();
+
+        let driver = self.local_driver_state();
         let bus = self.next_free_bus(&driver);
         let setupc = self.setupc_path().display().to_string();
         let resource = self.resource_dir.display().to_string();
@@ -651,18 +618,28 @@ if errorlevel 1 exit /b 1\r\n\
 \"{setupc}\" remove {bus} >nul 2>&1\r\n\
 exit /b 0\r\n"
         );
-        run_elevated(&batch)?;
-        self.driver_installed = true;
-        Ok(())
+        run_elevated(&batch)
     }
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn install_driver_elevated(&mut self) -> Result<(), String> {
-        Err("UAC elevation is only supported on Windows".into())
+    /// direct-uac-on-demand 的唯一创建入口。普通 GUI 不先运行 setupc 探测；驱动缺失
+    /// 时安装与 endpoint 创建都在用户明确操作触发的提权事务中完成。
+    pub fn ensure_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        if !config.enabled || config.count == 0 {
+            return Ok(Vec::new());
+        }
+        if !self.are_files_present() {
+            return Err("com0com driver files missing".into());
+        }
+        if !self.detect_driver() {
+            self.install_driver_elevated()?;
+        }
+        self.create_endpoints_elevated(config)
     }
 
-    /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身，因为
-    /// PlugInMode 端口可能不会出现在 serialport::available_ports() 中。
+    /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身或 TauTerm ownership。
     pub fn find_available_port_pairs(count: u32, extra_occupied: &HashSet<u32>) -> Vec<(u32, u32)> {
         let mut in_use = serialport::available_ports()
             .map(|ports| {
@@ -709,6 +686,7 @@ exit /b 0\r\n"
         pairs
     }
 
+    /// 已提权上下文（TauTermService）使用的直接创建路径。
     pub fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
@@ -743,7 +721,9 @@ exit /b 0\r\n"
                 external_path: format!("COM{external_number}"),
                 resource_id: bus,
             };
-            let bridge_arg = format!("PortName={}", endpoint.bridge_path);
+            // DSR=ropen 是 bridge 的 peer-presence 信号。外部端未打开时 bridge 不向
+            // com0com 写历史 backlog；外部端打开后才开始透明转发。
+            let bridge_arg = format!("PortName={},dsr=ropen", endpoint.bridge_path);
             let external_arg = format!("PortName={},PlugInMode=yes", endpoint.external_path);
             let bus_arg = bus.to_string();
             match run_setupc(
@@ -778,6 +758,7 @@ exit /b 0\r\n"
                             "{} / {}",
                             endpoint.bridge_path, endpoint.external_path
                         ));
+                        bus = self.next_bus_after(bus, &driver);
                         continue;
                     }
                     for created in pairs.clone() {
@@ -813,11 +794,11 @@ exit /b 0\r\n"
                 pairs.len()
             );
         }
-        self.driver_installed = true;
         Ok(pairs)
     }
 
-    #[cfg(target_os = "windows")]
+    /// GUI direct fallback 的显式 UAC 创建路径。提权前只使用普通串口枚举与 TauTerm
+    /// ownership；不运行 setupc list，因此不会为了“先探测一下”制造 740 日志。
     pub fn create_endpoints_elevated(
         &mut self,
         config: &VirtualPortConfig,
@@ -829,10 +810,9 @@ exit /b 0\r\n"
             return Err("com0com driver files missing".into());
         }
 
-        self.reconcile_orphan_state();
         let orphans = self.orphan_endpoints();
         let count = config.count.clamp(1, 4);
-        let driver = self.query_driver_state();
+        let driver = self.local_driver_state();
         let candidates = Self::find_available_port_pairs(count, &driver.occupied_ports);
         if candidates.len() < count as usize {
             return Err("No available COM port pairs".into());
@@ -849,8 +829,8 @@ exit /b 0\r\n"
             next_bus = self.next_bus_after(next_bus, &driver);
         }
 
-        // 在启动提权子进程前先登记 ownership。这样即使进程超时/被终止，
-        // 任何已经安装但来不及执行 rollback 的端口对也不会成为不可追踪资源。
+        // 在启动提权子进程前先登记 ownership。即使进程超时/被终止，任何已经安装但
+        // 来不及 rollback 的资源也不会成为 TauTerm 完全无法追踪的未知端口。
         self.remember_owned_endpoints(&pairs);
 
         let setupc = self.setupc_path().display().to_string();
@@ -859,45 +839,32 @@ exit /b 0\r\n"
 
         if let Err(error) = run_elevated(&batch) {
             if error.to_lowercase().contains("cancel") {
-                // ShellExecuteEx 在 UAC 取消时没有创建子进程，因此这些预登记资源
-                // 一定不存在，可以立即撤销 ownership。
+                // UAC 被取消时子进程从未运行，因此这些预登记目标一定不存在。
                 for endpoint in &pairs {
                     self.forget_owned_endpoint(endpoint);
                 }
                 return Err("User cancelled the UAC elevation prompt".to_string());
             }
 
-            // 正常失败路径会在同一批处理中 rollback；超时/异常终止则可能留下
-            // 部分资源。重新读取驱动状态，只撤销已确认不存在的 ownership。
-            self.reconcile_orphan_state();
+            // 批处理正常失败会执行 best-effort rollback；超时/异常终止则可能只完成
+            // 部分操作。此时保留 ownership，交给下一次显式 cleanup 安全核对/回收。
             return Err(format!("Elevated virtual-port creation failed: {error}"));
         }
 
-        // 同一提权事务已成功清理 orphan；保留当前 active ownership，仅移除这些 orphan。
+        // 同一提权事务已确认 orphan 不存在或已成功清理。
         for orphan in &orphans {
             self.forget_owned_endpoint(orphan);
         }
         for endpoint in &pairs {
             self.track_active_endpoint(endpoint.clone());
         }
-        self.driver_installed = true;
         Ok(pairs)
     }
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn create_endpoints_elevated(
-        &mut self,
-        _config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        Err("UAC elevation is only supported on Windows".into())
-    }
-
-    #[cfg(target_os = "windows")]
     pub fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
-        self.reconcile_orphan_state();
         let orphans = self.orphan_endpoints();
         if orphans.is_empty() {
             return Ok(0);
@@ -923,11 +890,6 @@ exit /b 0\r\n"
             self.forget_owned_endpoint(orphan);
         }
         Ok(orphans.len() as u32)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
-        Err("UAC elevation is only supported on Windows".into())
     }
 
     pub fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
@@ -1027,8 +989,6 @@ exit /b 0\r\n"
 
         let pending = self.pending_orphan_count();
         if pending > 0 {
-            // 退出/断开路径绝不主动弹 UAC。已持久化 orphan 由下次显式创建或
-            // “清理残留端口”操作处理，避免在关闭应用时出现意外权限提示。
             log::warn!(
                 "{} virtual-port pair(s) remain pending for explicit cleanup",
                 pending
@@ -1036,9 +996,8 @@ exit /b 0\r\n"
         }
     }
 
-    /// 清理上一个进程遗留的、且能证明属于 TauTerm 的端口对。
-    ///
-    /// 无状态服务后端没有跨进程 ownership 证据，因此绝不扫描删除驱动中的任意 bus。
+    /// 清理上一个进程遗留的、且能证明属于 TauTerm 的端口对。该直接路径只适用于
+    /// 特权服务上下文；GUI fallback 使用 `cleanup_endpoints_elevated`。
     pub fn cleanup_orphans(&mut self) -> u32 {
         if self.state_dir.is_none() {
             return 0;
@@ -1080,6 +1039,13 @@ impl VirtualPortBackend for VirtualPortManager {
 
     fn install_driver_elevated(&mut self) -> Result<(), String> {
         VirtualPortManager::install_driver_elevated(self)
+    }
+
+    fn ensure_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        VirtualPortManager::ensure_endpoints(self, config)
     }
 
     fn create_endpoints(
@@ -1200,13 +1166,13 @@ mod tests {
         assert_eq!(manager.pending_orphan_count(), 0);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn elevated_create_batch_rolls_back_every_new_pair() {
+    fn elevated_create_batch_is_peer_aware_and_rolls_back_every_new_pair() {
         let orphans = vec![sample_endpoint(6)];
         let pairs = vec![sample_endpoint(10), sample_endpoint(11)];
         let batch = build_elevated_create_batch("C:\\TauTerm", "setupc.exe", &orphans, &pairs);
 
+        assert!(batch.contains("dsr=ropen"));
         assert!(batch.contains("if errorlevel 1 goto rollback"));
         assert!(batch.contains("goto success\r\n:rollback\r\n"));
         assert!(batch.contains(":success\r\nexit /b 0"));
@@ -1214,5 +1180,14 @@ mod tests {
             let remove = format!("\"setupc.exe\" remove {}", endpoint.resource_id);
             assert_eq!(batch.matches(&remove).count(), 2);
         }
+    }
+
+    #[test]
+    fn elevated_cleanup_checks_presence_inside_the_privileged_batch() {
+        let mut batch = String::new();
+        append_remove_batch(&mut batch, "setupc.exe", 7);
+        assert!(batch.contains("setupc.exe\" list | findstr"));
+        assert!(batch.contains("CNCA7"));
+        assert!(batch.contains(":remove_done_7"));
     }
 }
