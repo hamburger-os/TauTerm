@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   finish:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -22,32 +21,20 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('src-tauri/src/kernel/log_engine.rs')
           text = path.read_text(encoding='utf-8')
-
           old_import = 'use super::log_writer::LogWriter;\n'
           new_import = 'use super::log_filename::system_segment_file_name;\nuse super::log_writer::LogWriter;\n'
           if new_import not in text:
               if old_import not in text:
                   raise SystemExit('log_engine import anchor not found')
               text = text.replace(old_import, new_import, 1)
-
-          old_name = '''            let file_name = format!(
-                "TauTerm_{}_p{}_{:03}.log",
-                self.date,
-                std::process::id(),
-                self.segment_index
-            );
-'''
-          new_name = '''            let segment_created = Local::now();
-            let file_name = system_segment_file_name(&segment_created, self.segment_index);
-'''
+          old_name = '            let file_name = format!(\n                "TauTerm_{}_p{}_{:03}.log",\n                self.date,\n                std::process::id(),\n                self.segment_index\n            );\n'
+          new_name = '            let segment_created = Local::now();\n            let file_name = system_segment_file_name(&segment_created, self.segment_index);\n'
           if new_name not in text:
               if old_name not in text:
                   raise SystemExit('system log filename anchor not found')
               text = text.replace(old_name, new_name, 1)
-
           path.write_text(text, encoding='utf-8')
           PY
       - name: Format Rust
