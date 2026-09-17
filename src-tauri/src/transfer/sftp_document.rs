@@ -103,6 +103,11 @@ impl RemoteSnapshot {
     }
 }
 
+enum CommitDocumentOutcome {
+    Committed,
+    Conflict(RemoteDocumentVersion),
+}
+
 fn get_ssh_runtime(
     state: &State<'_, AppState>,
     session_id: &str,
@@ -407,43 +412,132 @@ async fn current_regular_metadata(
     Ok(stat.permissions)
 }
 
-async fn commit_document_temp(
+async fn restore_document_backup(
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    temp_path: &str,
+    backup_path: &str,
     final_path: &str,
 ) -> Result<(), String> {
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-    let stat = sftp
-        .symlink_metadata(final_path)
-        .await
-        .map_err(|e| format!("提交前获取文件信息 '{}' 失败: {}", final_path, e))?;
-    if !is_regular_file(stat.permissions, stat.is_dir()) {
-        return Err(format!("提交目标不再是普通文件: {}", final_path));
+    sftp.rename(backup_path, final_path).await.map_err(|error| {
+        format!(
+            "回滚远程原文件失败，原文件仍保留在 '{}': {}",
+            backup_path, error
+        )
+    })
+}
+
+async fn commit_document_temp(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    temp_path: &str,
+    final_path: &str,
+    expected_version: Option<&RemoteDocumentVersion>,
+) -> Result<CommitDocumentOutcome, String> {
+    let backup_path = remote_sibling_artifact(final_path, "backup");
+    {
+        let cache = sftp_cache.lock().await;
+        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let stat = sftp
+            .symlink_metadata(final_path)
+            .await
+            .map_err(|e| format!("提交前获取文件信息 '{}' 失败: {}", final_path, e))?;
+        if !is_regular_file(stat.permissions, stat.is_dir()) {
+            return Err(format!("提交目标不再是普通文件: {}", final_path));
+        }
+        sftp.rename(final_path, &backup_path)
+            .await
+            .map_err(|e| format!("备份远程原文件 '{}' 失败: {}", final_path, e))?;
     }
 
-    let backup_path = remote_sibling_artifact(final_path, "backup");
-    sftp.rename(final_path, &backup_path)
+    let backup_snapshot = if expected_version.is_some() {
+        match read_snapshot(
+            session,
+            sftp_cache,
+            &backup_path,
+            DOCUMENT_EDIT_LIMIT + 1,
+        )
         .await
-        .map_err(|e| format!("备份远程原文件 '{}' 失败: {}", final_path, e))?;
-
-    match sftp.rename(temp_path, final_path).await {
-        Ok(()) => {
-            if let Err(error) = sftp.remove_file(&backup_path).await {
-                log::warn!("删除远程文档提交备份 '{}' 失败: {}", backup_path, error);
+        {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                let reason = format!("提交前校验远程原文件失败: {}", error);
+                return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                    Ok(()) => Err(reason),
+                    Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
+                };
             }
-            Ok(())
         }
-        Err(commit_error) => match sftp.rename(&backup_path, final_path).await {
-            Ok(()) => Err(format!(
-                "提交远程文档 '{}' 失败: {}",
-                final_path, commit_error
-            )),
-            Err(rollback_error) => Err(format!(
-                "提交远程文档 '{}' 失败: {}；回滚也失败，原文件仍保留在 '{}': {}",
-                final_path, commit_error, backup_path, rollback_error
-            )),
+    } else {
+        None
+    };
+
+    if let (Some(expected), Some(snapshot)) = (expected_version, backup_snapshot.as_ref()) {
+        let complete = snapshot.data.len() as u64 == snapshot.size;
+        let current_version = snapshot.version(complete);
+        if &current_version != expected {
+            return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                Ok(()) => Ok(CommitDocumentOutcome::Conflict(current_version)),
+                Err(rollback_error) => Err(format!(
+                    "提交前检测到远程文件并发修改；{}",
+                    rollback_error
+                )),
+            };
+        }
+    }
+
+    let permissions = match backup_snapshot.as_ref() {
+        Some(snapshot) => snapshot.permissions,
+        None => match current_regular_metadata(sftp_cache, &backup_path).await {
+            Ok(permissions) => permissions,
+            Err(error) => {
+                let reason = format!("读取远程原文件权限失败: {}", error);
+                return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                    Ok(()) => Err(reason),
+                    Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
+                };
+            }
         },
+    };
+
+    if let Some(mode) = permissions {
+        let mut attrs = FileAttributes::empty();
+        attrs.permissions = Some(0o100000 | (mode & 0o7777));
+        let cache = sftp_cache.lock().await;
+        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        if let Err(error) = sftp.set_metadata(temp_path, attrs).await {
+            drop(cache);
+            let reason = format!("同步远程文档权限失败: {}", error);
+            return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                Ok(()) => Err(reason),
+                Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
+            };
+        }
+    }
+
+    let commit_result = {
+        let cache = sftp_cache.lock().await;
+        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        sftp.rename(temp_path, final_path).await
+    };
+
+    match commit_result {
+        Ok(()) => {
+            let cache = sftp_cache.lock().await;
+            if let Some(sftp) = cache.as_ref() {
+                if let Err(error) = sftp.remove_file(&backup_path).await {
+                    log::warn!("删除远程文档提交备份 '{}' 失败: {}", backup_path, error);
+                }
+            }
+            Ok(CommitDocumentOutcome::Committed)
+        }
+        Err(commit_error) => {
+            let reason = format!("提交远程文档 '{}' 失败: {}", final_path, commit_error);
+            match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                Ok(()) => Err(reason),
+                Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
+            }
+        }
     }
 }
 
@@ -543,13 +637,18 @@ pub async fn sftp_save_document_cmd(
     }
     drop(temp_file);
 
-    // 文档写入期间远端仍可能被其他工具修改。非 force 保存必须在正式提交前再次
-    // 比较完整版本，避免 check-then-write 窗口造成 silent lost update。
-    if !request.force {
-        let after_write =
-            read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
-        let current_version = after_write.version(true);
-        if current_version != request.expected_version {
+    let expected_version = (!request.force).then_some(&request.expected_version);
+    match commit_document_temp(
+        &runtime.session,
+        &runtime.sftp,
+        &temp_path,
+        &request.remote_path,
+        expected_version,
+    )
+    .await
+    {
+        Ok(CommitDocumentOutcome::Committed) => {}
+        Ok(CommitDocumentOutcome::Conflict(current_version)) => {
             remove_remote_best_effort(&runtime.sftp, &temp_path).await;
             return Ok(RemoteDocumentSaveResult {
                 status: "conflict",
@@ -557,26 +656,10 @@ pub async fn sftp_save_document_cmd(
                 current_version: Some(current_version),
             });
         }
-    }
-
-    // 保留原文件权限，但让文件内容修改自然获得新的 mtime。
-    let permissions = current_regular_metadata(&runtime.sftp, &request.remote_path).await?;
-    if let Some(mode) = permissions {
-        let mut attrs = FileAttributes::empty();
-        attrs.permissions = Some(0o100000 | (mode & 0o7777));
-        let cache = runtime.sftp.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        if let Err(error) = sftp.set_metadata(&temp_path, attrs).await {
-            drop(cache);
+        Err(error) => {
             remove_remote_best_effort(&runtime.sftp, &temp_path).await;
-            return Err(format!("同步远程文档权限失败: {}", error));
+            return Err(error);
         }
-    }
-
-    if let Err(error) = commit_document_temp(&runtime.sftp, &temp_path, &request.remote_path).await
-    {
-        remove_remote_best_effort(&runtime.sftp, &temp_path).await;
-        return Err(error);
     }
 
     let saved =
