@@ -16,138 +16,84 @@ jobs:
         with:
           fetch-depth: 0
           ref: fix/virtual-port-bridge-logging
-      - name: Finish refactor and log naming
+      - name: Finish implementation and documentation
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(text, old, new, label):
+          def replace_exact(path, old, new, label):
+              text = path.read_text(encoding='utf-8')
               if new in text:
-                  return text
+                  return
               if old not in text:
-                  raise SystemExit(f'{label} anchor not found')
-              return text.replace(old, new, 1)
+                  raise SystemExit(f'{label} anchor not found in {path}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          def replace_between(text, start, end, replacement, label, offset=0):
-              begin = text.find(start, offset)
-              if begin < 0:
-                  if replacement in text:
-                      return text
-                  raise SystemExit(f'{label} start anchor not found')
-              finish = text.find(end, begin)
-              if finish < 0:
-                  raise SystemExit(f'{label} end anchor not found')
-              return text[:begin] + replacement + text[finish:]
-
-          path = Path('src-tauri/src/kernel/log_engine.rs')
-          text = path.read_text(encoding='utf-8')
-          text = replace_once(text, 'use super::log_writer::LogWriter;\n', 'use super::log_filename::system_segment_file_name;\nuse super::log_writer::LogWriter;\n', 'log_engine import')
-          old_name = '            let file_name = format!(\n                "TauTerm_{}_p{}_{:03}.log",\n                self.date,\n                std::process::id(),\n                self.segment_index\n            );\n'
-          new_name = '            let segment_created = Local::now();\n            let file_name = system_segment_file_name(&segment_created, self.segment_index);\n'
-          text = replace_once(text, old_name, new_name, 'system log filename')
-          path.write_text(text, encoding='utf-8')
-
-          path = Path('src-tauri/src/virtual_port/manager.rs')
-          text = path.read_text(encoding='utf-8')
-          text = replace_once(text, '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n', '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n    VirtualPortError,\n', 'manager import')
-          replacement = '\n'.join([
-              '    pub fn ensure_endpoints(',
-              '        &mut self,',
-              '        config: &VirtualPortConfig,',
-              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
-              '        if !config.enabled || config.count == 0 {',
-              '            return Ok(Vec::new());',
-              '        }',
-              '        if !self.are_files_present() {',
-              '            return Err(VirtualPortError::FilesMissing);',
-              '        }',
-              '        if !self.detect_driver() {',
-              '            self.install_driver_elevated()',
-              '                .map_err(VirtualPortError::from_backend)?;',
-              '            if !self.detect_driver() {',
-              '                return Err(VirtualPortError::DriverMissing);',
-              '            }',
-              '        }',
-              '        self.create_endpoints_elevated(config)',
-              '            .map_err(VirtualPortError::from_backend)',
-              '    }',
-              '',
-          ])
-          text = replace_between(text, '    pub fn ensure_endpoints(\n', '    /// 扫描空闲连续 COM 号。', replacement, 'manager inherent ensure')
-          impl_offset = text.find('impl VirtualPortBackend for VirtualPortManager')
-          replacement = '\n'.join([
-              '    fn ensure_endpoints(',
-              '        &mut self,',
-              '        config: &VirtualPortConfig,',
-              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
-              '        VirtualPortManager::ensure_endpoints(self, config)',
-              '    }',
-              '',
-          ])
-          text = replace_between(text, '    fn ensure_endpoints(\n', '    fn create_endpoints(\n', replacement, 'manager trait ensure', impl_offset)
-          path.write_text(text, encoding='utf-8')
-
-          path = Path('src-tauri/src/virtual_port/service_backend.rs')
-          text = path.read_text(encoding='utf-8')
-          text = replace_once(text, '    VirtualPortBackend, VirtualPortConfig,\n', '    VirtualPortBackend, VirtualPortConfig, VirtualPortError,\n', 'service backend import')
-          replacement = '\n'.join([
-              '    fn ensure_endpoints(',
-              '        &mut self,',
-              '        config: &VirtualPortConfig,',
-              '    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {',
-              '        if !config.enabled || config.count == 0 {',
-              '            return Ok(Vec::new());',
-              '        }',
-              '        let status = self.status().map_err(VirtualPortError::from_backend)?;',
-              '        if !status["files_present"].as_bool().unwrap_or(false) {',
-              '            return Err(VirtualPortError::FilesMissing);',
-              '        }',
-              '        if !status["driver_installed"].as_bool().unwrap_or(false) {',
-              '            self.install_driver()',
-              '                .map_err(VirtualPortError::from_backend)?;',
-              '            let status = self.status().map_err(VirtualPortError::from_backend)?;',
-              '            if !status["driver_installed"].as_bool().unwrap_or(false) {',
-              '                return Err(VirtualPortError::DriverMissing);',
-              '            }',
-              '        }',
-              '        self.create_endpoints(config)',
-              '            .map_err(VirtualPortError::from_backend)',
-              '    }',
-              '',
-          ])
-          text = replace_between(text, '    fn ensure_endpoints(\n', '    fn create_endpoints(\n', replacement, 'service backend ensure')
-          path.write_text(text, encoding='utf-8')
-
+          # Remove an intermediate automation artifact left by the typed-error refactor.
           path = Path('src-tauri/src/plugins/serial/mod.rs')
           text = path.read_text(encoding='utf-8')
-          text = replace_once(text, 'use crate::virtual_port::backend::{\n    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n', 'use crate::virtual_port::backend::{\n    is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n', 'serial import')
-          start = '        let endpoints = match manager.ensure_endpoints(&config) {\n'
-          end = '        drop(manager);\n\n        if endpoints.is_empty()'
-          replacement = '\n'.join([
-              '        let endpoints = match manager.ensure_endpoints(&config) {',
-              '            Ok(endpoints) => endpoints,',
-              '            Err(error) => {',
-              '                let kind = error.kind();',
-              '                let detail = error.to_string();',
-              '                drop(manager);',
-              '                log::warn!("虚拟端口创建失败 (session={session_id}): {detail}");',
-              '                let _ = app.emit(',
-              '                    "virtual-port-failed",',
-              '                    serde_json::json!({',
-              '                        "session_id": session_id,',
-              '                        "kind": kind,',
-              '                        "reason": detail,',
-              '                    }),',
-              '                );',
-              '                return Ok(Vec::new());',
-              '            }',
-              '        };',
-              '        drop(manager);',
-              '',
-          ])
-          text = replace_between(text, start, end, replacement, 'serial typed ensure')
+          duplicate = '        drop(manager);\n        drop(manager);\n'
+          if duplicate in text:
+              text = text.replace(duplicate, '        drop(manager);\n', 1)
           path.write_text(text, encoding='utf-8')
+
+          # Serial/virtual-port architecture: peer lifecycle, worker isolation, typed backend errors.
+          path = Path('docs/modules/SERIAL.md')
+          replace_exact(
+              path,
+              '桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**；虚拟 → 物理方向直接通过 `Arc<SessionIo>` 做确认式写入。订阅者若持续落后导致有界 backlog 满，DataPlane 会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。\n',
+              '桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**，并由专用转发 worker 持续消费；每个 external endpoint 的虚拟 → 物理读取由独立 reader worker 承担，再通过 `Arc<SessionIo>` 做确认式写入。这样 external 端口的空闲读超时、暂时缺席或某个 reader 的调度不会占用 DataPlane subscription 的消费时间预算。订阅者若持续落后导致有界 backlog 满，DataPlane 仍会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。\n',
+              'serial bridge worker model',
+          )
+          replace_exact(
+              path,
+              'external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO，Windows 虚拟端点也允许对端应用稍后打开或重新连接。此类“当前没有外部 peer”的端点读写错误不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具再次连接。没有实际 peer 时当然不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。\n',
+              'external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Bridge 因而可以在写入前区分“external endpoint 尚未打开”和“已连接 peer 出现真实 I/O 故障”。peer 缺席时不会建立历史 backlog，也不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具连接/重连。peer 已连接后发生写入、读取或 DataPlane 完整性失败则继续 fail-closed。没有实际 peer 时不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。\n',
+              'serial peer lifecycle',
+          )
+          replace_exact(
+              path,
+              '- Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。\n\n上层统一使用“内部 bridge + 对外 external endpoint”的能力模型。',
+              '- Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。\n\nSerial 运行时只调用统一的 `ensure_endpoints` capability，并消费强类型的创建失败语义；驱动安装、UAC、特权服务选择和 setupc 文本错误归一化全部留在 virtual-port backend 边界，Serial 不通过字符串猜测平台权限状态。\n\n上层统一使用“内部 bridge + 对外 external endpoint”的能力模型。',
+              'serial typed backend boundary',
+          )
+
+          # Privileged-service protocol is explicitly versioned and diagnostics preserve OS context.
+          path = Path('docs/modules/PLATFORM_SECURITY.md')
+          replace_exact(
+              path,
+              '虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。主 GUI 无法连接服务时进入 `direct-uac-on-demand`，普通启动阶段只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。\n',
+              '虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。主 GUI 无法连接服务时进入 `direct-uac-on-demand`，普通启动阶段只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；命名管道读写失败保留 Win32 错误/超时上下文用于诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。\n',
+              'platform privileged protocol',
+          )
+
+          # All log segments sort chronologically by their names because creation time is the prefix.
+          path = Path('docs/modules/OBSERVABILITY_TOOLS.md')
+          replace_exact(
+              path,
+              'Session 文件名的唯一性来自不可变 Session 身份、进程/启动实例信息和 segment 序号，用户可修改的 Session 名称只进入 Header，不再承担文件唯一标识，也不能把路径字符带入文件系统命名。System Log 同样采用独立 segment，避免单个日期文件无限增长。\n',
+              path.read_text(encoding='utf-8').split('Session 文件名的唯一性来自不可变 Session 身份、进程/启动实例信息和 segment 序号，用户可修改的 Session 名称只进入 Header，不再承担文件唯一标识，也不能把路径字符带入文件系统命名。System Log 同样采用独立 segment，避免单个日期文件无限增长。\n',1)[0][-0:] if False else 'System Log 与 Session Data Log 的所有 segment 文件名统一以实际 segment 创建时刻的 `TauTerm_<YYYYMMDD_HHMMSS_mmm>_` 前缀开头，随后才放 `system/session`、Session key、PID、nonce 与 segment 序号。文件名的字典序因此直接对应 segment 创建时间；PID、Session 身份和序号只负责唯一性/来源识别，不再承担排序职责。用户可修改的 Session 名称只进入 Header，不能把路径字符带入文件系统命名。每次 rotation 都重新取得 segment creation time，不能沿用 Session 启动时刻。System Log 同样采用独立 segment，避免单个日期文件无限增长。\n',
+              'observable log filename contract',
+          )
+
+          # Keep the com0com maintenance skill aligned with the implemented driver parameters.
+          path = Path('.agents/skills/tauterm-com0com/SKILL.md')
+          replace_exact(
+              path,
+              'CNCA<n> -> bridge_path    -> PortName=COMxx\nCNCB<n> -> external_path  -> PortName=COMyy,PlugInMode=yes\n```\n\nbus 是后端资源标识；前端不得依赖它。\n',
+              'CNCA<n> -> bridge_path    -> PortName=COMxx,dsr=ropen\nCNCB<n> -> external_path  -> PortName=COMyy,PlugInMode=yes\n```\n\n`dsr=ropen` 把远端 external endpoint 的打开状态映射到 bridge 端 DSR。Bridge 只在 peer 实际打开时转发 physical → virtual 数据；peer 缺席期间不积压历史数据，peer 已连接后出现的真实 I/O/完整性失败则 fail-closed。bus 是后端资源标识；前端不得依赖它。\n',
+              'com0com peer presence contract',
+          )
+
+          # Unreleased history belongs only in CHANGELOG.md.
+          path = Path('CHANGELOG.md')
+          replace_exact(
+              path,
+              '### Changed\n- **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.\n\n## [0.6.5]',
+              '### Changed\n- **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.\n- **Virtual-port capability boundary** — isolates physical→virtual forwarding from per-endpoint readers, uses explicit external-peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, and versions the privileged-service handshake.\n- **Chronological log segment names** — System and Session log segments now start with their actual segment creation timestamp so filename sorting follows creation order across processes, sessions and rotations.\n\n### Fixed\n- **Windows virtual-port bridge could stop while the external COM peer was closed** — com0com peer absence no longer backpressures the bounded DataPlane subscription; connected-stream failures remain fail-closed instead of being hidden by larger queues or silent overrun.\n\n## [0.6.5]',
+              'unreleased changelog',
+          )
           PY
       - name: Format Rust
         shell: bash
@@ -155,7 +101,11 @@ jobs:
           TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
           cargo fmt --manifest-path src-tauri/Cargo.toml
-      - name: Commit formatted result
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Validate documentation
+        shell: bash
+        run: npm run docs:check
+      - name: Commit final branch content
         shell: bash
         run: |
           if git diff --quiet; then
@@ -163,6 +113,6 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src-tauri/src
-          git commit -m 'refactor: complete virtual-port capability boundary'
+          git add CHANGELOG.md docs .agents src-tauri/src
+          git commit -m 'docs: align virtual-port and logging contracts'
           git push origin HEAD:fix/virtual-port-bridge-logging
