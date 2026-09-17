@@ -1,0 +1,64 @@
+name: Temporary finalize PR 188
+
+on:
+  push:
+    branches:
+      - fix/virtual-port-bridge-logging
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.head_commit.message == 'chore: run final PR 188 synchronization'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: fix/virtual-port-bridge-logging
+
+      - name: Make cleanup assertion line-ending agnostic
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          path = Path("src-tauri/src/virtual_port/manager.rs")
+          text = path.read_text(encoding="utf-8")
+          old = '        let fail_closed = batch.find("if errorlevel 1 (\\r\\n  del /q").unwrap();'
+          new = '        let fail_closed = batch.find("if errorlevel 1 (").unwrap();'
+          if old not in text:
+              raise SystemExit("cleanup assertion anchor not found")
+          text = text.replace(old, new, 1)
+
+          old_assert = '        assert!(list < fail_closed && fail_closed < presence);'
+          new_assert = '''        assert!(list < fail_closed && fail_closed < presence);
+                  assert!(batch.contains("del /q \\\"%TAUTERM_VPORT_LIST%\\\" >nul 2>&1"));
+                  assert!(batch.contains("exit /b 1"));'''
+          if old_assert not in text:
+              raise SystemExit("cleanup ordering assertion anchor not found")
+          text = text.replace(old_assert, new_assert, 1)
+          path.write_text(text, encoding="utf-8")
+          '@ | python -
+
+      - name: Format Rust
+        shell: pwsh
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+
+      - name: Verify targeted Windows regression
+        shell: pwsh
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml virtual_port::manager::tests::elevated_cleanup_checks_presence_inside_the_privileged_batch
+
+      - name: Commit regression fix and synchronize master
+        shell: pwsh
+        run: |
+          git config user.name "hamburger-os"
+          git config user.email "296570182@qq.com"
+          git add src-tauri/src/virtual_port/manager.rs
+          git commit -m "test: make elevated cleanup assertion line-ending agnostic"
+          git fetch origin master
+          git merge --no-edit origin/master
+          git rm .github/workflows/tmp-finalize-pr188.yml
+          git commit -m "chore: remove temporary PR finalizer"
+          git push origin HEAD:fix/virtual-port-bridge-logging
