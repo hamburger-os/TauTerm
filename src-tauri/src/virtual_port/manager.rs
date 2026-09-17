@@ -1200,9 +1200,11 @@ mod tests {
         let mut batch = String::new();
         append_remove_batch(&mut batch, "setupc.exe", 7);
         let list = batch.find("setupc.exe\" list >").unwrap();
-        let fail_closed = batch.find("if errorlevel 1 (\r\n  del /q").unwrap();
+        let fail_closed = batch.find("if errorlevel 1 (").unwrap();
         let presence = batch.find("findstr /B /C:\"CNCA7 \"").unwrap();
         assert!(list < fail_closed && fail_closed < presence);
+        assert!(batch.contains("del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1"));
+        assert!(batch.contains("exit /b 1"));
         assert!(batch.contains("%TEMP%\\tauterm-vport-list-"));
         assert!(batch.contains(":remove_done_7"));
     }
