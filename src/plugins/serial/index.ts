@@ -14,6 +14,18 @@ import {
 } from "./SerialStatusItems";
 import { serialRuntimeStore } from "./runtime-store";
 
+const SERIAL_DATA_MODE_LABELS = {
+  text: "Text",
+  hex: "HEX",
+  dual: "Dual",
+} as const;
+
+function serialDataModeLabel(params: Record<string, unknown>): string {
+  const mode = params.data_mode;
+  if (mode === "hex" || mode === "dual") return SERIAL_DATA_MODE_LABELS[mode];
+  return SERIAL_DATA_MODE_LABELS.text;
+}
+
 function serialSubtitle(params: Record<string, unknown>, endpoint: string): string {
   const baudRate = typeof params.baud_rate === "number" && Number.isFinite(params.baud_rate)
     ? String(params.baud_rate)
@@ -49,7 +61,7 @@ export const serialPlugin = definePlugin({
   isConnectionConfigValid: (params, endpoint) =>
     isSerialConnectionConfigValid(params) && Boolean(endpoint?.trim()),
   sessionPresentation: {
-    defaultName: (_params, endpoint) => `Serial @ ${endpoint}`,
+    defaultName: params => `Serial @ ${serialDataModeLabel(params)}`,
     subtitle: serialSubtitle,
   },
   runtimeStore: serialRuntimeStore,

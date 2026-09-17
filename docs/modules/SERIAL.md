@@ -18,7 +18,7 @@ Serial 的连接表单、当前参数 schema、参数规范化、校验、会话
 
 `transferEnabled / transferProtocol / sendBarEnabled` 属于通用 Session 能力，只有顶层 Session 配置一份事实源；它们不得再次写入 Serial `params`。Serial `params` 当前只保存协议自身需要的链路、终端显示和虚拟串口策略字段。预稳定阶段不保留旧字段别名或双写兼容层；读入当前 Session 时由插件规范化到当前 schema，未知的旧 Serial 字段不会继续进入运行态。
 
-会话默认名称只在创建时生成一次，例如 `Serial @ COM5`；当前 baud/frame/flow 等链路参数由动态 subtitle 展示。改变显示方式或链路配置不得偷偷改写用户可见的 Session 身份。
+会话默认名称只在创建时生成一次，`@` 后使用创建时的数据模式，例如 `Serial @ Text`、`Serial @ HEX` 或 `Serial @ Dual`；当前端口、baud/frame/flow 等链路参数由动态 subtitle 展示。后续改变显示方式或链路配置不得偷偷改写用户可见的 Session 身份。
 
 ### 配置职责与连接语义
 
