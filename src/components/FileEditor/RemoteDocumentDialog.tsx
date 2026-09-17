@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { SftpEntry } from "../FileManager/types";
+import GlassButton from "../common/GlassButton";
 import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import { REMOTE_DOCUMENT_ENCODINGS } from "./documentCodec";
@@ -34,19 +35,47 @@ export default function RemoteDocumentDialog({
 }: RemoteDocumentDialogProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeConfirmRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorColumn, setCursorColumn] = useState(1);
   const doc = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
   const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
 
+  const dismissCloseConfirm = useCallback(() => {
+    setConfirmClose(false);
+    const previous = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    requestAnimationFrame(() => {
+      if (previous?.isConnected) previous.focus();
+    });
+  }, []);
+
   const requestClose = useCallback(() => {
+    // The SFTP document save is a transactional backend operation. Keep the editor mounted until
+    // it resolves so "close without saving" can never race an already-started remote commit.
+    if (doc.saving) return;
     if (doc.dirty) {
+      const active = document.activeElement;
+      restoreFocusRef.current = active instanceof HTMLElement && dialogRef.current?.contains(active)
+        ? active
+        : null;
       setConfirmClose(true);
       return;
     }
     onClose();
-  }, [doc.dirty, onClose]);
+  }, [doc.dirty, doc.saving, onClose]);
+
+  // The keyboard listener is document-scoped, so keep its dynamic decisions in refs instead
+  // of tearing the listener down on every dirty/saving state change while the user is typing.
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+  const confirmCloseStateRef = useRef(confirmClose);
+  confirmCloseStateRef.current = confirmClose;
+  const savingStateRef = useRef(doc.saving);
+  savingStateRef.current = doc.saving;
 
   const save = useCallback(() => {
     void doc.save(false);
@@ -54,44 +83,78 @@ export default function RemoteDocumentDialog({
 
   useEffect(() => {
     if (!visible) return;
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const frame = requestAnimationFrame(() => dialogRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      const previous = previouslyFocusedRef.current;
+      previouslyFocusedRef.current = null;
+      requestAnimationFrame(() => {
+        if (previous?.isConnected) previous.focus();
+      });
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !confirmClose) return;
     const frame = requestAnimationFrame(() => {
-      dialogRef.current
-        ?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), textarea:not(:disabled)')
+      closeConfirmRef.current
+        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]:not(:disabled)')
         ?.focus();
     });
+    return () => cancelAnimationFrame(frame);
+  }, [confirmClose, visible]);
 
+  useEffect(() => {
+    if (!visible) return;
     const handler = (event: KeyboardEvent) => {
+      // Let focused child widgets own keys they deliberately consume. In particular,
+      // TextEditor uses Tab for indentation and Ctrl/Cmd+S for save without losing caret focus.
+      if (event.defaultPrevented) return;
+
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        if (confirmClose) setConfirmClose(false);
-        else requestClose();
+        if (savingStateRef.current) return;
+        if (confirmCloseStateRef.current) dismissCloseConfirm();
+        else requestCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
+
+      const focusRoot = confirmCloseStateRef.current ? closeConfirmRef.current : dialogRef.current;
       const focusable = Array.from(
-        dialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        focusRoot?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
         ) ?? [],
       );
-      if (focusable.length === 0) return;
+      if (focusable.length === 0) {
+        event.preventDefault();
+        focusRoot?.focus();
+        return;
+      }
+
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      if (!focusRoot?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }
     };
 
-    document.addEventListener("keydown", handler, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", handler, true);
-    };
-  }, [confirmClose, requestClose, visible]);
+    // Bubble-phase handling lets component-level keyboard semantics run first.
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [dismissCloseConfirm, visible]);
 
   if (!visible) return null;
 
@@ -104,6 +167,7 @@ export default function RemoteDocumentDialog({
   const unicodeBom = doc.format.encoding === "utf-8"
     || doc.format.encoding === "utf-16le"
     || doc.format.encoding === "utf-16be";
+  const bomDisabled = !doc.canEdit || doc.saving || !unicodeBom;
 
   return createPortal(
     <div className={`${styles.overlay} glass-overlay`}>
@@ -112,7 +176,9 @@ export default function RemoteDocumentDialog({
         className={`${styles.container} liquid-glass`}
         role="dialog"
         aria-modal="true"
+        aria-busy={doc.saving || undefined}
         aria-labelledby="remote-document-title"
+        tabIndex={-1}
       >
         <header className={styles.header}>
           <div className={styles.titleBlock}>
@@ -122,26 +188,17 @@ export default function RemoteDocumentDialog({
             </div>
             <div className={styles.path} title={entry.path}>{entry.path}</div>
           </div>
-          <div className={styles.headerActions}>
-            <button
-              type="button"
-              className="liquid-glass-button liquid-primary-button"
-              disabled={saveDisabled}
-              onClick={save}
-            >
-              {doc.saving ? t("fileManager.transferFinalizing") : t("common.save")}
-            </button>
-            <button
-              type="button"
-              data-action="close"
-              className={`${styles.iconButton} liquid-glass-ghost-button`}
-              onClick={requestClose}
-              aria-label={t("common.close")}
-              title={t("common.close")}
-            >
-              <Icon name="close" size="md" />
-            </button>
-          </div>
+          <button
+            type="button"
+            data-action="close"
+            className={`${styles.iconButton} liquid-glass-ghost-button`}
+            disabled={doc.saving}
+            onClick={requestClose}
+            aria-label={t("common.close")}
+            title={t("common.close")}
+          >
+            <Icon name="close" size="md" />
+          </button>
         </header>
 
         <div className={styles.toolbar}>
@@ -164,61 +221,80 @@ export default function RemoteDocumentDialog({
             </button>
           </div>
 
-          {doc.mode === "text" && (
-            <div className={styles.formatControls}>
-              <label className={styles.controlLabel}>
-                <span>{t("fileManager.open")} · {t("fileManager.previewEncoding")}</span>
-                <select
-                  className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={doc.sourceEncoding}
-                  disabled={doc.loading || doc.saving || doc.dirty}
-                  onChange={(event) => void doc.reopenAs(event.target.value as typeof doc.sourceEncoding)}
-                >
-                  {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
-                    <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
-                  ))}
-                </select>
-              </label>
+          <div className={styles.toolbarActions}>
+            {doc.mode === "text" && (
+              <div className={styles.formatControls}>
+                <label className={styles.controlLabel}>
+                  <span>{t("fileManager.open")} · {t("fileManager.previewEncoding")}</span>
+                  <select
+                    className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                    value={doc.sourceEncoding}
+                    disabled={doc.loading || doc.saving || doc.dirty}
+                    onChange={(event) => void doc.reopenAs(event.target.value as typeof doc.sourceEncoding)}
+                  >
+                    {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
+                      <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={styles.controlLabel}>
-                <span>{t("common.save")} · {t("fileManager.previewEncoding")}</span>
-                <select
-                  className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={doc.format.encoding}
-                  disabled={!doc.canEdit || doc.saving}
-                  onChange={(event) => doc.updateFormat({ encoding: event.target.value as typeof doc.format.encoding })}
-                >
-                  {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
-                    <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
-                  ))}
-                </select>
-              </label>
+                <label className={styles.controlLabel}>
+                  <span>{t("common.save")} · {t("fileManager.previewEncoding")}</span>
+                  <select
+                    className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                    value={doc.format.encoding}
+                    disabled={!doc.canEdit || doc.saving}
+                    onChange={(event) => doc.updateFormat({ encoding: event.target.value as typeof doc.format.encoding })}
+                  >
+                    {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
+                      <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={styles.controlLabel}>
-                <span>EOL</span>
-                <select
-                  className={`${styles.smallSelect} liquid-glass-input liquid-glass-select`}
-                  value={doc.format.lineEnding}
-                  disabled={!doc.canEdit || doc.saving}
-                  onChange={(event) => doc.updateFormat({ lineEnding: event.target.value as typeof doc.format.lineEnding })}
-                >
-                  <option value="lf">LF</option>
-                  <option value="crlf">CRLF</option>
-                  <option value="cr">CR</option>
-                </select>
-              </label>
+                <label className={styles.controlLabel}>
+                  <span>EOL</span>
+                  <select
+                    className={`${styles.smallSelect} liquid-glass-input liquid-glass-select`}
+                    value={doc.format.lineEnding}
+                    disabled={!doc.canEdit || doc.saving}
+                    onChange={(event) => doc.updateFormat({ lineEnding: event.target.value as typeof doc.format.lineEnding })}
+                  >
+                    <option value="lf">LF</option>
+                    <option value="crlf">CRLF</option>
+                    <option value="cr">CR</option>
+                  </select>
+                </label>
 
-              <label className={styles.bomControl}>
-                <input
-                  type="checkbox"
-                  checked={doc.format.bom}
-                  disabled={!doc.canEdit || doc.saving || !unicodeBom}
-                  onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
-                />
-                <span>BOM</span>
-              </label>
-            </div>
-          )}
+                <div className={styles.controlLabel}>
+                  <span>BOM</span>
+                  <label
+                    className={`${styles.bomToggle} liquid-glass-toggle ${bomDisabled ? styles.bomToggleDisabled : ""}`.trim()}
+                    title="BOM"
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label="BOM"
+                      checked={doc.format.bom}
+                      disabled={bomDisabled}
+                      onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
+                    />
+                    <div aria-hidden="true" />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className={`${styles.saveButton} liquid-glass-button liquid-primary-button`}
+              disabled={saveDisabled}
+              onClick={save}
+              aria-keyshortcuts="Control+S Meta+S"
+            >
+              {doc.saving ? t("fileManager.transferFinalizing") : t("common.save")}
+            </button>
+          </div>
         </div>
 
         {!isConnected && (
@@ -298,6 +374,7 @@ export default function RemoteDocumentDialog({
             <TextEditor
               value={doc.text}
               readOnly={!doc.canEdit}
+              autoFocus
               onChange={doc.setText}
               onSave={save}
               onCursorChange={(line, column) => {
@@ -335,31 +412,60 @@ export default function RemoteDocumentDialog({
         )}
 
         {confirmClose && (
-          <div className={styles.confirmLayer} role="alertdialog" aria-modal="true">
-            <div className={`${styles.confirmCard} liquid-control-surface`}>
-              <div className={styles.confirmTitle}>{t("common.warning")}</div>
-              <div className={styles.confirmMessage}>{entry.name}</div>
-              <div className={styles.confirmActions}>
-                <button type="button" className="liquid-glass-button" onClick={() => setConfirmClose(false)}>
-                  {t("common.cancel")}
-                </button>
-                <button type="button" className="liquid-glass-button" onClick={onClose}>
-                  {t("common.close")}
-                </button>
-                <button
+          <div className={styles.confirmLayer} role="presentation">
+            <div
+              ref={closeConfirmRef}
+              className={`${styles.confirmCard} liquid-glass`}
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="remote-document-close-confirm-title"
+              aria-describedby="remote-document-close-confirm-message"
+              tabIndex={-1}
+            >
+              <div id="remote-document-close-confirm-title" className={styles.confirmTitle}>
+                {t("fileManager.modified")}
+              </div>
+              <div id="remote-document-close-confirm-message" className={styles.confirmMessage}>{entry.name}</div>
+              <div className={styles.confirmChoices}>
+                <GlassButton
                   type="button"
-                  className="liquid-glass-button liquid-primary-button"
+                  variant="danger"
+                  size="md"
+                  className={styles.confirmAction}
+                  disabled={doc.saving}
+                  onClick={onClose}
+                >
+                  {t("common.close")}
+                </GlassButton>
+                <GlassButton
+                  type="button"
+                  variant="primary"
+                  size="md"
+                  className={styles.confirmAction}
                   disabled={saveDisabled}
+                  loading={doc.saving}
                   onClick={async () => {
                     if (await doc.save(false)) {
                       onClose();
                     } else {
-                      setConfirmClose(false);
+                      dismissCloseConfirm();
                     }
                   }}
                 >
                   {t("common.save")}
-                </button>
+                </GlassButton>
+              </div>
+              <div className={styles.confirmFooter}>
+                <GlassButton
+                  type="button"
+                  variant="ghost"
+                  size="md"
+                  data-action="cancel"
+                  disabled={doc.saving}
+                  onClick={dismissCloseConfirm}
+                >
+                  {t("common.cancel")}
+                </GlassButton>
               </div>
             </div>
           </div>

@@ -65,13 +65,6 @@
   font-size: var(--text-xs);
 }
 
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
 .iconButton {
   width: 30px;
   height: 30px;
@@ -79,6 +72,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
 }
 
 .toolbar {
@@ -96,12 +90,23 @@
   flex: 0 0 auto;
 }
 
+.toolbarActions {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
 .formatControls {
   min-width: 0;
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
   gap: 8px;
+  flex: 1 1 auto;
   flex-wrap: wrap;
 }
 
@@ -120,19 +125,36 @@
   min-width: 82px;
 }
 
-.bomControl {
-  min-height: 30px;
+.bomToggle {
+  height: var(--select-height);
+  min-height: var(--select-height);
+  padding: 0 2px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
+  justify-content: flex-start;
 }
 
-.bomControl input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
+.bomToggle > input:focus-visible + div {
+  outline: 2px solid var(--glass-border-focus);
+  outline-offset: 2px;
+}
+
+.bomToggleDisabled {
+  cursor: not-allowed;
+}
+
+.saveButton {
+  height: var(--select-height);
+  min-height: var(--select-height);
+  min-width: 64px;
+  margin-left: auto;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .notice {
@@ -232,17 +254,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: var(--theme-content-active-veil);
+  padding: var(--spacing-xl);
+  background: var(--overlay-bg);
 }
 
 .confirmCard {
   width: min(420px, 100%);
-  padding: 16px;
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-xl);
   display: grid;
-  gap: 12px;
+  gap: var(--spacing-md);
 }
 
 .confirmTitle {
@@ -261,10 +282,22 @@
   font-size: var(--text-sm);
 }
 
-.confirmActions {
+.confirmChoices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+}
+
+.confirmAction {
+  min-width: 0;
+  width: 100%;
+}
+
+.confirmFooter {
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--glass-border-default);
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
 }
 
 @media (max-width: 760px) {
@@ -277,11 +310,25 @@
     flex-direction: column;
   }
 
+  .toolbarActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
   .formatControls {
     justify-content: flex-start;
   }
 
   .statusBar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .confirmLayer,
+  .confirmCard {
+    padding: var(--spacing-lg);
+  }
+
+  .confirmChoices {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

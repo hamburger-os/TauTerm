@@ -4,6 +4,7 @@ import styles from "./TextEditor.module.css";
 interface TextEditorProps {
   value: string;
   readOnly: boolean;
+  autoFocus?: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
   onCursorChange: (line: number, column: number) => void;
@@ -38,6 +39,7 @@ function cursorPosition(text: string, offset: number): { line: number; column: n
 export default function TextEditor({
   value,
   readOnly,
+  autoFocus = false,
   onChange,
   onSave,
   onCursorChange,
@@ -66,7 +68,16 @@ export default function TextEditor({
       onSave();
       return;
     }
-    if (readOnly || event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return;
+    // Plain Tab belongs to the editor as indentation. Shift+Tab is deliberately left to
+    // normal focus navigation so keyboard users can move back to the document toolbar.
+    if (
+      readOnly
+      || event.key !== "Tab"
+      || event.shiftKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.altKey
+    ) return;
 
     event.preventDefault();
     const textarea = event.currentTarget;
@@ -91,6 +102,7 @@ export default function TextEditor({
         className={styles.textarea}
         value={value}
         readOnly={readOnly}
+        autoFocus={autoFocus}
         wrap="off"
         spellCheck={false}
         autoCapitalize="off"
