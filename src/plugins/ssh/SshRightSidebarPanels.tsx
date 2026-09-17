@@ -2,8 +2,8 @@ import { lazy, Suspense, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../../components/RightSidebar/RightSidebarPanel";
 
-const FileManagerPanel = lazy(() => import("./FileManager/FileManagerPanel"));
-const JournaldViewerPanel = lazy(() => import("./JournaldViewer/JournaldViewerPanel"));
+const FileManagerPanel = lazy(() => import("../../components/FileManager/FileManagerPanel"));
+const JournaldViewerPanel = lazy(() => import("../../components/JournaldViewer/JournaldViewerPanel"));
 
 export function SshFileManagerSidebarPanel({
   sessionId,
