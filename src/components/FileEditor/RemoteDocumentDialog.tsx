@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { SftpEntry } from "../FileManager/types";
@@ -6,7 +6,7 @@ import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import { REMOTE_DOCUMENT_ENCODINGS } from "./documentCodec";
 import { useRemoteDocument } from "./useRemoteDocument";
-import TextEditor from "./views/TextEditor";
+import TextEditor, { countTextLines } from "./views/TextEditor";
 import HexViewer from "./views/HexViewer";
 import styles from "./RemoteDocumentDialog.module.css";
 
@@ -94,7 +94,7 @@ export default function RemoteDocumentDialog({
 
   if (!visible) return null;
 
-  const lineCount = Math.max(1, doc.text.split("\n").length);
+  const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
   const saveDisabled =
     !isConnected
     || !doc.canEdit
@@ -351,7 +351,11 @@ export default function RemoteDocumentDialog({
                   className="liquid-glass-button liquid-primary-button"
                   disabled={saveDisabled}
                   onClick={async () => {
-                    if (await doc.save(false)) onClose();
+                    if (await doc.save(false)) {
+                      onClose();
+                    } else {
+                      setConfirmClose(false);
+                    }
                   }}
                 >
                   {t("common.save")}
