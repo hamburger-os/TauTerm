@@ -65,13 +65,6 @@
   font-size: var(--text-xs);
 }
 
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
 .iconButton {
   width: 30px;
   height: 30px;
@@ -79,6 +72,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
 }
 
 .toolbar {
@@ -102,6 +96,7 @@
   align-items: flex-end;
   justify-content: flex-end;
   gap: 8px;
+  flex: 1 1 auto;
   flex-wrap: wrap;
 }
 
@@ -111,6 +106,7 @@
   align-items: flex-end;
   justify-content: flex-end;
   gap: 8px;
+  flex: 1 1 auto;
   flex-wrap: wrap;
 }
 
@@ -129,19 +125,29 @@
   min-width: 82px;
 }
 
-.bomControl {
+.bomToggle {
   height: var(--select-height);
+  min-height: var(--select-height);
+  padding: 0 2px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+
+.bomToggle > input:focus-visible + div {
+  outline: 2px solid var(--glass-border-focus);
+  outline-offset: 2px;
+}
+
+.bomToggleDisabled {
+  cursor: not-allowed;
 }
 
 .saveButton {
   height: var(--select-height);
+  min-height: var(--select-height);
   min-width: 64px;
+  margin-left: auto;
   padding: 0 12px;
   display: inline-flex;
   align-items: center;
@@ -293,7 +299,11 @@
     flex-direction: column;
   }
 
-  .toolbarActions,
+  .toolbarActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
   .formatControls {
     justify-content: flex-start;
   }
