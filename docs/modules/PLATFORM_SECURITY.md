@@ -24,7 +24,7 @@ SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fin
 
 主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
 
-虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。主 GUI 无法连接服务时进入 `direct-uac-on-demand`，普通启动阶段只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
+虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。主 GUI 无法连接服务时进入 `direct-uac-on-demand`，普通启动阶段只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；命名管道读写失败保留 Win32 错误/超时上下文用于诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
 ### Native helper 与动态库
 

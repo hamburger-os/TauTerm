@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
+- **Virtual-port capability boundary** — isolates physical→virtual forwarding from per-endpoint readers, uses explicit external-peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, and versions the privileged-service handshake.
+- **Chronological log segment names** — System and Session log segments now start with their actual segment creation timestamp so filename sorting follows creation order across processes, sessions and rotations.
+
+### Fixed
+- **Windows virtual-port bridge could stop while the external COM peer was closed** — com0com peer absence no longer backpressures the bounded DataPlane subscription; connected-stream failures remain fail-closed instead of being hidden by larger queues or silent overrun.
 
 ## [0.6.5] — 2026-09-11
 

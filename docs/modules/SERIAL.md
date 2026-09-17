@@ -41,6 +41,8 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
 - Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`，普通启动不运行 `setupc list` 或 orphan 清理，只有创建/安装/手动清理等明确动作才按需提权；
 - Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。
 
+Serial 运行时只调用统一的 `ensure_endpoints` capability，并消费强类型的创建失败语义；驱动安装、UAC、特权服务选择和 setupc 文本错误归一化全部留在 virtual-port backend 边界，Serial 不通过字符串猜测平台权限状态。
+
 上层统一使用“内部 bridge + 对外 external endpoint”的能力模型。Windows 的 com0com 一对端口中：
 
 - `bridge_path` 只由 TauTerm 桥接线程打开，是内部资源，不进入普通串口选择列表，也不进入前端展示契约；
@@ -55,13 +57,13 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
                                   SessionIo confirmed write
 ```
 
-桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**；虚拟 → 物理方向直接通过 `Arc<SessionIo>` 做确认式写入。订阅者若持续落后导致有界 backlog 满，DataPlane 会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。
+桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**，并由专用转发 worker 持续消费；每个 external endpoint 的虚拟 → 物理读取由独立 reader worker 承担，再通过 `Arc<SessionIo>` 做确认式写入。这样 external 端口的空闲读超时、暂时缺席或某个 reader 的调度不会占用 DataPlane subscription 的消费时间预算。订阅者若持续落后导致有界 backlog 满，DataPlane 仍会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。
 
 多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在 Bridge 注册到 SessionStore 之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。
 
 X/Y/ZModem 获得 Exclusive lease 时 Bridge 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。DataPlane subscription 溢出/断开或 virtual → physical 的确认写失败意味着已连接流无法继续保证完整性，Bridge 必须 fail-closed 并暴露错误。
 
-external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO，Windows 虚拟端点也允许对端应用稍后打开或重新连接。此类“当前没有外部 peer”的端点读写错误不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具再次连接。没有实际 peer 时当然不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。
+external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Bridge 因而可以在写入前区分“external endpoint 尚未打开”和“已连接 peer 出现真实 I/O 故障”。peer 缺席时不会建立历史 backlog，也不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具连接/重连。peer 已连接后发生写入、读取或 DataPlane 完整性失败则继续 fail-closed。没有实际 peer 时不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。
 
 桥接只保证字节流转发，不模拟真实 UART 电气特性、调制解调器控制线或所有波特率行为。当前没有 actor-owned 的 DTR/RTS/CTS/DSR 能力，因此状态栏不得显示虚假的 `--` 占位；未来只有在 DataPlane/driver 提供真实控制线 capability 后才能暴露这些状态与控制。
 

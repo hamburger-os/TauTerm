@@ -154,7 +154,6 @@ impl SerialRuntime {
             }
         };
         drop(manager);
-        drop(manager);
 
         if endpoints.is_empty() {
             return Ok(Vec::new());
