@@ -54,6 +54,9 @@ export default function RemoteDocumentDialog({
   }, []);
 
   const requestClose = useCallback(() => {
+    // The SFTP document save is a transactional backend operation. Keep the editor mounted until
+    // it resolves so "close without saving" can never race an already-started remote commit.
+    if (doc.saving) return;
     if (doc.dirty) {
       const active = document.activeElement;
       restoreFocusRef.current = active instanceof HTMLElement && dialogRef.current?.contains(active)
@@ -63,7 +66,7 @@ export default function RemoteDocumentDialog({
       return;
     }
     onClose();
-  }, [doc.dirty, onClose]);
+  }, [doc.dirty, doc.saving, onClose]);
 
   // The keyboard listener is document-scoped, so keep its dynamic decisions in refs instead
   // of tearing the listener down on every dirty-state change while the user is typing.
@@ -170,6 +173,7 @@ export default function RemoteDocumentDialog({
         className={`${styles.container} liquid-glass`}
         role="dialog"
         aria-modal="true"
+        aria-busy={doc.saving || undefined}
         aria-labelledby="remote-document-title"
         tabIndex={-1}
       >
@@ -185,6 +189,7 @@ export default function RemoteDocumentDialog({
             type="button"
             data-action="close"
             className={`${styles.iconButton} liquid-glass-ghost-button`}
+            disabled={doc.saving}
             onClick={requestClose}
             aria-label={t("common.close")}
             title={t("common.close")}
@@ -424,6 +429,7 @@ export default function RemoteDocumentDialog({
                   variant="danger"
                   size="md"
                   className={styles.confirmAction}
+                  disabled={doc.saving}
                   onClick={onClose}
                 >
                   {t("common.close")}
@@ -434,6 +440,7 @@ export default function RemoteDocumentDialog({
                   size="md"
                   className={styles.confirmAction}
                   disabled={saveDisabled}
+                  loading={doc.saving}
                   onClick={async () => {
                     if (await doc.save(false)) {
                       onClose();
@@ -451,6 +458,7 @@ export default function RemoteDocumentDialog({
                   variant="ghost"
                   size="md"
                   data-action="cancel"
+                  disabled={doc.saving}
                   onClick={dismissCloseConfirm}
                 >
                   {t("common.cancel")}
