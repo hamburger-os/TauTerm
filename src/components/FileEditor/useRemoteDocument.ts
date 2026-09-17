@@ -232,6 +232,7 @@ export function useRemoteDocument(
       } : previous);
       setOriginalText(text);
       setOriginalFormat(format);
+      setSourceEncoding(format.encoding);
       setConflict(null);
       setSourceBytesStale(true);
       onSaved?.();
