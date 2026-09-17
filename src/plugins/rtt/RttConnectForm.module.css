@@ -1,66 +1,104 @@
 .root {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
+  display: grid;
+  gap: 0;
   min-width: 0;
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--spacing-xs);
   min-width: 0;
+  margin-bottom: var(--spacing-md);
 }
 
-.field label {
+.field > label {
   color: var(--text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
 }
 
 .field small,
 .hint {
   color: var(--text-muted);
   font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.control {
+  width: 100%;
+  height: var(--select-height);
+  min-height: var(--select-height);
+  box-sizing: border-box;
+  padding: var(--select-padding);
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.numberControl {
+  font-family: var(--font-mono);
 }
 
 .inlineField {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) var(--select-height);
   gap: var(--spacing-sm);
-  align-items: center;
+  align-items: start;
+  min-width: 0;
 }
 
-.inlineField button {
+.iconButton {
+  width: var(--select-height);
   height: var(--select-height);
+  min-width: var(--select-height);
+  min-height: var(--select-height);
+  padding: 0;
+  color: var(--accent-primary);
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  justify-content: center;
+}
+
+.iconButton:hover:not(:disabled) {
+  color: var(--accent-secondary);
 }
 
 .grid2,
 .grid3 {
   display: grid;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
+  align-items: start;
+  min-width: 0;
 }
 
-.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 
 .advanced {
   border-top: 1px solid var(--content-divider);
   padding-top: var(--spacing-sm);
 }
 
-.advanced summary {
+.advanced > summary {
   cursor: pointer;
   color: var(--text-secondary);
   font-size: var(--text-sm);
   margin-bottom: var(--spacing-md);
+  user-select: none;
 }
 
-.error { color: var(--color-error) !important; }
+.error {
+  color: var(--color-error) !important;
+}
 
 @media (max-width: 680px) {
   .grid2,
-  .grid3 { grid-template-columns: 1fr; }
+  .grid3 {
+    grid-template-columns: 1fr;
+  }
 }

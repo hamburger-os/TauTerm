@@ -133,6 +133,10 @@ RTT 内部错误使用稳定 code + message，至少区分探针缺失/歧义/�
 
 ## UI
 
+RTT Saved Session 遵循统一的两行 Session presentation：第一行默认名称只在创建时生成，原生探针与 Existing J-Link 分别使用稳定的 backend 身份；第二行由当前配置动态显示探针简名或 `127.0.0.1:<port>`。用户后续修改配置只刷新第二行，不隐式改写 Session 名称。
+
+连接配置页使用统一控件高度和矩阵对齐。原生探针接口速度留空表示使用探针默认速度，只有显式填写正整数时才向 backend 请求指定速度；不再用 `0` 作为表单中的“自动”哨兵值。
+
 RTT custom view 复用 Workspace 已有 Content surface；插件内部只使用平面区域、divider、Channel rail、viewer 和 input bar，不再套第二层基础 Liquid Glass Content/Card 壳体。
 
 宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 通过 `session-pane` container query 把 Channel 列表折叠为顶部横向选择区。Terminal/Text/HEX 和 Down 输入始终保持可达。
@@ -151,6 +155,6 @@ RTT custom view 复用 Workspace 已有 Content surface；插件内部只使用�
 
 ## 何时更新本文
 
-修改 RTT backend、探针所有权、Control Block 定位、Channel 模型、历史/丢失语义、后台生命周期、工作区数据视图或将 RTT 能力抽到共享 Debug Probe 层时，必须同步更新本文。
+修改 RTT backend、探针所有权、Control Block 定位、Channel 模型、历史/丢失语义、后台生命周期、工作区数据视图、Session presentation、连接配置语义或将 RTT 能力抽到共享 Debug Probe 层时，必须同步更新本文。
 
 外部语义与上游接口依据见 [嵌入式调试权威索引](../knowledge/EMBEDDED_DEBUG.md)。
