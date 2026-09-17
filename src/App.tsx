@@ -43,7 +43,7 @@ function AppInner() {
   // Context hooks
   const { state: sessionState, refreshEndpoints, disconnect, closeChannel, switchTab } = useSession();
   const { state: transferState } = useTransfer();
-  const { registerAction } = useKeyboard();
+  const { registerAction, executeAction } = useKeyboard();
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -197,16 +197,16 @@ function AppInner() {
     };
   }, []);
 
-  // Keyboard shortcuts — stable actions (register once on mount)
+  // Global actions shared by keyboard, command palette and toolbar.
   useEffect(() => {
     registerAction(ACTION_IDS.PALETTE_OPEN, () => setPaletteOpen(true));
     registerAction(ACTION_IDS.SESSION_NEW, () => { setEditSessionId(null); setConnectDialogOpen(true); });
     registerAction(ACTION_IDS.SIDEBAR_TOGGLE, () => setSidebarVisible(v => !v));
     registerAction(ACTION_IDS.RIGHT_SIDEBAR_TOGGLE, () => setRightSidebarVisible(v => !v));
     registerAction(ACTION_IDS.SERIAL_REFRESH, refreshEndpoints);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [registerAction, refreshEndpoints]);
 
-  // Keyboard shortcuts — session-dependent actions (re-register on tab changes)
+  // Session-dependent actions re-register when the active tab set changes.
   useEffect(() => {
     registerAction(ACTION_IDS.SESSION_CLOSE, () => {
       const activeId = sessionState.activeTabId;
@@ -234,37 +234,13 @@ function AppInner() {
     });
   }, [registerAction, disconnect, closeChannel, switchTab, sessionState.tabs, sessionState.activeTabId]);
 
-  // Command palette execution
-  const handlePaletteExecute = useCallback((cmdId: string) => {
-    switch (cmdId) {
-      case ACTION_IDS.SESSION_NEW: setEditSessionId(null); setConnectDialogOpen(true); break;
-      case ACTION_IDS.TERMINAL_SEARCH: break;
-      case ACTION_IDS.TERMINAL_SELECT_ALL: break;
-      case ACTION_IDS.SIDEBAR_TOGGLE: setSidebarVisible(v => !v); break;
-      case ACTION_IDS.RIGHT_SIDEBAR_TOGGLE: setRightSidebarVisible(v => !v); break;
-      case ACTION_IDS.SERIAL_REFRESH: refreshEndpoints(); break;
-      case ACTION_IDS.PALETTE_OPEN: setPaletteOpen(true); break;
-    }
-  }, [refreshEndpoints]);
-
-  // Toolbar action handler
-  const handleToolbarAction = useCallback((actionId: string) => {
-    switch (actionId) {
-      case "newSession": setEditSessionId(null); setConnectDialogOpen(true); break;
-      case "sidebar": setSidebarVisible(v => !v); break;
-      case "rightSidebar": setRightSidebarVisible(v => !v); break;
-      case "commands": setPaletteOpen(true); break;
-      case "settings": setSettingsOpen(true); break;
-    }
-  }, []);
-
   return (
     <div data-testid="app-root" className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
       {/* Shared four-color ambient background (z-index: 0) */}
       <SpectrumAmbientBackground />
 
       {/* 顶栏 (z-index: 10) */}
-      <Toolbar onAction={handleToolbarAction} isMaximized={isMaximized} />
+      <Toolbar onAction={executeAction} isMaximized={isMaximized} />
 
       <div className="app-body">
         {/* 侧栏 — 全高 */}
@@ -398,7 +374,7 @@ function AppInner() {
       <CommandPalette
         isOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        onExecute={handlePaletteExecute}
+        onExecute={executeAction}
       />
 
       {/* 连接对话框 */}
