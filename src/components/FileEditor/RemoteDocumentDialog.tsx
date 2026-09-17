@@ -59,7 +59,11 @@ export default function RemoteDocumentDialog({
         ?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), textarea:not(:disabled)')
         ?.focus();
     });
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
 
+  useEffect(() => {
+    if (!visible) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -87,10 +91,7 @@ export default function RemoteDocumentDialog({
     };
 
     document.addEventListener("keydown", handler, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", handler, true);
-    };
+    return () => document.removeEventListener("keydown", handler, true);
   }, [confirmClose, requestClose, visible]);
 
   if (!visible) return null;
@@ -125,14 +126,6 @@ export default function RemoteDocumentDialog({
           <div className={styles.headerActions}>
             <button
               type="button"
-              className="liquid-glass-button liquid-primary-button"
-              disabled={saveDisabled}
-              onClick={save}
-            >
-              {doc.saving ? t("fileManager.transferFinalizing") : t("common.save")}
-            </button>
-            <button
-              type="button"
               data-action="close"
               className={`${styles.iconButton} liquid-glass-ghost-button`}
               onClick={requestClose}
@@ -164,61 +157,74 @@ export default function RemoteDocumentDialog({
             </button>
           </div>
 
-          {doc.mode === "text" && (
-            <div className={styles.formatControls}>
-              <label className={styles.controlLabel}>
-                <span>{t("fileManager.open")} · {t("fileManager.previewEncoding")}</span>
-                <select
-                  className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={doc.sourceEncoding}
-                  disabled={doc.loading || doc.saving || doc.dirty}
-                  onChange={(event) => void doc.reopenAs(event.target.value as typeof doc.sourceEncoding)}
-                >
-                  {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
-                    <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
-                  ))}
-                </select>
-              </label>
+          <div className={styles.toolbarActions}>
+            {doc.mode === "text" && (
+              <div className={styles.formatControls}>
+                <label className={styles.controlLabel}>
+                  <span>{t("fileManager.open")} · {t("fileManager.previewEncoding")}</span>
+                  <select
+                    className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                    value={doc.sourceEncoding}
+                    disabled={doc.loading || doc.saving || doc.dirty}
+                    onChange={(event) => void doc.reopenAs(event.target.value as typeof doc.sourceEncoding)}
+                  >
+                    {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
+                      <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={styles.controlLabel}>
-                <span>{t("common.save")} · {t("fileManager.previewEncoding")}</span>
-                <select
-                  className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={doc.format.encoding}
-                  disabled={!doc.canEdit || doc.saving}
-                  onChange={(event) => doc.updateFormat({ encoding: event.target.value as typeof doc.format.encoding })}
-                >
-                  {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
-                    <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
-                  ))}
-                </select>
-              </label>
+                <label className={styles.controlLabel}>
+                  <span>{t("common.save")} · {t("fileManager.previewEncoding")}</span>
+                  <select
+                    className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                    value={doc.format.encoding}
+                    disabled={!doc.canEdit || doc.saving}
+                    onChange={(event) => doc.updateFormat({ encoding: event.target.value as typeof doc.format.encoding })}
+                  >
+                    {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
+                      <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={styles.controlLabel}>
-                <span>EOL</span>
-                <select
-                  className={`${styles.smallSelect} liquid-glass-input liquid-glass-select`}
-                  value={doc.format.lineEnding}
-                  disabled={!doc.canEdit || doc.saving}
-                  onChange={(event) => doc.updateFormat({ lineEnding: event.target.value as typeof doc.format.lineEnding })}
-                >
-                  <option value="lf">LF</option>
-                  <option value="crlf">CRLF</option>
-                  <option value="cr">CR</option>
-                </select>
-              </label>
+                <label className={styles.controlLabel}>
+                  <span>EOL</span>
+                  <select
+                    className={`${styles.smallSelect} liquid-glass-input liquid-glass-select`}
+                    value={doc.format.lineEnding}
+                    disabled={!doc.canEdit || doc.saving}
+                    onChange={(event) => doc.updateFormat({ lineEnding: event.target.value as typeof doc.format.lineEnding })}
+                  >
+                    <option value="lf">LF</option>
+                    <option value="crlf">CRLF</option>
+                    <option value="cr">CR</option>
+                  </select>
+                </label>
 
-              <label className={styles.bomControl}>
-                <input
-                  type="checkbox"
-                  checked={doc.format.bom}
-                  disabled={!doc.canEdit || doc.saving || !unicodeBom}
-                  onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
-                />
-                <span>BOM</span>
-              </label>
-            </div>
-          )}
+                <label className={`${styles.bomControl} liquid-glass-toggle`}>
+                  <span>BOM</span>
+                  <input
+                    type="checkbox"
+                    aria-label="BOM"
+                    checked={doc.format.bom}
+                    disabled={!doc.canEdit || doc.saving || !unicodeBom}
+                    onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
+                  />
+                  <div aria-hidden="true" />
+                </label>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className={`${styles.saveButton} liquid-glass-button liquid-primary-button`}
+              disabled={saveDisabled}
+              onClick={save}
+            >
+              {doc.saving ? t("fileManager.transferFinalizing") : t("common.save")}
+            </button>
+          </div>
         </div>
 
         {!isConnected && (
