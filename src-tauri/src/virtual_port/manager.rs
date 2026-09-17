@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::backend::{
     contains_elevation_indicator, register_internal_endpoint_path,
     unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,
+    VirtualPortError,
 };
 
 use std::os::windows::ffi::OsStrExt;
@@ -626,19 +627,23 @@ exit /b 0\r\n"
     pub fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
         if !config.enabled || config.count == 0 {
             return Ok(Vec::new());
         }
         if !self.are_files_present() {
-            return Err("com0com driver files missing".into());
+            return Err(VirtualPortError::FilesMissing);
         }
         if !self.detect_driver() {
-            self.install_driver_elevated()?;
+            self.install_driver_elevated()
+                .map_err(VirtualPortError::from_backend)?;
+            if !self.detect_driver() {
+                return Err(VirtualPortError::DriverMissing);
+            }
         }
         self.create_endpoints_elevated(config)
+            .map_err(VirtualPortError::from_backend)
     }
-
     /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身或 TauTerm ownership。
     pub fn find_available_port_pairs(count: u32, extra_occupied: &HashSet<u32>) -> Vec<(u32, u32)> {
         let mut in_use = serialport::available_ports()
@@ -1044,10 +1049,9 @@ impl VirtualPortBackend for VirtualPortManager {
     fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
         VirtualPortManager::ensure_endpoints(self, config)
     }
-
     fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,

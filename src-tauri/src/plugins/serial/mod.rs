@@ -14,9 +14,7 @@ use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
 use crate::transport::DataPlaneRuntime;
-use crate::virtual_port::backend::{
-    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,
-};
+use crate::virtual_port::backend::{is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::AppState;
 use serde_json::Value;
@@ -139,18 +137,10 @@ impl SerialRuntime {
             .map_err(|error| error.to_string())?;
         let endpoints = match manager.ensure_endpoints(&config) {
             Ok(endpoints) => endpoints,
-            Err(detail) => {
+            Err(error) => {
+                let kind = error.kind();
+                let detail = error.to_string();
                 drop(manager);
-                let lower = detail.to_lowercase();
-                let kind = if lower.contains("driver files missing") {
-                    "files_missing"
-                } else if lower.contains("driver not installed") {
-                    "driver_missing"
-                } else if contains_elevation_indicator(&detail) || lower.contains("cancel") {
-                    "permission"
-                } else {
-                    "create_failed"
-                };
                 log::warn!("虚拟端口创建失败 (session={session_id}): {detail}");
                 let _ = app.emit(
                     "virtual-port-failed",
@@ -163,6 +153,7 @@ impl SerialRuntime {
                 return Ok(Vec::new());
             }
         };
+        drop(manager);
         drop(manager);
 
         if endpoints.is_empty() {

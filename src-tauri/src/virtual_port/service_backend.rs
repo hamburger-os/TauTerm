@@ -18,7 +18,7 @@ use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use super::backend::{
     register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
-    VirtualPortBackend, VirtualPortConfig,
+    VirtualPortBackend, VirtualPortConfig, VirtualPortError,
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
@@ -407,20 +407,25 @@ impl VirtualPortBackend for ServiceBackend {
     fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
         if !config.enabled || config.count == 0 {
             return Ok(Vec::new());
         }
-        let status = self.status()?;
+        let status = self.status().map_err(VirtualPortError::from_backend)?;
         if !status["files_present"].as_bool().unwrap_or(false) {
-            return Err("com0com driver files missing".into());
+            return Err(VirtualPortError::FilesMissing);
         }
         if !status["driver_installed"].as_bool().unwrap_or(false) {
-            self.install_driver()?;
+            self.install_driver()
+                .map_err(VirtualPortError::from_backend)?;
+            let status = self.status().map_err(VirtualPortError::from_backend)?;
+            if !status["driver_installed"].as_bool().unwrap_or(false) {
+                return Err(VirtualPortError::DriverMissing);
+            }
         }
         self.create_endpoints(config)
+            .map_err(VirtualPortError::from_backend)
     }
-
     fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
