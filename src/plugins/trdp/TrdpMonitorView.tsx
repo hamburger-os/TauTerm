@@ -11,6 +11,7 @@ import {
   STANDARD_CAPTURE_FILTER,
   captureFilterForPorts,
   missedBetween,
+  monitorCaptureInterfaces,
   paramNumber,
   type CaptureFlowSummary,
   type CaptureResult,
@@ -18,6 +19,7 @@ import {
   type DecodedDataset,
   type FlowRow,
   type Page,
+  type RuntimeState,
   type TrdpEvent,
   type XmlImport,
 } from "./model";
@@ -29,6 +31,8 @@ const MONITOR_NAV: Array<[Page, string]> = [
   ["md", "trdp.nav.md"],
   ["analysis", "trdp.nav.analysis"],
 ];
+
+type CaptureSource = "offline" | "live" | null;
 
 function flowRowFromSummary(flow: CaptureFlowSummary): FlowRow {
   return {
@@ -73,7 +77,8 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
 
   const [captureId, setCaptureId] = useState<string | null>(null);
   const captureIdRef = useRef<string | null>(null);
-  const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
+  const [captureSource, setCaptureSource] = useState<CaptureSource>(null);
+  const captureSourceRef = useRef<CaptureSource>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
   const captureRunningRef = useRef(false);
   const [captureTransitioning, setCaptureTransitioning] = useState(false);
@@ -95,9 +100,10 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
   const pdPort = paramNumber(params, "pd_port", 17224);
   const mdUdpPort = paramNumber(params, "md_udp_port", 17225);
   const mdTcpPort = paramNumber(params, "md_tcp_port", 17225);
-  const captureInterfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
-  const captureInterfaceBEnabled = params?.capture_interface_b_enabled === true;
-  const captureInterfaceB = typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
+  const captureConfig = monitorCaptureInterfaces(params);
+  const captureInterfaceA = captureConfig.a;
+  const captureInterfaceB = captureConfig.b;
+  const captureInterfaceBEnabled = captureInterfaceB !== null;
   const configuredFilter = typeof params?.capture_filter === "string"
     ? params.capture_filter
     : STANDARD_CAPTURE_FILTER;
@@ -118,6 +124,11 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
     setCaptureTransitioning(value);
   }
 
+  function updateCaptureSource(value: CaptureSource) {
+    captureSourceRef.current = value;
+    setCaptureSource(value);
+  }
+
   function selectPage(nextPage: Page) {
     setPage(nextPage);
     setSelectedPacket(null);
@@ -125,34 +136,72 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
   }
 
   function adoptCapture(nextCaptureId: string | null) {
-    const previous = captureIdRef.current;
     captureIdRef.current = nextCaptureId;
     setCaptureId(nextCaptureId);
-    if (previous && previous !== nextCaptureId) {
-      void invoke("trdp_release_capture", { captureId: previous });
-    }
+  }
+
+  function resetCapturePresentation() {
+    adoptCapture(null);
+    updateCaptureSource(null);
+    updateCaptureRunning(false);
+    setCaptureFrameCount(0);
+    setCapturePacketCount(0);
+    setCaptureDroppedFrames(0);
+    setCaptureFlows([]);
+    setPacketPage(0);
+    setPagedPackets([]);
+    setEvents([]);
+    setSelectedPacket(null);
+    setDecoded(null);
+    mdRequestStartedUs.current.clear();
   }
 
   useEffect(() => {
     if (sessionConnected) return;
     updateCaptureRunning(false);
     updateCaptureTransitioning(false);
+    if (captureSourceRef.current === "live") {
+      resetCapturePresentation();
+    }
   }, [sessionConnected]);
 
   useEffect(() => {
     viewMountedRef.current = true;
     return () => {
       viewMountedRef.current = false;
-      if (captureRunningRef.current || captureTransitioningRef.current) {
-        void invoke("trdp_command", {
-          sessionId,
-          command: { command: "capture_stop" },
-        });
+      if (captureSourceRef.current === "offline") {
+        const current = captureIdRef.current;
+        if (current) void invoke("trdp_release_capture", { captureId: current });
       }
-      const current = captureIdRef.current;
-      if (current) void invoke("trdp_release_capture", { captureId: current });
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionConnected || captureSourceRef.current === "offline") return;
+    let disposed = false;
+    void invoke<RuntimeState>("trdp_command", {
+      sessionId,
+      command: { command: "runtime_state" },
+    }).then(runtime => {
+      if (disposed || !runtime.capture?.id) return;
+      const captureRuntime = runtime.capture;
+      adoptCapture(captureRuntime.id);
+      updateCaptureSource("live");
+      updateCaptureRunning(captureRuntime.running);
+      return invoke<CaptureSummary>("trdp_capture_summary", {
+        captureId: captureRuntime.id,
+      }).then(summary => {
+        if (disposed || captureIdRef.current !== captureRuntime.id) return;
+        setCapturePacketCount(summary.packet_count);
+        setCaptureFlows(summary.flows.map(flowRowFromSummary));
+      });
+    }).catch(() => {
+      // Runtime hydration is best-effort; explicit user actions still surface errors.
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [sessionConnected, sessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -373,6 +422,17 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
     setDecoded(null);
   }
 
+  async function releaseCurrentCapture() {
+    const current = captureIdRef.current;
+    const source = captureSourceRef.current;
+    if (!current || !source) return;
+    if (source === "live") {
+      await command("capture_release");
+    } else {
+      await invoke("trdp_release_capture", { captureId: current });
+    }
+  }
+
   async function openCapture() {
     if (captureRunning || captureTransitioning) return;
     setError(null);
@@ -389,8 +449,14 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
         mdPorts,
         expectedCycles: Object.fromEntries(expectedCycleByComId),
       });
+      try {
+        await releaseCurrentCapture();
+      } catch (cause) {
+        await invoke("trdp_release_capture", { captureId: result.capture_id });
+        throw cause;
+      }
       adoptCapture(result.capture_id);
-      setCaptureSource("offline");
+      updateCaptureSource("offline");
       updateCaptureRunning(false);
       setCaptureFrameCount(result.frame_count);
       setCapturePacketCount(result.packet_count);
@@ -436,21 +502,17 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
     }
   }
 
-  function clearCaptureView() {
+  async function clearCaptureView() {
     if (captureRunning || captureTransitioning) return;
-    adoptCapture(null);
-    setCaptureSource(null);
-    updateCaptureRunning(false);
-    setCaptureFrameCount(0);
-    setCapturePacketCount(0);
-    setCaptureDroppedFrames(0);
-    setCaptureFlows([]);
-    setPacketPage(0);
-    setPagedPackets([]);
-    setEvents([]);
-    setSelectedPacket(null);
-    setDecoded(null);
-    mdRequestStartedUs.current.clear();
+    updateCaptureTransitioning(true);
+    try {
+      await releaseCurrentCapture();
+      resetCapturePresentation();
+    } catch {
+      // releaseCurrentCapture()/command() owns the error banner.
+    } finally {
+      updateCaptureTransitioning(false);
+    }
   }
 
   async function startLiveCapture() {
@@ -463,7 +525,7 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
       setError(t("trdp.captureInterfaces.choose"));
       return;
     }
-    if (captureInterfaceBEnabled && (!captureInterfaceB || captureInterfaceB === captureInterfaceA)) {
+    if (captureInterfaceB && captureInterfaceB.deviceName === captureInterfaceA.deviceName) {
       setError(`${t("trdp.form.captureInterfaceB")}: ${t("trdp.captureInterfaces.choose")}`);
       return;
     }
@@ -496,32 +558,34 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
 
     try {
       const result = await command<{ capture_id: string }>("capture_start", {
-        interface: captureInterfaceA,
-        interface_b: captureInterfaceBEnabled ? captureInterfaceB : "",
+        interface: captureInterfaceA.deviceName,
+        interface_b: captureInterfaceB?.deviceName ?? "",
         filter: effectiveCaptureFilter,
         expected_cycles: Object.fromEntries(expectedCycleByComId),
       });
-      if (!viewMountedRef.current) {
-        void invoke("trdp_release_capture", { captureId: result.capture_id });
-        return;
+      if (previous.source === "offline" && previous.captureId) {
+        await invoke("trdp_release_capture", { captureId: previous.captureId });
       }
+      if (!viewMountedRef.current) return;
       adoptCapture(result.capture_id);
-      setCaptureSource("live");
+      updateCaptureSource("live");
       updateCaptureRunning(true);
     } catch {
-      captureIdRef.current = previous.captureId;
-      setCaptureId(previous.captureId);
-      setCaptureSource(previous.source);
-      updateCaptureRunning(previous.running);
-      setCaptureFrameCount(previous.frameCount);
-      setCapturePacketCount(previous.packetCount);
-      setCaptureDroppedFrames(previous.droppedFrames);
-      setCaptureFlows(previous.flows);
-      setPacketPage(previous.packetPage);
-      setPagedPackets(previous.pagedPackets);
-      setEvents(previous.events);
+      if (viewMountedRef.current) {
+        captureIdRef.current = previous.captureId;
+        setCaptureId(previous.captureId);
+        updateCaptureSource(previous.source);
+        updateCaptureRunning(previous.running);
+        setCaptureFrameCount(previous.frameCount);
+        setCapturePacketCount(previous.packetCount);
+        setCaptureDroppedFrames(previous.droppedFrames);
+        setCaptureFlows(previous.flows);
+        setPacketPage(previous.packetPage);
+        setPagedPackets(previous.pagedPackets);
+        setEvents(previous.events);
+      }
     } finally {
-      updateCaptureTransitioning(false);
+      if (viewMountedRef.current) updateCaptureTransitioning(false);
     }
   }
 
@@ -669,7 +733,6 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
                       captureTransitioning
                       || !sessionConnected
                       || !captureInterfaceA
-                      || (captureInterfaceBEnabled && !captureInterfaceB)
                     }
                   >
                     {t("trdp.actions.startCapture")}
@@ -697,7 +760,7 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
                 </button>
                 <button
                   className={`${styles.actionButton} liquid-glass-button`}
-                  onClick={clearCaptureView}
+                  onClick={() => void clearCaptureView()}
                   disabled={captureRunning || captureTransitioning}
                 >
                   {t("trdp.actions.clear")}
@@ -731,7 +794,7 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
                 </div>
                 <div className={`${styles.infoCard} liquid-glass-card`}>
                   <strong>{t("trdp.overview.links")}</strong><br />
-                  {t("trdp.overview.linkA")}: {captureInterfaceA || t("trdpSidebar.unconfigured")} · {t("trdp.overview.linkB")}: {captureInterfaceBEnabled ? (captureInterfaceB || t("trdpSidebar.unconfigured")) : t("trdpSidebar.disabled")}
+                  {t("trdp.overview.linkA")}: {captureInterfaceA?.displayName || t("trdpSidebar.unconfigured")} · {t("trdp.overview.linkB")}: {captureInterfaceBEnabled ? captureInterfaceB.displayName : t("trdpSidebar.disabled")}
                 </div>
                 <div className={`${styles.infoCard} liquid-glass-card`}>
                   <strong>{t("trdp.form.captureFilter")}</strong><br />
