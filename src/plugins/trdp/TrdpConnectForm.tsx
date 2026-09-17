@@ -253,10 +253,10 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 onChange={event => {
                   const selected = captureInterfaces.find(item => item.name === event.target.value);
                   const nextA = selected ? captureInterfaceRef(selected) : null;
-                  const nextB = nextA?.deviceName === captureInterfaceB?.deviceName
+                  const nextB = nextA === null || nextA.deviceName === captureInterfaceB?.deviceName
                     ? null
                     : captureInterfaceB;
-                  if (nextB === null && captureInterfaceB !== null) {
+                  if (nextA === null || (nextB === null && captureInterfaceB !== null)) {
                     setCaptureInterfaceBEditorEnabled(false);
                   }
                   patch({ capture_interfaces: { a: nextA, b: nextB } });
@@ -291,6 +291,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
             <input
               type="checkbox"
               checked={captureInterfaceBEditorEnabled}
+              disabled={captureInterfaceA === null}
               onChange={event => {
                 setCaptureInterfaceBEditorEnabled(event.target.checked);
                 if (!event.target.checked) {
