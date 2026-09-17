@@ -105,6 +105,15 @@ pub trait VirtualPortBackend: Send {
     fn install_driver(&mut self) -> Result<(), String>;
     fn install_driver_elevated(&mut self) -> Result<(), String>;
 
+    /// 创建可供 Session 使用的 endpoint。权限选择、驱动安装和平台 fallback 都属于
+    /// backend 自身策略；Serial/UI 不应编排 Windows UAC 或 setupc 调用顺序。
+    fn ensure_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        self.create_endpoints(config)
+    }
+
     fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
