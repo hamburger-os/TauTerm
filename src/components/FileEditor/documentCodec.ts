@@ -20,6 +20,7 @@ export interface DecodedRemoteDocument {
   text: string;
   format: RemoteDocumentFormat;
   binaryLikely: boolean;
+  encodingConfirmed: boolean;
 }
 
 interface BomDetection {
@@ -41,20 +42,26 @@ function detectBom(bytes: Uint8Array): BomDetection {
   return { encoding: null, bom: false, offset: 0 };
 }
 
-export function detectRemoteDocumentEncoding(bytes: Uint8Array): {
+export function detectRemoteDocumentEncoding(
+  bytes: Uint8Array,
+  truncated = false,
+): {
   encoding: RemoteDocumentEncoding;
   bom: boolean;
+  confirmed: boolean;
 } {
   const bom = detectBom(bytes);
-  if (bom.encoding) return { encoding: bom.encoding, bom: true };
+  if (bom.encoding) return { encoding: bom.encoding, bom: true, confirmed: true };
 
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return { encoding: "utf-8", bom: false };
+    // A bounded prefix can end in the middle of one UTF-8 code point. Streaming decode keeps
+    // that incomplete tail pending while still rejecting malformed bytes inside the snapshot.
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: truncated });
+    return { encoding: "utf-8", bom: false, confirmed: true };
   } catch {
     // 无 BOM 且不是严格 UTF-8 时，不猜测 GB18030/Big5/Shift-JIS 等区域编码。
-    // 工程文件误判后保存的风险高于手动选择编码的成本。
-    return { encoding: "utf-8", bom: false };
+    // 先保持只读，直到用户明确选择源编码，避免把替换字符保存回工程文件。
+    return { encoding: "utf-8", bom: false, confirmed: false };
   }
 }
 
@@ -75,13 +82,14 @@ export function looksLikeBinary(bytes: Uint8Array): boolean {
 export function decodeRemoteDocument(
   bytes: Uint8Array,
   encoding: RemoteDocumentEncoding,
+  truncated = false,
 ): string {
   const bom = detectBom(bytes);
   const source = bom.encoding === encoding ? bytes.subarray(bom.offset) : bytes;
   try {
-    return new TextDecoder(encoding, { fatal: false }).decode(source);
+    return new TextDecoder(encoding, { fatal: false }).decode(source, { stream: truncated });
   } catch {
-    return new TextDecoder("utf-8", { fatal: false }).decode(source);
+    return new TextDecoder("utf-8", { fatal: false }).decode(source, { stream: truncated });
   }
 }
 
@@ -110,9 +118,12 @@ export function normalizeDocumentText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
-export function decodeInitialRemoteDocument(bytes: Uint8Array): DecodedRemoteDocument {
-  const detected = detectRemoteDocumentEncoding(bytes);
-  const decoded = decodeRemoteDocument(bytes, detected.encoding);
+export function decodeInitialRemoteDocument(
+  bytes: Uint8Array,
+  truncated = false,
+): DecodedRemoteDocument {
+  const detected = detectRemoteDocumentEncoding(bytes, truncated);
+  const decoded = decodeRemoteDocument(bytes, detected.encoding, truncated);
   return {
     text: normalizeDocumentText(decoded),
     format: {
@@ -121,6 +132,7 @@ export function decodeInitialRemoteDocument(bytes: Uint8Array): DecodedRemoteDoc
       bom: detected.bom,
     },
     binaryLikely: looksLikeBinary(bytes),
+    encodingConfirmed: detected.confirmed,
   };
 }
 
