@@ -163,8 +163,10 @@ fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
 fn finish_worker(result: Result<(), String>, cancel: &AtomicBool, errors: &mpsc::Sender<String>) {
     if let Err(error) = result {
         if !cancel.load(Ordering::SeqCst) {
+            // The supervisor owns the transition to cancelled. If a worker flips the flag here,
+            // the supervisor can observe cancellation after a timeout before consuming this error
+            // and exit without emitting `virtual-port-failed`.
             let _ = errors.send(error);
-            cancel.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -351,7 +353,7 @@ mod tests {
     use std::io;
     use std::io::{Read, Write};
 
-    use super::write_bytes;
+    use super::{finish_worker, write_bytes};
 
     struct MockPort {
         buffer: Vec<u8>,
@@ -389,6 +391,15 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             panic!("streaming bridge must not flush every physical chunk")
         }
+    }
+
+    #[test]
+    fn worker_error_is_queued_before_supervisor_cancels_bridge() {
+        let cancel = AtomicBool::new(false);
+        let (tx, rx) = mpsc::channel();
+        finish_worker(Err("boom".into()), &cancel, &tx);
+        assert_eq!(rx.recv().unwrap(), "boom");
+        assert!(!cancel.load(Ordering::SeqCst));
     }
 
     #[test]
