@@ -5,13 +5,13 @@ import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ToolbarItem } from "../../core/plugin-registry";
 import { shortcutRegistry } from "../../shortcuts/registry";
-import { ACTION_IDS } from "../../shortcuts/actionIds";
+import { ACTION_IDS, type ShortcutActionId } from "../../shortcuts/actionIds";
 import Icon from "../common/Icon";
 import TitleBar, { needsCustomTitleBar } from "./TitleBar";
 import styles from "./Toolbar.module.css";
 
 interface ToolbarProps {
-  onAction: (actionId: string) => void;
+  onAction: (actionId: ShortcutActionId) => void;
   isMaximized: boolean;
 }
 
@@ -41,7 +41,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
   const lastMouseDownRef = useRef<{ time: number; x: number; y: number } | null>(null);
 
   const handleClick = useCallback(
-    (id: string) => onAction(id),
+    (id: ShortcutActionId) => onAction(id),
     [onAction]
   );
 
@@ -90,7 +90,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
 
         <button
           className={`${styles.toolbarButton} liquid-glass-ghost-button`}
-          onClick={() => handleClick("sidebar")}
+          onClick={() => handleClick(ACTION_IDS.SIDEBAR_TOGGLE)}
           title={t("toolbar.sidebar") + (sidebarShortcut ? ` (${sidebarShortcut})` : "")}
         >
           <Icon name="sidebar-left" size="sm" className={styles.icon} />
@@ -118,10 +118,10 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         {/* VSCode 风格命令搜索栏 — 点击打开命令面板 */}
         <div
           className={`${styles.searchTrigger} liquid-glass-accent`}
-          onClick={() => handleClick("commands")}
+          onClick={() => handleClick(ACTION_IDS.PALETTE_OPEN)}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleClick("commands"); }}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleClick(ACTION_IDS.PALETTE_OPEN); }}
           data-testid="command-palette-trigger"
           aria-label={t("toolbar.commands")}
           title={t("toolbar.commands") + " (Ctrl+Shift+P)"}
@@ -134,7 +134,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
 
         <button
           className={`${styles.toolbarButton} liquid-glass-ghost-button`}
-          onClick={() => handleClick("rightSidebar")}
+          onClick={() => handleClick(ACTION_IDS.RIGHT_SIDEBAR_TOGGLE)}
           title={t("toolbar.rightSidebar") + (rightSidebarShortcut ? ` (${rightSidebarShortcut})` : "")}
         >
           <Icon name="sidebar-right" size="sm" className={styles.icon} />
