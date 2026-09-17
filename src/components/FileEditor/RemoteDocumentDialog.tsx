@@ -37,19 +37,19 @@ export default function RemoteDocumentDialog({
   const [confirmClose, setConfirmClose] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorColumn, setCursorColumn] = useState(1);
-  const document = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
+  const doc = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
 
   const requestClose = useCallback(() => {
-    if (document.dirty) {
+    if (doc.dirty) {
       setConfirmClose(true);
       return;
     }
     onClose();
-  }, [document.dirty, onClose]);
+  }, [doc.dirty, onClose]);
 
   const save = useCallback(() => {
-    void document.save(false);
-  }, [document]);
+    void doc.save(false);
+  }, [doc]);
 
   useEffect(() => {
     if (!visible) return;
@@ -94,16 +94,16 @@ export default function RemoteDocumentDialog({
 
   if (!visible) return null;
 
-  const lineCount = Math.max(1, document.text.split("\n").length);
+  const lineCount = Math.max(1, doc.text.split("\n").length);
   const saveDisabled =
     !isConnected
-    || !document.canEdit
-    || !document.dirty
-    || document.saving
-    || document.loading;
-  const unicodeBom = document.format.encoding === "utf-8"
-    || document.format.encoding === "utf-16le"
-    || document.format.encoding === "utf-16be";
+    || !doc.canEdit
+    || !doc.dirty
+    || doc.saving
+    || doc.loading;
+  const unicodeBom = doc.format.encoding === "utf-8"
+    || doc.format.encoding === "utf-16le"
+    || doc.format.encoding === "utf-16be";
 
   return createPortal(
     <div className={`${styles.overlay} glass-overlay`}>
@@ -118,7 +118,7 @@ export default function RemoteDocumentDialog({
           <div className={styles.titleBlock}>
             <div className={styles.titleRow}>
               <span id="remote-document-title" className={styles.title}>{entry.name}</span>
-              {document.dirty && <span className={styles.dirtyDot} aria-label="modified">●</span>}
+              {doc.dirty && <span className={styles.dirtyDot} aria-label={t("fileManager.modified")}>●</span>}
             </div>
             <div className={styles.path} title={entry.path}>{entry.path}</div>
           </div>
@@ -129,7 +129,7 @@ export default function RemoteDocumentDialog({
               disabled={saveDisabled}
               onClick={save}
             >
-              {document.saving ? t("fileManager.transferFinalizing") : t("common.save")}
+              {doc.saving ? t("fileManager.transferFinalizing") : t("common.save")}
             </button>
             <button
               type="button"
@@ -148,31 +148,31 @@ export default function RemoteDocumentDialog({
           <div className={`${styles.modeGroup} liquid-selector-strip`} role="group" aria-label={t("fileManager.previewMode")}>
             <button
               type="button"
-              className={`liquid-glass-button liquid-selector-button ${document.mode === "text" ? "active" : ""}`}
-              aria-pressed={document.mode === "text"}
-              onClick={() => document.setMode("text")}
+              className={`liquid-glass-button liquid-selector-button ${doc.mode === "text" ? "active" : ""}`}
+              aria-pressed={doc.mode === "text"}
+              onClick={() => doc.setMode("text")}
             >
               {t("fileManager.previewText")}
             </button>
             <button
               type="button"
-              className={`liquid-glass-button liquid-selector-button ${document.mode === "hex" ? "active" : ""}`}
-              aria-pressed={document.mode === "hex"}
-              onClick={() => document.setMode("hex")}
+              className={`liquid-glass-button liquid-selector-button ${doc.mode === "hex" ? "active" : ""}`}
+              aria-pressed={doc.mode === "hex"}
+              onClick={() => doc.setMode("hex")}
             >
               HEX
             </button>
           </div>
 
-          {document.mode === "text" && (
+          {doc.mode === "text" && (
             <div className={styles.formatControls}>
               <label className={styles.controlLabel}>
                 <span>{t("fileManager.open")} · {t("fileManager.previewEncoding")}</span>
                 <select
                   className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={document.sourceEncoding}
-                  disabled={document.loading || document.saving || document.dirty}
-                  onChange={(event) => void document.reopenAs(event.target.value as typeof document.sourceEncoding)}
+                  value={doc.sourceEncoding}
+                  disabled={doc.loading || doc.saving || doc.dirty}
+                  onChange={(event) => void doc.reopenAs(event.target.value as typeof doc.sourceEncoding)}
                 >
                   {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
                     <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
@@ -184,9 +184,9 @@ export default function RemoteDocumentDialog({
                 <span>{t("common.save")} · {t("fileManager.previewEncoding")}</span>
                 <select
                   className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                  value={document.format.encoding}
-                  disabled={!document.canEdit || document.saving}
-                  onChange={(event) => document.updateFormat({ encoding: event.target.value as typeof document.format.encoding })}
+                  value={doc.format.encoding}
+                  disabled={!doc.canEdit || doc.saving}
+                  onChange={(event) => doc.updateFormat({ encoding: event.target.value as typeof doc.format.encoding })}
                 >
                   {REMOTE_DOCUMENT_ENCODINGS.map((encoding) => (
                     <option key={encoding} value={encoding}>{encoding.toUpperCase()}</option>
@@ -198,9 +198,9 @@ export default function RemoteDocumentDialog({
                 <span>EOL</span>
                 <select
                   className={`${styles.smallSelect} liquid-glass-input liquid-glass-select`}
-                  value={document.format.lineEnding}
-                  disabled={!document.canEdit || document.saving}
-                  onChange={(event) => document.updateFormat({ lineEnding: event.target.value as typeof document.format.lineEnding })}
+                  value={doc.format.lineEnding}
+                  disabled={!doc.canEdit || doc.saving}
+                  onChange={(event) => doc.updateFormat({ lineEnding: event.target.value as typeof doc.format.lineEnding })}
                 >
                   <option value="lf">LF</option>
                   <option value="crlf">CRLF</option>
@@ -211,9 +211,9 @@ export default function RemoteDocumentDialog({
               <label className={styles.bomControl}>
                 <input
                   type="checkbox"
-                  checked={document.format.bom}
-                  disabled={!document.canEdit || document.saving || !unicodeBom}
-                  onChange={(event) => document.updateFormat({ bom: event.target.checked })}
+                  checked={doc.format.bom}
+                  disabled={!doc.canEdit || doc.saving || !unicodeBom}
+                  onChange={(event) => doc.updateFormat({ bom: event.target.checked })}
                 />
                 <span>BOM</span>
               </label>
@@ -228,20 +228,20 @@ export default function RemoteDocumentDialog({
           </div>
         )}
 
-        {document.snapshot?.truncated && (
+        {doc.snapshot?.truncated && (
           <div className={styles.notice}>
             <span>
               {t("fileManager.previewTruncated", {
-                shown: formatBytes(document.snapshot.bytes.length),
-                total: formatBytes(document.snapshot.totalSize),
+                shown: formatBytes(doc.snapshot.bytes.length),
+                total: formatBytes(doc.snapshot.totalSize),
               })}
             </span>
-            {document.canLoadFullForEdit && (
+            {doc.canLoadFullForEdit && (
               <button
                 type="button"
                 className="liquid-glass-button"
-                disabled={!isConnected || document.loading}
-                onClick={() => void document.loadFullForEdit()}
+                disabled={!isConnected || doc.loading}
+                onClick={() => void doc.loadFullForEdit()}
               >
                 {t("fileManager.edit")}
               </button>
@@ -249,25 +249,25 @@ export default function RemoteDocumentDialog({
           </div>
         )}
 
-        {document.conflict && (
+        {doc.conflict && (
           <div className={`${styles.notice} ${styles.warning}`} role="alert">
             <Icon name="warning" size="sm" />
             <span>
-              {t("common.warning")} · {t("fileManager.modified")}: {formatModified(document.conflict.currentVersion?.modified)}
+              {t("common.warning")} · {t("fileManager.modified")}: {formatModified(doc.conflict.currentVersion?.modified)}
             </span>
             <div className={styles.noticeActions}>
               <button
                 type="button"
                 className="liquid-glass-button"
-                onClick={() => void document.reloadFromRemote()}
+                onClick={() => void doc.reloadFromRemote()}
               >
                 {t("fileManager.refresh")}
               </button>
               <button
                 type="button"
                 className="liquid-glass-button liquid-primary-button"
-                disabled={!isConnected || document.saving}
-                onClick={() => void document.save(true)}
+                disabled={!isConnected || doc.saving}
+                onClick={() => void doc.save(true)}
               >
                 {t("fileManager.conflictReplace")}
               </button>
@@ -275,14 +275,14 @@ export default function RemoteDocumentDialog({
           </div>
         )}
 
-        {document.error && (
+        {doc.error && (
           <div className={`${styles.notice} ${styles.error}`} role="alert">
             <Icon name="x-circle" size="sm" />
-            <span className={styles.noticeText}>{document.error}</span>
+            <span className={styles.noticeText}>{doc.error}</span>
             <button
               type="button"
               className={`${styles.iconButton} liquid-glass-ghost-button`}
-              onClick={() => document.setError(null)}
+              onClick={() => doc.setError(null)}
               aria-label={t("common.close")}
             >
               <Icon name="close" size="sm" />
@@ -291,14 +291,14 @@ export default function RemoteDocumentDialog({
         )}
 
         <main className={styles.body}>
-          {document.loading && (
+          {doc.loading && (
             <div className={styles.centerState} role="status">{t("fileManager.loading")}</div>
           )}
-          {!document.loading && document.snapshot && document.mode === "text" && (
+          {!doc.loading && doc.snapshot && doc.mode === "text" && (
             <TextEditor
-              value={document.text}
-              readOnly={!document.canEdit}
-              onChange={document.setText}
+              value={doc.text}
+              readOnly={!doc.canEdit}
+              onChange={doc.setText}
               onSave={save}
               onCursorChange={(line, column) => {
                 setCursorLine(line);
@@ -306,31 +306,31 @@ export default function RemoteDocumentDialog({
               }}
             />
           )}
-          {!document.loading && document.snapshot && document.mode === "hex" && (
+          {!doc.loading && doc.snapshot && doc.mode === "hex" && (
             <>
-              {document.hexLoading ? (
+              {doc.hexLoading ? (
                 <div className={styles.centerState} role="status">{t("fileManager.loading")}</div>
               ) : (
-                <HexViewer data={document.hexData} />
+                <HexViewer data={doc.hexData} />
               )}
             </>
           )}
         </main>
 
         <footer className={styles.statusBar}>
-          <span>{formatBytes(document.snapshot?.totalSize ?? entry.size)}</span>
+          <span>{formatBytes(doc.snapshot?.totalSize ?? entry.size)}</span>
           <span>
-            {document.mode === "text"
+            {doc.mode === "text"
               ? `${t("fileManager.lines", { count: lineCount })} · ${cursorLine}:${cursorColumn}`
-              : t("fileManager.previewBytes", { count: document.hexData.length })}
+              : t("fileManager.previewBytes", { count: doc.hexData.length })}
           </span>
-          <span>{document.format.encoding.toUpperCase()} · {document.format.lineEnding.toUpperCase()}</span>
-          <span>{document.snapshot?.permissions ?? entry.permissions ?? "—"}</span>
+          <span>{doc.format.encoding.toUpperCase()} · {doc.format.lineEnding.toUpperCase()}</span>
+          <span>{doc.snapshot?.permissions ?? entry.permissions ?? "—"}</span>
         </footer>
 
-        {document.mode === "hex" && document.hexTruncated && (
+        {doc.mode === "hex" && doc.hexTruncated && (
           <div className={styles.hexLimit}>
-            {t("fileManager.previewHexLimited", { size: formatBytes(document.hexData.length) })}
+            {t("fileManager.previewHexLimited", { size: formatBytes(doc.hexData.length) })}
           </div>
         )}
 
@@ -351,7 +351,7 @@ export default function RemoteDocumentDialog({
                   className="liquid-glass-button liquid-primary-button"
                   disabled={saveDisabled}
                   onClick={async () => {
-                    if (await document.save(false)) onClose();
+                    if (await doc.save(false)) onClose();
                   }}
                 >
                   {t("common.save")}
