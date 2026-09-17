@@ -154,23 +154,42 @@ assert.doesNotMatch(
   "generic saved-session IPC must not invent plugin UI capability defaults",
 );
 
-for (const legacyUiDir of ["Tftp", "Iperf"]) {
+const pluginPrivateUiContracts = [
+  {
+    legacyUiDir: "Tftp",
+    pluginId: "tftp",
+    ownedFiles: ["TftpSessionView.tsx"],
+  },
+  {
+    legacyUiDir: "Iperf",
+    pluginId: "iperf",
+    ownedFiles: ["IperfSessionView.tsx"],
+  },
+  {
+    legacyUiDir: "Network",
+    pluginId: "network",
+    ownedFiles: [
+      "NetworkDebugSessionView.tsx",
+      "NetworkDebugSessionView.module.css",
+      "UdpPacketGrid.tsx",
+    ],
+  },
+];
+
+for (const { legacyUiDir, pluginId, ownedFiles } of pluginPrivateUiContracts) {
   assert.equal(
     await exists(path.join(ROOT, "src", "components", legacyUiDir)),
     false,
-    `${legacyUiDir} private UI must live inside its plugin directory`,
+    `${legacyUiDir} private UI must live inside src/plugins/${pluginId}`,
   );
+  for (const file of ownedFiles) {
+    assert.equal(
+      await exists(path.join(ROOT, "src", "plugins", pluginId, file)),
+      true,
+      `${pluginId}: private UI file ${file} must stay plugin-owned`,
+    );
+  }
 }
-assert.equal(
-  await exists(path.join(ROOT, "src", "plugins", "tftp", "TftpSessionView.tsx")),
-  true,
-  "TFTP custom view must be plugin-owned",
-);
-assert.equal(
-  await exists(path.join(ROOT, "src", "plugins", "iperf", "IperfSessionView.tsx")),
-  true,
-  "iperf custom view must be plugin-owned",
-);
 
 const kernelMod = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "mod.rs"), "utf8");
 for (const deadModule of ["tab_host", "window_manager", "ipc_bridge", "shortcut_engine", "i18n_engine"]) {
