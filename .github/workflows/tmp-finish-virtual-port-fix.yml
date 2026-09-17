@@ -50,12 +50,7 @@ jobs:
 
           path = Path('src-tauri/src/virtual_port/manager.rs')
           text = path.read_text(encoding='utf-8')
-          text = replace_once(
-              text,
-              '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n',
-              '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n    VirtualPortError,\n',
-              'manager import',
-          )
+          text = replace_once(text, '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n', '    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,\n    VirtualPortError,\n', 'manager import')
           replacement = '\n'.join([
               '    pub fn ensure_endpoints(',
               '        &mut self,',
@@ -95,12 +90,7 @@ jobs:
 
           path = Path('src-tauri/src/virtual_port/service_backend.rs')
           text = path.read_text(encoding='utf-8')
-          text = replace_once(
-              text,
-              '    VirtualPortBackend, VirtualPortConfig,\n',
-              '    VirtualPortBackend, VirtualPortConfig, VirtualPortError,\n',
-              'service backend import',
-          )
+          text = replace_once(text, '    VirtualPortBackend, VirtualPortConfig,\n', '    VirtualPortBackend, VirtualPortConfig, VirtualPortError,\n', 'service backend import')
           replacement = '\n'.join([
               '    fn ensure_endpoints(',
               '        &mut self,',
@@ -131,12 +121,7 @@ jobs:
 
           path = Path('src-tauri/src/plugins/serial/mod.rs')
           text = path.read_text(encoding='utf-8')
-          text = replace_once(
-              text,
-              'use crate::virtual_port::backend::{\n    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n',
-              'use crate::virtual_port::backend::{\n    is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n',
-              'serial import',
-          )
+          text = replace_once(text, 'use crate::virtual_port::backend::{\n    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n', 'use crate::virtual_port::backend::{\n    is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,\n};\n', 'serial import')
           start = '        let endpoints = match manager.ensure_endpoints(&config) {\n'
           end = '        drop(manager);\n\n        if endpoints.is_empty()'
           replacement = '\n'.join([
@@ -160,7 +145,6 @@ jobs:
               '        };',
               '        drop(manager);',
               '',
-              '        if endpoints.is_empty()',
           ])
           text = replace_between(text, start, end, replacement, 'serial typed ensure')
           path.write_text(text, encoding='utf-8')
