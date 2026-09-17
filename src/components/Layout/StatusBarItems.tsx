@@ -44,7 +44,7 @@ export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
 export function SessionActivityStatus({ tab }: { tab: StatusBarTab | null }) {
   const { t } = useTranslation();
   if (tab?.state !== "transferring") return null;
-  return <StatusBarBadge tone="warning">{t("statusBar.transferring")}</StatusBarBadge>;
+  return <StatusBarBadge tone="warning">{t("session.transferring")}</StatusBarBadge>;
 }
 
 export function SessionUptimeStatus({ tab }: { tab: StatusBarTab | null }) {
