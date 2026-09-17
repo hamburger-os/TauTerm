@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
+use super::log_filename::system_segment_file_name;
 use super::log_writer::LogWriter;
 use crate::security::log_sanitizer::sanitize_log;
 
@@ -1142,12 +1143,8 @@ impl SystemWriter {
     fn open_unique_segment(&mut self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.base_dir)?;
         loop {
-            let file_name = format!(
-                "TauTerm_{}_p{}_{:03}.log",
-                self.date,
-                std::process::id(),
-                self.segment_index
-            );
+            let segment_created = Local::now();
+            let file_name = system_segment_file_name(&segment_created, self.segment_index);
             let path = self.base_dir.join(file_name);
             match OpenOptions::new().create_new(true).write(true).open(&path) {
                 Ok(file) => {

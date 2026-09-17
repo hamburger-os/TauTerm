@@ -83,11 +83,11 @@ COM20       COM21
 TauTerm 当前创建时约定：
 
 ```text
-CNCA<n> -> bridge_path    -> PortName=COMxx
+CNCA<n> -> bridge_path    -> PortName=COMxx,dsr=ropen
 CNCB<n> -> external_path  -> PortName=COMyy,PlugInMode=yes
 ```
 
-bus 是后端资源标识；前端不得依赖它。
+`dsr=ropen` 把远端 external endpoint 的打开状态映射到 bridge 端 DSR。Bridge 只在 peer 实际打开时转发 physical → virtual 数据；peer 缺席期间不积压历史数据，peer 已连接后出现的真实 I/O/完整性失败则 fail-closed。bus 是后端资源标识；前端不得依赖它。
 
 ### 3.2 setupc 属于特权边界
 

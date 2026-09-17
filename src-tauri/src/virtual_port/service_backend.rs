@@ -18,15 +18,18 @@ use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use super::backend::{
     register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
-    VirtualPortBackend, VirtualPortConfig,
+    VirtualPortBackend, VirtualPortConfig, VirtualPortError,
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
+const SERVICE_PROTOCOL_VERSION: u64 = 1;
 const GENERIC_READ: u32 = 0x80000000;
 const GENERIC_WRITE: u32 = 0x40000000;
 const OPEN_EXISTING: u32 = 3;
 const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
 const WAIT_OBJECT_0: u32 = 0;
+const WAIT_TIMEOUT: u32 = 258;
+const WAIT_FAILED: u32 = 0xFFFF_FFFF;
 const PIPE_IO_TIMEOUT_MS: u32 = 60_000;
 
 fn wide(value: &str) -> Vec<u16> {
@@ -60,23 +63,51 @@ fn open_pipe() -> Result<OwnedHandle, String> {
     Ok(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) })
 }
 
-fn wait_io(handle: RawHandle, overlapped: &OVERLAPPED) -> bool {
-    let wait = unsafe { WaitForSingleObject(overlapped.hEvent, PIPE_IO_TIMEOUT_MS) };
-    if wait != WAIT_OBJECT_0 {
-        unsafe { CancelIo(handle as HANDLE) };
-        return false;
-    }
-    true
+fn cancel_and_drain_io(handle: RawHandle, overlapped: &OVERLAPPED) {
+    // CancelIo only requests cancellation. Keep OVERLAPPED/event storage alive until the
+    // cancellation completion is observed before the caller closes the event and returns.
+    unsafe { CancelIo(handle as HANDLE) };
+    let mut transferred = 0u32;
+    let _ = unsafe { GetOverlappedResult(handle as HANDLE, overlapped, &mut transferred, 1) };
 }
 
-fn read_exact(handle: RawHandle, buffer: &mut [u8]) -> bool {
+fn wait_io(handle: RawHandle, overlapped: &OVERLAPPED, operation: &str) -> Result<(), String> {
+    let wait = unsafe { WaitForSingleObject(overlapped.hEvent, PIPE_IO_TIMEOUT_MS) };
+    match wait {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_TIMEOUT => {
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} timed out after {PIPE_IO_TIMEOUT_MS} ms"
+            ))
+        }
+        WAIT_FAILED => {
+            let error = unsafe { GetLastError() };
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} wait failed (win32 error {error})"
+            ))
+        }
+        other => {
+            cancel_and_drain_io(handle, overlapped);
+            Err(format!(
+                "virtual port service {operation} wait returned unexpected status {other}"
+            ))
+        }
+    }
+}
+fn read_exact(handle: RawHandle, buffer: &mut [u8]) -> Result<(), String> {
     let mut total = 0usize;
     while total < buffer.len() {
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = unsafe { CreateEventW(std::ptr::null_mut(), 1, 0, std::ptr::null()) };
         if overlapped.hEvent.is_null() {
-            return false;
+            return Err(format!(
+                "virtual port service read event creation failed (win32 error {})",
+                unsafe { GetLastError() }
+            ));
         }
+
         let mut read = 0u32;
         let ok = unsafe {
             ReadFile(
@@ -90,42 +121,51 @@ fn read_exact(handle: RawHandle, buffer: &mut [u8]) -> bool {
         if ok == 0 {
             let error = unsafe { GetLastError() };
             if error == ERROR_IO_PENDING {
-                if !wait_io(handle, &overlapped) {
+                if let Err(wait_error) = wait_io(handle, &overlapped, "read") {
                     unsafe { CloseHandle(overlapped.hEvent) };
-                    return false;
+                    return Err(wait_error);
                 }
                 let mut transferred = 0u32;
                 let completed = unsafe {
                     GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0)
                 };
-                unsafe { CloseHandle(overlapped.hEvent) };
                 if completed == 0 {
-                    return false;
+                    let error = unsafe { GetLastError() };
+                    unsafe { CloseHandle(overlapped.hEvent) };
+                    return Err(format!(
+                        "virtual port service read completion failed (win32 error {error})"
+                    ));
                 }
                 read = transferred;
             } else {
                 unsafe { CloseHandle(overlapped.hEvent) };
-                return false;
+                return Err(format!(
+                    "virtual port service read failed (win32 error {error})"
+                ));
             }
-        } else {
-            unsafe { CloseHandle(overlapped.hEvent) };
         }
+        unsafe { CloseHandle(overlapped.hEvent) };
+
         if read == 0 {
-            return false;
+            return Err("virtual port service closed the pipe while reading".into());
         }
         total += read as usize;
     }
-    true
+    Ok(())
 }
 
-fn write_exact(handle: RawHandle, buffer: &[u8]) -> bool {
+fn write_exact(handle: RawHandle, buffer: &[u8]) -> Result<(), String> {
     let mut total = 0usize;
     while total < buffer.len() {
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = unsafe { CreateEventW(std::ptr::null_mut(), 1, 0, std::ptr::null()) };
         if overlapped.hEvent.is_null() {
-            return false;
+            return Err(format!(
+                "virtual port service write event creation failed (win32 error {})",
+                unsafe { GetLastError() }
+            ));
         }
+
         let mut written = 0u32;
         let ok = unsafe {
             WriteFile(
@@ -139,50 +179,57 @@ fn write_exact(handle: RawHandle, buffer: &[u8]) -> bool {
         if ok == 0 {
             let error = unsafe { GetLastError() };
             if error == ERROR_IO_PENDING {
-                if !wait_io(handle, &overlapped) {
+                if let Err(wait_error) = wait_io(handle, &overlapped, "write") {
                     unsafe { CloseHandle(overlapped.hEvent) };
-                    return false;
+                    return Err(wait_error);
                 }
                 let mut transferred = 0u32;
                 let completed = unsafe {
                     GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0)
                 };
-                unsafe { CloseHandle(overlapped.hEvent) };
                 if completed == 0 {
-                    return false;
+                    let error = unsafe { GetLastError() };
+                    unsafe { CloseHandle(overlapped.hEvent) };
+                    return Err(format!(
+                        "virtual port service write completion failed (win32 error {error})"
+                    ));
                 }
                 written = transferred;
             } else {
                 unsafe { CloseHandle(overlapped.hEvent) };
-                return false;
+                return Err(format!(
+                    "virtual port service write failed (win32 error {error})"
+                ));
             }
-        } else {
-            unsafe { CloseHandle(overlapped.hEvent) };
         }
+        unsafe { CloseHandle(overlapped.hEvent) };
+
         if written == 0 {
-            return false;
+            return Err("virtual port service closed the pipe while writing".into());
         }
         total += written as usize;
     }
-    true
+    Ok(())
 }
 
-fn write_frame(handle: RawHandle, data: &[u8]) -> bool {
+fn write_frame(handle: RawHandle, data: &[u8]) -> Result<(), String> {
     let header = (data.len() as u32).to_le_bytes();
-    write_exact(handle, &header) && write_exact(handle, data)
+    write_exact(handle, &header)?;
+    write_exact(handle, data)
 }
 
-fn read_frame(handle: RawHandle) -> Option<Vec<u8>> {
+fn read_frame(handle: RawHandle) -> Result<Vec<u8>, String> {
     let mut length = [0u8; 4];
-    if !read_exact(handle, &mut length) {
-        return None;
-    }
+    read_exact(handle, &mut length)?;
     let length = u32::from_le_bytes(length) as usize;
     if length == 0 || length > 16 * 1024 * 1024 {
-        return None;
+        return Err(format!(
+            "invalid virtual port service frame length: {length}"
+        ));
     }
     let mut data = vec![0u8; length];
-    read_exact(handle, &mut data).then_some(data)
+    read_exact(handle, &mut data)?;
+    Ok(data)
 }
 
 #[derive(serde::Deserialize)]
@@ -234,21 +281,36 @@ impl ServiceBackend {
             "id": id,
             "op": "hello",
             "client_id": client_id,
-            "payload": {},
+            "payload": { "protocol_version": SERVICE_PROTOCOL_VERSION },
         });
         let raw = pipe.as_raw_handle();
         let body = serde_json::to_vec(&hello).map_err(|error| error.to_string())?;
-        if !write_frame(raw, &body) {
-            return Err("virtual port service handshake write failed".into());
-        }
-        let frame = read_frame(raw)
-            .ok_or_else(|| "virtual port service handshake read failed".to_string())?;
-        let response: Response =
-            serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
+        write_frame(raw, &body)
+            .map_err(|error| format!("virtual port service handshake write failed: {error}"))?;
+        let frame = read_frame(raw).map_err(|error| {
+            format!(
+                "virtual port service handshake read failed: {error}; the service may have rejected this executable (development builds use direct UAC) or be incompatible"
+            )
+        })?;
+        let response: Response = serde_json::from_slice(&frame)
+            .map_err(|error| format!("invalid virtual port service handshake response: {error}"))?;
         if !response.ok {
             return Err(response
                 .error
-                .unwrap_or_else(|| "handshake rejected".into()));
+                .unwrap_or_else(|| "virtual port service handshake rejected".into()));
+        }
+        let protocol_version = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("protocol_version"))
+            .and_then(serde_json::Value::as_u64);
+        if protocol_version != Some(SERVICE_PROTOCOL_VERSION) {
+            return Err(format!(
+                "virtual port service protocol mismatch (expected {SERVICE_PROTOCOL_VERSION}, got {})",
+                protocol_version
+                    .map(|version| version.to_string())
+                    .unwrap_or_else(|| "missing".into())
+            ));
         }
 
         inner.client_id = client_id;
@@ -292,25 +354,25 @@ impl ServiceBackend {
             "payload": payload,
         });
         let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        if !write_frame(raw, &body) {
+        if let Err(error) = write_frame(raw, &body) {
             Self::reset_connection(&mut inner);
-            return Err("virtual port service write failed".into());
+            return Err(error);
         }
         let frame = match read_frame(raw) {
-            Some(frame) => frame,
-            None => {
+            Ok(frame) => frame,
+            Err(error) => {
                 Self::reset_connection(&mut inner);
-                return Err("virtual port service read failed (connection closed)".into());
+                return Err(error);
             }
         };
-        let response: Response =
-            serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
+        let response: Response = serde_json::from_slice(&frame)
+            .map_err(|error| format!("invalid virtual port service response: {error}"))?;
         if response.ok {
             Ok(response.data.unwrap_or_else(|| serde_json::json!({})))
         } else {
             Err(response
                 .error
-                .unwrap_or_else(|| "unknown service error".into()))
+                .unwrap_or_else(|| "unknown virtual port service error".into()))
         }
     }
 
@@ -366,6 +428,28 @@ impl VirtualPortBackend for ServiceBackend {
         self.install_driver()
     }
 
+    fn ensure_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
+        if !config.enabled || config.count == 0 {
+            return Ok(Vec::new());
+        }
+        let status = self.status().map_err(VirtualPortError::from_backend)?;
+        if !status["files_present"].as_bool().unwrap_or(false) {
+            return Err(VirtualPortError::FilesMissing);
+        }
+        if !status["driver_installed"].as_bool().unwrap_or(false) {
+            self.install_driver()
+                .map_err(VirtualPortError::from_backend)?;
+            let status = self.status().map_err(VirtualPortError::from_backend)?;
+            if !status["driver_installed"].as_bool().unwrap_or(false) {
+                return Err(VirtualPortError::DriverMissing);
+            }
+        }
+        self.create_endpoints(config)
+            .map_err(VirtualPortError::from_backend)
+    }
     fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,

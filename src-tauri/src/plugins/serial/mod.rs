@@ -14,9 +14,7 @@ use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
 use crate::transport::DataPlaneRuntime;
-use crate::virtual_port::backend::{
-    contains_elevation_indicator, is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig,
-};
+use crate::virtual_port::backend::{is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::AppState;
 use serde_json::Value;
@@ -99,10 +97,12 @@ impl SerialRuntime {
         let endpoints = self.take_endpoints();
         self.destroy_endpoints(&endpoints);
     }
+
     /// 初始化 Serial 可选虚拟串口能力。
     ///
     /// capability 初始化失败不会回滚已经建立的物理串口 Session；失败通过 Serial 私有事件
-    /// 报告，保持“物理串口可用、虚拟桥接不可用”这一真实状态。
+    /// 报告，保持“物理串口可用、虚拟桥接不可用”这一真实状态。权限选择、驱动安装与
+    /// direct-UAC fallback 完全封装在 VirtualPortBackend，Serial 不编排平台权限流程。
     pub fn initialize_virtual_ports(
         &self,
         app: &AppHandle,
@@ -135,54 +135,27 @@ impl SerialRuntime {
             .virtual_port_manager
             .lock()
             .map_err(|error| error.to_string())?;
-        let mut create_error = None;
-        let endpoints = manager
-            .create_endpoints(&config)
-            .or_else(|first_error| {
-                log::warn!("直接创建端口对失败: {first_error}；尝试先安装驱动...");
-                manager
-                    .install_driver()
-                    .and_then(|_| manager.create_endpoints(&config))
-            })
-            .unwrap_or_else(|error| {
-                if contains_elevation_indicator(&error) && manager.detect_driver() {
-                    log::info!("驱动已安装，尝试通过 UAC 提权创建端口对...");
-                    match manager.create_endpoints_elevated(&config) {
-                        Ok(endpoints) => return endpoints,
-                        Err(elevated_error) => {
-                            log::warn!("提权创建端口对也失败: {elevated_error}")
-                        }
-                    }
-                }
-                create_error = Some(error);
-                Vec::new()
-            });
+        let endpoints = match manager.ensure_endpoints(&config) {
+            Ok(endpoints) => endpoints,
+            Err(error) => {
+                let kind = error.kind();
+                let detail = error.to_string();
+                drop(manager);
+                log::warn!("虚拟端口创建失败 (session={session_id}): {detail}");
+                let _ = app.emit(
+                    "virtual-port-failed",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "kind": kind,
+                        "reason": detail,
+                    }),
+                );
+                return Ok(Vec::new());
+            }
+        };
         drop(manager);
 
         if endpoints.is_empty() {
-            let detail = create_error.unwrap_or_else(|| {
-                "com0com driver not installed. Run TauTerm as administrator once to install the driver."
-                    .to_string()
-            });
-            let lower = detail.to_lowercase();
-            let kind = if lower.contains("driver files missing") {
-                "files_missing"
-            } else if lower.contains("driver not installed") {
-                "driver_missing"
-            } else if contains_elevation_indicator(&detail) || lower.contains("cancel") {
-                "permission"
-            } else {
-                "create_failed"
-            };
-            log::warn!("虚拟端口创建失败 (session={session_id}): {detail}");
-            let _ = app.emit(
-                "virtual-port-failed",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "kind": kind,
-                    "reason": detail,
-                }),
-            );
             return Ok(Vec::new());
         }
 
@@ -197,14 +170,10 @@ impl SerialRuntime {
             .map_err(|error| error.to_string())?
             .get_io_for(session_id)
             .ok_or_else(|| "串口会话缺少共享 I/O capability".to_string())?;
-        let bridge_paths = endpoints
-            .iter()
-            .map(|endpoint| endpoint.bridge_path.clone())
-            .collect::<Vec<_>>();
         let error_app = app.clone();
         let error_session_id = session_id.to_string();
         let bridge = match VirtualPortBridge::spawn(
-            bridge_paths,
+            endpoints.clone(),
             baud_rate,
             io,
             Box::new(move |reason| {

@@ -27,6 +27,47 @@ pub struct VirtualPortConfig {
     pub count: u32,
 }
 
+/// Session 层只关心创建能力失败的产品语义，不应该解析 Windows/setupc 文本。
+#[derive(Debug, thiserror::Error)]
+pub enum VirtualPortError {
+    #[error("com0com driver files missing")]
+    FilesMissing,
+    #[error("virtual port driver is not installed after privileged initialization")]
+    DriverMissing,
+    #[error("{0}")]
+    Permission(String),
+    #[error("{0}")]
+    Backend(String),
+}
+
+impl VirtualPortError {
+    pub fn from_backend(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let lower = message.to_lowercase();
+        if lower.contains("driver files missing") {
+            Self::FilesMissing
+        } else if lower.contains("driver not installed") {
+            Self::DriverMissing
+        } else if contains_elevation_indicator(&message)
+            || lower.contains("cancel")
+            || lower.contains("取消")
+        {
+            Self::Permission(message)
+        } else {
+            Self::Backend(message)
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::FilesMissing => "files_missing",
+            Self::DriverMissing => "driver_missing",
+            Self::Permission(_) => "permission",
+            Self::Backend(_) => "create_failed",
+        }
+    }
+}
+
 /// 当前进程内由虚拟串口子系统占用、不得作为普通 Serial 端点展示的内部路径。
 ///
 /// 这是平台资源可见性的单一注册表：Windows 直连后端和特权服务客户端在创建/销毁
@@ -71,10 +112,8 @@ pub fn is_internal_endpoint_path(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 统一权限不足检测 — 同时用于 `Err(String)`（spawn 失败）和
-/// `Ok(Output)`（setupc.exe 启动成功但内核驱动拒绝操作）两个路径。
-///
-/// 返回 true 表示错误由管理员权限缺失导致，调用者应延迟驱动级清理到显式提权操作。
+/// 统一权限不足检测只保留在 Windows 后端内部边界，用来把 OS/setupc 文本归一成
+/// `VirtualPortError::Permission`。Serial/UI 不直接依赖这些字符串。
 pub fn contains_elevation_indicator(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("740")
@@ -104,6 +143,16 @@ pub trait VirtualPortBackend: Send {
     fn detect_driver(&self) -> bool;
     fn install_driver(&mut self) -> Result<(), String>;
     fn install_driver_elevated(&mut self) -> Result<(), String>;
+
+    /// 创建可供 Session 使用的 endpoint。权限选择、驱动安装和平台 fallback 都属于
+    /// backend 自身策略；Serial/UI 只消费强类型失败语义，不编排 Windows UAC/setupc。
+    fn ensure_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
+        self.create_endpoints(config)
+            .map_err(VirtualPortError::from_backend)
+    }
 
     fn create_endpoints(
         &mut self,
@@ -167,5 +216,21 @@ mod tests {
         ] {
             assert!(!contains_elevation_indicator(message), "{message}");
         }
+    }
+
+    #[test]
+    fn typed_error_classification_is_owned_by_backend_boundary() {
+        assert_eq!(
+            VirtualPortError::from_backend("com0com driver files missing").kind(),
+            "files_missing"
+        );
+        assert_eq!(
+            VirtualPortError::from_backend("User cancelled the UAC elevation prompt").kind(),
+            "permission"
+        );
+        assert_eq!(
+            VirtualPortError::from_backend("PortName COM22 in use").kind(),
+            "create_failed"
+        );
     }
 }

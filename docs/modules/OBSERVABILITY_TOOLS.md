@@ -40,7 +40,7 @@ Session Data Log 有两级开关。`session_enabled` 只表示应用允许使用
 
 System Log 与 Session Data Log 共用同一组文件大小、buffer、flush 和 retention 存储策略，但保留不同格式语义。两者都使用**只追加分段**：达到阈值时关闭当前 segment 并新建下一个，禁止原地读取尾部、truncate、重写旧文件。Session 每个 segment 都写独立 Header，至少能识别 Session、Endpoint、开始时间、数据模式、segment 编号和 TauTerm 版本；单独拿到任意一个 rotated segment 也必须可以理解其来源。Session 数据行使用带时区的完整时间戳，不能只记录跨午夜后会失去日期语义的 `HH:mm:ss`。
 
-Session 文件名的唯一性来自不可变 Session 身份、进程/启动实例信息和 segment 序号，用户可修改的 Session 名称只进入 Header，不再承担文件唯一标识，也不能把路径字符带入文件系统命名。System Log 同样采用独立 segment，避免单个日期文件无限增长。
+System Log 与 Session Data Log 的所有 segment 文件名统一以实际 segment 创建时刻的 `TauTerm_<YYYYMMDD_HHMMSS_mmm>_` 前缀开头，随后才放 `system/session`、Session key、PID、nonce 与 segment 序号。文件名的字典序因此直接对应 segment 创建时间；PID、Session 身份和序号只负责唯一性/来源识别，不再承担排序职责。用户可修改的 Session 名称只进入 Header，不能把路径字符带入文件系统命名。每次 rotation 都重新取得 segment creation time，不能沿用 Session 启动时刻。System Log 同样采用独立 segment，避免单个日期文件无限增长。
 
 #### Retention、容量与清理
 

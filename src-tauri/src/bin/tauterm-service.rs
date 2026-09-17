@@ -10,10 +10,10 @@
 //!   校验调用方进程镜像名必须为 `tauterm.exe`；
 //! - 仅接受固定的窄操作集，绝不透传任意 `setupc` 参数。
 //!
-//! 客户端以「连接」为单位记账：`hello` 上报 `client_id`，断开（管道关闭）时
-//! 自动清理该客户端创建的全部端口对。服务同时在 ProgramData 持久化自己的
-//! ownership；若服务自身崩溃或系统异常掉电，重启后只恢复/清理有 ownership
-//! 证据的 TauTerm 资源，不扫描删除第三方 com0com bus。
+//! 客户端以「连接」为单位记账：`hello` 上报 `client_id` 与内部协议版本，断开
+//! （管道关闭）时自动清理该客户端创建的全部端口对。服务同时在 ProgramData
+//! 持久化自己的 ownership；若服务自身崩溃或系统异常掉电，重启后只恢复/清理
+//! 有 ownership 证据的 TauTerm 资源，不扫描删除第三方 com0com bus。
 
 #[cfg(windows)]
 mod service {
@@ -65,6 +65,7 @@ mod service {
     const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
     const SERVICE_NAME: &str = "TauTermService";
     const EXPECTED_CLIENT_EXE: &str = "tauterm.exe";
+    const SERVICE_PROTOCOL_VERSION: u64 = 1;
 
     /// 收到 STOP/SHUTDOWN 时置位，主循环据此退出。
     static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -279,8 +280,23 @@ mod service {
         let id = req.id;
         let data = match req.op.as_str() {
             "hello" => {
+                let version = req
+                    .payload
+                    .get("protocol_version")
+                    .and_then(serde_json::Value::as_u64);
+                if version != Some(SERVICE_PROTOCOL_VERSION) {
+                    return Response::err(
+                        id,
+                        format!(
+                            "service protocol mismatch (expected {SERVICE_PROTOCOL_VERSION}, got {})",
+                            version
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "missing".into())
+                        ),
+                    );
+                }
                 clients.entry(req.client_id.clone()).or_default();
-                Some(serde_json::json!({}))
+                Some(serde_json::json!({ "protocol_version": SERVICE_PROTOCOL_VERSION }))
             }
             "status" => Some(serde_json::json!({
                 "files_present": vpm.are_files_present(),
@@ -581,7 +597,7 @@ mod service {
 
         let ok = unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) };
         if ok == 0 {
-            // 未在 SCM 下运行（如手动调试），直接以交互方式启动服务器
+            // 未在 SCM 下运行（如手工调试），直接以交互方式启动服务器
             eprintln!("Not running as a service; starting interactively");
             let resource_dir = std::env::current_exe()
                 .ok()

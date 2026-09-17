@@ -12,6 +12,7 @@
 //! - `session_store`   — 会话存储、I/O 生命周期、统计采集
 //! - `theme_engine`    — CSS 变量生成、运行时主题切换、插件 token 注入
 //! - `log_engine`      — 生产者-消费者异步日志引擎，系统事件 + 会话数据日志
+//! - `log_filename`    — System/Session 共用的按 segment 创建时间可排序文件名协议
 //! - `log_writer`      — 单日志文件写入器，格式化（text/hex/dual）、自动分卷
 //! - `charset`         — 字符编码转码（UTF-8 ↔ GBK/Big5/Shift-JIS 等，发送转码 + 日志解码）
 
@@ -20,6 +21,7 @@ pub mod config_store;
 pub mod data_batcher;
 pub mod file_transfer;
 pub mod log_engine;
+pub mod log_filename;
 pub mod log_writer;
 pub mod persistence;
 pub mod plugin_adapter;

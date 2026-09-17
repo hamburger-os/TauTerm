@@ -11,6 +11,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use super::log_engine::{DataDirection, DataLogEntry};
+use super::log_filename::session_segment_file_name;
 
 pub struct LogWriter {
     file: Option<BufWriter<File>>,
@@ -216,13 +217,13 @@ impl LogWriter {
 
     fn open_segment(&mut self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.base_dir)?;
-        let timestamp = self.start_time.format("%Y%m%d_%H%M%S%.3f");
+        let segment_created = Local::now();
         let session_key = Self::short_file_key(&self.session_id);
-        let file_name = format!(
-            "Session_{session_key}_p{}_{timestamp}_{}_{:04}.log",
-            std::process::id(),
-            self.file_nonce,
-            self.split_index
+        let file_name = session_segment_file_name(
+            &segment_created,
+            &session_key,
+            &self.file_nonce,
+            self.split_index,
         );
         let path = self.base_dir.join(file_name);
         let file = OpenOptions::new()
@@ -236,6 +237,7 @@ impl LogWriter {
              Session: {}\n\
              Endpoint: {}\n\
              Started: {}\n\
+             Segment Created: {}\n\
              Data Mode: {}\n\
              Segment: {}\n\
              TauTerm: {}\n\
@@ -245,6 +247,7 @@ impl LogWriter {
             self.endpoint,
             self.start_time
                 .to_rfc3339_opts(SecondsFormat::Millis, false),
+            segment_created.to_rfc3339_opts(SecondsFormat::Millis, false),
             self.data_mode,
             self.split_index,
             env!("CARGO_PKG_VERSION")
@@ -315,15 +318,17 @@ mod tests {
         let second = writer.current_path().to_path_buf();
 
         assert_ne!(first, second);
+        assert!(first.file_name().unwrap() < second.file_name().unwrap());
         let content = std::fs::read_to_string(second).unwrap();
         assert!(content.contains("TauTerm Session Log"));
         assert!(content.contains("Session ID: session-123"));
+        assert!(content.contains("Segment Created:"));
         assert!(content.contains("Segment: 1"));
         assert!(content.contains("rotated"));
     }
 
     #[test]
-    fn filenames_use_session_identity_not_user_supplied_names() {
+    fn filenames_use_chronological_prefix_and_session_identity_not_user_names() {
         let temp = tempfile::tempdir().unwrap();
         let writer = LogWriter::new(
             temp.path(),
@@ -336,7 +341,8 @@ mod tests {
         )
         .unwrap();
         let name = writer.file_name();
-        assert!(name.starts_with("Session_2f09e8f4778b_p"));
+        assert!(name.starts_with("TauTerm_"));
+        assert!(name.contains("_session_2f09e8f4778b_p"));
         assert!(!name.contains("unsafe"));
         assert!(!name.contains(".."));
     }
