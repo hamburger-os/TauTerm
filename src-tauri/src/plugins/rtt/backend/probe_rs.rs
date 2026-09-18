@@ -46,7 +46,7 @@ pub fn list_probes() -> Vec<RttProbeInfo> {
 }
 
 impl ProbeRsRttBackend {
-    pub fn open(
+    pub(super) fn open(
         config: &RttConfig,
         embedded_debug: &EmbeddedDebugManager,
     ) -> Result<Self, RttError> {
