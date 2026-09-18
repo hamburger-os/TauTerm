@@ -38,7 +38,7 @@ function validConfig(params: Record<string, unknown>): boolean {
 function RttStatus({ sessionId }: { sessionId: string }) {
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
   const backend = runtime.snapshot?.backend?.display_name ?? "RTT";
-  const channel = runtime.selectedSendChannel;
+  const channel = runtime.snapshot?.send_channel ?? null;
   return (
     <StatusBarBadge>
       {backend}{channel != null ? ` · Ch ${channel}` : ""}
