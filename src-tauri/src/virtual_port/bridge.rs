@@ -875,7 +875,9 @@ mod tests {
             let value = (sequence % 251) as u8;
             fan_out_physical_chunk(&targets, vec![value; 4]).unwrap();
 
-            let delivered = healthy_rx.try_recv().expect("healthy endpoint must keep up");
+            let delivered = healthy_rx
+                .try_recv()
+                .expect("healthy endpoint must keep up");
             assert_eq!(&*delivered, &[value; 4]);
             healthy.release_bytes(delivered.len());
         }
