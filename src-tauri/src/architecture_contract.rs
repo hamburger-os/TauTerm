@@ -449,7 +449,6 @@ fn connect_dialog_uses_registry_session_option_policy() {
     );
 }
 
-
 #[test]
 fn native_rtt_uses_shared_embedded_debug_service_capability() {
     let backend = read_source("plugins/rtt/backend/probe_rs.rs");
