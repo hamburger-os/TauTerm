@@ -287,31 +287,40 @@ class PluginRegistry {
     return this.getAll().filter((plugin) => plugin.manifest.capabilities.includes(capability));
   }
 
-  async resolveSessionDefaultName(
+  getSessionDefaultName(
     pluginId: string,
     params: Record<string, unknown>,
     endpoint: string,
-  ): Promise<string> {
+  ): string {
     const plugin = this.get(pluginId);
+    const normalizedEndpoint = endpoint.trim();
     if (!plugin) {
-      const normalizedEndpoint = endpoint.trim();
       return normalizedEndpoint
         ? `${pluginId.toUpperCase()} @ ${normalizedEndpoint}`
         : pluginId.toUpperCase();
     }
 
     const normalizedParams = plugin.normalizeConnectionParams?.(params) ?? params;
-    const resolvedName = plugin.resolveDefaultSessionName
-      ? (await plugin.resolveDefaultSessionName(normalizedParams, endpoint)).trim()
-      : "";
     const presentationName = plugin.sessionPresentation
       ?.defaultName?.(normalizedParams, endpoint)
       ?.trim() ?? "";
-    const normalizedEndpoint = endpoint.trim();
     const fallbackName = normalizedEndpoint
       ? `${plugin.manifest.name} @ ${normalizedEndpoint}`
       : plugin.manifest.name;
-    return resolvedName || presentationName || fallbackName;
+    return presentationName || fallbackName;
+  }
+
+  async resolveSessionDefaultName(
+    pluginId: string,
+    params: Record<string, unknown>,
+    endpoint: string,
+  ): Promise<string> {
+    const plugin = this.get(pluginId);
+    const normalizedParams = plugin?.normalizeConnectionParams?.(params) ?? params;
+    const resolvedName = plugin?.resolveDefaultSessionName
+      ? (await plugin.resolveDefaultSessionName(normalizedParams, endpoint)).trim()
+      : "";
+    return resolvedName || this.getSessionDefaultName(pluginId, normalizedParams, endpoint);
   }
 
   getDefaultSessionOptions(pluginId: string): SessionConnectOptions {
