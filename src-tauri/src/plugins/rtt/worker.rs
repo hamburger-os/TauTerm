@@ -299,9 +299,9 @@ fn log_rtt_data(
         DataLogEntry {
             session_id: session_id.to_string(),
             direction,
-            // LogWriter treats this prefix as an optional stream label. Ordinary sessions keep
-            // using text/hex/dual here, so this remains backward-free and protocol-neutral.
-            data_mode: format!("stream:RTT:{channel_index}"),
+            stream: Some(format!("RTT:{channel_index}")),
+            // The active Session Log writer owns the user's text/hex/dual rendering mode.
+            data_mode: "raw".to_string(),
             encoding: "utf-8".to_string(),
             payload: payload.to_vec(),
             timestamp,
