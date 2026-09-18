@@ -126,6 +126,7 @@ impl EndpointShared {
             });
     }
 
+    #[cfg(target_os = "windows")]
     fn set_peer_open(&self, open: bool) {
         let previous = self.peer_open.swap(open, Ordering::AcqRel);
         if previous == open {
@@ -174,6 +175,7 @@ impl EndpointShared {
             });
     }
 
+    #[cfg(any(target_os = "windows", test))]
     fn recover_after_reopen(&self) {
         if self
             .state
@@ -270,7 +272,7 @@ impl VirtualPortBridge {
                     endpoint.external_path
                 )
             })?;
-            let mut writer = BridgeEndpoint {
+            let writer = BridgeEndpoint {
                 external_path: endpoint.external_path.clone(),
                 port: writer_port,
             };
@@ -280,16 +282,20 @@ impl VirtualPortBridge {
             };
 
             #[cfg(target_os = "windows")]
-            let initial_peer_open = match peer_is_open(&mut writer) {
-                Ok(open) => open,
-                Err(error) => {
-                    log::warn!(
-                        "Virtual peer {} initial presence query failed: {}",
-                        endpoint.external_path,
-                        error
-                    );
-                    false
-                }
+            let (writer, initial_peer_open) = {
+                let mut writer = writer;
+                let open = match peer_is_open(&mut writer) {
+                    Ok(open) => open,
+                    Err(error) => {
+                        log::warn!(
+                            "Virtual peer {} initial presence query failed: {}",
+                            endpoint.external_path,
+                            error
+                        );
+                        false
+                    }
+                };
+                (writer, open)
             };
             #[cfg(not(target_os = "windows"))]
             let initial_peer_open = true;
