@@ -398,8 +398,8 @@ Windows 真实 com0com 驱动回归不能完全由跨平台单元测试替代。
 完整语法以 `references/setupc-cli.md` 为准。维护实现时最常用：
 
 ```text
-setupc.exe list
-setupc.exe busynames COM*
+setupc.exe --silent list
+setupc.exe --silent busynames COM*
 setupc.exe --silent install <bus> PortName=COMxx PortName=COMyy,PlugInMode=yes
 setupc.exe --silent change CNCA<bus> PortName=-
 setupc.exe --silent change CNCB<bus> PortName=-
