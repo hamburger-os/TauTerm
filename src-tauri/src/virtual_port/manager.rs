@@ -21,7 +21,11 @@ use super::backend::{
 
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, LocalFree, ERROR_INVALID_PARAMETER, HANDLE,
+};
+use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::System::Threading::{
     CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -178,10 +182,36 @@ struct DriverMutationGuard {
 impl DriverMutationGuard {
     fn acquire() -> Result<Self, String> {
         let name = wide(r"Global\TauTermCom0comMutation");
-        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        let sddl = wide("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+        let mut descriptor: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut descriptor_size = 0u32;
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                &mut descriptor_size,
+            )
+        };
+        if converted == 0 || descriptor.is_null() {
+            return Err(format!(
+                "failed to build com0com mutation mutex DACL (Win32 {})",
+                unsafe { GetLastError() }
+            ));
+        }
+
+        let security = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let handle = unsafe { CreateMutexW(&security, 0, name.as_ptr()) };
+        unsafe {
+            let _ = LocalFree(descriptor);
+        }
         if handle.is_null() {
             return Err(format!(
-                "failed to create com0com mutation mutex (Win32 {})",
+                "failed to create/open com0com mutation mutex (Win32 {})",
                 unsafe { GetLastError() }
             ));
         }
