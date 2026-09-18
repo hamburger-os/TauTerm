@@ -450,10 +450,9 @@ impl VirtualPortBackend for ServiceBackend {
                 serde_json::json!({ "count": config.count }),
             )
             .map_err(VirtualPortError::from_backend)?;
-        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data)
-            .map_err(|error| VirtualPortError::Backend(format!(
-                "invalid create_endpoints response: {error}"
-            )))?;
+        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data).map_err(|error| {
+            VirtualPortError::Backend(format!("invalid create_endpoints response: {error}"))
+        })?;
         self.remember_endpoints(&endpoints)
             .map_err(VirtualPortError::from_backend)?;
         Ok(endpoints)
