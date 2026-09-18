@@ -501,7 +501,15 @@ fn physical_to_virtual_writer_loop(
     while !cancel.load(Ordering::SeqCst) {
         #[cfg(target_os = "windows")]
         {
-            let peer_open = peer_is_open(&mut endpoint)?;
+            let peer_open = match peer_is_open(&mut endpoint) {
+                Ok(open) => open,
+                Err(error) => {
+                    shared.mark_backpressured(error);
+                    drain_egress_queue(&receiver, shared);
+                    std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
+                    continue;
+                }
+            };
             shared.set_peer_open(peer_open);
             if shared.is_backpressured() {
                 drain_egress_queue(&receiver, shared);
@@ -685,7 +693,14 @@ fn virtual_to_physical_loop(
 
         #[cfg(target_os = "windows")]
         {
-            let open = peer_is_open(&mut endpoint)?;
+            let open = match peer_is_open(&mut endpoint) {
+                Ok(open) => open,
+                Err(error) => {
+                    shared.mark_backpressured(error);
+                    std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
+                    continue;
+                }
+            };
             shared.set_peer_open(open);
             if !open {
                 std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
