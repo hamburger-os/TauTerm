@@ -60,8 +60,12 @@ fn validate_session_config(params: &Value) -> Result<(), String> {
 }
 
 fn default_session_name(params: &Value, _endpoint: &str) -> Result<String, String> {
-    validate_session_config(params)?;
-    Ok("RTT 调试助手".to_string())
+    let config = config::RttConfig::from_params(params).map_err(|error| error.to_string())?;
+    Ok(match config.backend {
+        config::RttBackendKind::ProbeRs => "RTT @ Debug Probe",
+        config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing",
+    }
+    .to_string())
 }
 
 pub(crate) fn session_config_handler() -> SessionConfigHandler {
@@ -99,7 +103,10 @@ async fn connect_session(
     let config = config::RttConfig::from_params(&params).map_err(|error| error.to_string())?;
     let plugin = state.plugin::<RttPlugin>(PLUGIN_ID);
     let runtime = Arc::new(RttRuntime::new(config));
-    let session_name = name.unwrap_or_else(|| "RTT 调试助手".to_string());
+    let session_name = name.unwrap_or_else(|| match config.backend {
+        config::RttBackendKind::ProbeRs => "RTT @ Debug Probe".to_string(),
+        config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing".to_string(),
+    });
 
     let new_session_id = {
         let mut store = state
