@@ -94,10 +94,12 @@ impl RttError {
     pub fn is_transient_runtime_pressure(&self) -> bool {
         matches!(
             self.code,
-            RttErrorCode::SchedulerBusy
-                | RttErrorCode::OperationTimeout
-                | RttErrorCode::OperationOutcomeUnknown
+            RttErrorCode::SchedulerBusy | RttErrorCode::OperationTimeout
         )
+    }
+
+    pub fn has_indeterminate_outcome(&self) -> bool {
+        self.code == RttErrorCode::OperationOutcomeUnknown
     }
 }
 
