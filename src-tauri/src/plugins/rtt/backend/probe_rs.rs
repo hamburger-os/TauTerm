@@ -316,6 +316,9 @@ fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
         | DebugTargetRuntimeError::TargetConfigConflict { .. } => {
             RttError::new(RttErrorCode::ProbeBusy, error.to_string())
         }
+        DebugTargetRuntimeError::StartupTimeout => {
+            RttError::new(RttErrorCode::TargetAttachFailed, error.to_string())
+        }
         DebugTargetRuntimeError::Timeout => {
             RttError::new(RttErrorCode::OperationTimeout, error.to_string())
         }
