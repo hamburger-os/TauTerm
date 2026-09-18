@@ -317,11 +317,12 @@ fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
             RttError::new(RttErrorCode::ProbeBusy, error.to_string())
         }
         DebugTargetRuntimeError::Timeout => {
-            RttError::new(RttErrorCode::ProbeDisconnected, error.to_string())
+            RttError::new(RttErrorCode::OperationTimeout, error.to_string())
         }
-        DebugTargetRuntimeError::QueueFull
-        | DebugTargetRuntimeError::WorkerStopped
-        | DebugTargetRuntimeError::WorkerStart(_) => {
+        DebugTargetRuntimeError::QueueFull => {
+            RttError::new(RttErrorCode::SchedulerBusy, error.to_string())
+        }
+        DebugTargetRuntimeError::WorkerStopped | DebugTargetRuntimeError::WorkerStart(_) => {
             RttError::new(RttErrorCode::BackendFault, error.to_string())
         }
     }
