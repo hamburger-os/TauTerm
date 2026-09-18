@@ -169,13 +169,18 @@ assert.match(
 );
 assert.match(
   connectDialog,
-  /sessionPresentation[\s\S]*?defaultName/,
-  "The empty New Session name field must preview the plugin-owned generated Session name",
+  /pluginRegistry\.getSessionDefaultName/,
+  "The empty New Session name field must preview the generated Session name through PluginRegistry",
 );
 assert.match(
   connectDialog,
   /pluginRegistry\.resolveSessionDefaultName/,
   "Async generated Session names must reuse the canonical PluginRegistry resolver",
+);
+assert.doesNotMatch(
+  connectDialog,
+  /sessionPresentation\?*\.defaultName/,
+  "ConnectDialog must not duplicate plugin default-name precedence outside PluginRegistry",
 );
 assert.match(
   connectDialog,
