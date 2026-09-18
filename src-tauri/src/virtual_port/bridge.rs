@@ -54,6 +54,12 @@ struct BridgeEndpoint {
     port: Box<dyn SerialPort>,
 }
 
+struct PreparedBridgeEndpoint {
+    writer: BridgeEndpoint,
+    reader: BridgeEndpoint,
+    initial_peer_open: bool,
+}
+
 struct EndpointShared {
     external_path: String,
     peer_open: AtomicBool,
@@ -252,11 +258,10 @@ impl VirtualPortBridge {
             .subscribe("virtual-port-bridge")
             .map_err(|error| error.to_string())?;
         let backlog_limit_bytes = egress_backlog_limit_bytes(baud_rate);
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        let (event_tx, event_rx) = mpsc::channel::<VirtualPortBridgeEvent>();
-        let mut worker_threads = Vec::with_capacity(endpoints.len() * 2 + 1);
-        let mut egress_targets = Vec::with_capacity(endpoints.len());
+        let mut prepared = Vec::with_capacity(endpoints.len());
 
+        // Prepare every endpoint before spawning any worker. A later open/clone failure must not
+        // leave earlier workers alive without a VirtualPortBridge owner to cancel and join them.
         for endpoint in endpoints {
             let reader_port = open_bridge_endpoint(&endpoint.bridge_path, baud_rate)?;
             let writer_port = reader_port.try_clone().map_err(|error| {
@@ -265,17 +270,17 @@ impl VirtualPortBridge {
                     endpoint.external_path
                 )
             })?;
-            let mut writer_endpoint = BridgeEndpoint {
+            let mut writer = BridgeEndpoint {
                 external_path: endpoint.external_path.clone(),
                 port: writer_port,
             };
-            let reader_endpoint = BridgeEndpoint {
+            let reader = BridgeEndpoint {
                 external_path: endpoint.external_path.clone(),
                 port: reader_port,
             };
 
             #[cfg(target_os = "windows")]
-            let initial_peer_open = match peer_is_open(&mut writer_endpoint) {
+            let initial_peer_open = match peer_is_open(&mut writer) {
                 Ok(open) => open,
                 Err(error) => {
                     log::warn!(
@@ -289,10 +294,24 @@ impl VirtualPortBridge {
             #[cfg(not(target_os = "windows"))]
             let initial_peer_open = true;
 
-            let shared = Arc::new(EndpointShared::new(
-                endpoint.external_path.clone(),
-                backlog_limit_bytes,
+            prepared.push(PreparedBridgeEndpoint {
+                writer,
+                reader,
                 initial_peer_open,
+            });
+        }
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (event_tx, event_rx) = mpsc::channel::<VirtualPortBridgeEvent>();
+        let mut worker_threads = Vec::with_capacity(prepared.len() * 2 + 1);
+        let mut egress_targets = Vec::with_capacity(prepared.len());
+
+        for prepared_endpoint in prepared {
+            let external_path = prepared_endpoint.writer.external_path.clone();
+            let shared = Arc::new(EndpointShared::new(
+                external_path.clone(),
+                backlog_limit_bytes,
+                prepared_endpoint.initial_peer_open,
                 event_tx.clone(),
             ));
             let (egress_tx, egress_rx) = mpsc::sync_channel(EGRESS_QUEUE_MESSAGES);
@@ -305,13 +324,11 @@ impl VirtualPortBridge {
                 let cancel = cancel_flag.clone();
                 let shared = shared.clone();
                 let events = event_tx.clone();
+                let writer = prepared_endpoint.writer;
                 worker_threads.push(std::thread::spawn(move || {
-                    if let Err(reason) = physical_to_virtual_writer_loop(
-                        writer_endpoint,
-                        egress_rx,
-                        &shared,
-                        &cancel,
-                    ) {
+                    if let Err(reason) =
+                        physical_to_virtual_writer_loop(writer, egress_rx, &shared, &cancel)
+                    {
                         let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
                     }
                 }));
@@ -322,10 +339,9 @@ impl VirtualPortBridge {
                 let shared = shared.clone();
                 let events = event_tx.clone();
                 let io = io.clone();
+                let reader = prepared_endpoint.reader;
                 worker_threads.push(std::thread::spawn(move || {
-                    if let Err(reason) =
-                        virtual_to_physical_loop(reader_endpoint, io, &shared, &cancel)
-                    {
+                    if let Err(reason) = virtual_to_physical_loop(reader, io, &shared, &cancel) {
                         let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
                     }
                 }));
@@ -333,7 +349,7 @@ impl VirtualPortBridge {
 
             log::info!(
                 "Virtual bridge attached for external endpoint {} (egress_limit={} bytes)",
-                endpoint.external_path,
+                external_path,
                 backlog_limit_bytes
             );
         }
