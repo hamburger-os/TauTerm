@@ -313,6 +313,7 @@ fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
     match error {
         DebugTargetRuntimeError::Open(error) => map_probe_open_error(error),
         DebugTargetRuntimeError::ServiceBusy { .. }
+        | DebugTargetRuntimeError::TargetOpening { .. }
         | DebugTargetRuntimeError::TargetConfigConflict { .. } => {
             RttError::new(RttErrorCode::ProbeBusy, error.to_string())
         }
