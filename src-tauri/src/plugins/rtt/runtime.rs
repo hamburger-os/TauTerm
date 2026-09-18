@@ -191,44 +191,40 @@ impl RttShared {
         descriptor: super::model::RttBackendDescriptor,
         channels: Vec<super::model::RttChannelInfo>,
     ) {
-        let automation_source_channel = self
-            .automation_source_channel
-            .lock()
-            .ok()
-            .and_then(|mut selected| {
-                let still_readable = selected.is_some_and(|index| {
-                    channels
-                        .iter()
-                        .any(|channel| channel.index == index && channel.up.is_some())
+        let automation_source_channel =
+            self.automation_source_channel
+                .lock()
+                .ok()
+                .and_then(|mut selected| {
+                    let still_readable = selected.is_some_and(|index| {
+                        channels
+                            .iter()
+                            .any(|channel| channel.index == index && channel.up.is_some())
+                    });
+                    if !still_readable {
+                        *selected = channels
+                            .iter()
+                            .find(|channel| channel.index == 0 && channel.up.is_some())
+                            .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                            .map(|channel| channel.index);
+                    }
+                    *selected
                 });
-                if !still_readable {
-                    *selected = channels
-                        .iter()
-                        .find(|channel| channel.index == 0 && channel.up.is_some())
-                        .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
-                        .map(|channel| channel.index);
-                }
-                *selected
+        let send_channel = self.send_channel.lock().ok().and_then(|mut selected| {
+            let still_writable = selected.is_some_and(|index| {
+                channels
+                    .iter()
+                    .any(|channel| channel.index == index && channel.down.is_some())
             });
-        let send_channel = self
-            .send_channel
-            .lock()
-            .ok()
-            .and_then(|mut selected| {
-                let still_writable = selected.is_some_and(|index| {
-                    channels
-                        .iter()
-                        .any(|channel| channel.index == index && channel.down.is_some())
-                });
-                if !still_writable {
-                    *selected = channels
-                        .iter()
-                        .find(|channel| channel.index == 0 && channel.down.is_some())
-                        .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
-                        .map(|channel| channel.index);
-                }
-                *selected
-            });
+            if !still_writable {
+                *selected = channels
+                    .iter()
+                    .find(|channel| channel.index == 0 && channel.down.is_some())
+                    .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
+                    .map(|channel| channel.index);
+            }
+            *selected
+        });
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.phase = RttPhase::Running;
             snapshot.backend = Some(descriptor);
@@ -581,11 +577,7 @@ impl RttRuntime {
             }
         })?;
         reply_rx
-            .recv_timeout(
-                self.config
-                    .write_timeout
-                    .saturating_add(WRITE_REPLY_GRACE),
-            )
+            .recv_timeout(self.config.write_timeout.saturating_add(WRITE_REPLY_GRACE))
             .map_err(|_| RttError::new(RttErrorCode::RttWriteTimeout, "等待 RTT 写入结果超时"))?
     }
 
@@ -840,7 +832,9 @@ mod tests {
         let observations = shared.raw_source.subscribe();
         let chunk = shared.record_rx(3, b"trace".to_vec());
 
-        let observed = observations.recv_timeout(Duration::from_millis(50)).unwrap();
+        let observed = observations
+            .recv_timeout(Duration::from_millis(50))
+            .unwrap();
         assert_eq!(observed.generation, chunk.generation);
         assert_eq!(observed.sequence, chunk.sequence);
         assert_eq!(observed.channel_index, 3);
