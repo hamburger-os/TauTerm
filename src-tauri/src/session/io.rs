@@ -58,7 +58,7 @@ pub trait AutomationIo: Send + Sync {
         Ok(data.to_vec())
     }
 
-    fn subscribe(&self) -> Result<Box<dyn AutomationRx>, SessionIoError>;
+    fn subscribe(&self, consumer: &str) -> Result<Box<dyn AutomationRx>, SessionIoError>;
 }
 
 /// Optional capability for datagram/multi-peer sessions. Ordinary streams do not implement it.
@@ -93,11 +93,14 @@ impl SessionIo {
         self.primary.as_ref()
     }
 
-    pub fn subscribe(&self) -> Result<DataPlaneSubscription, SessionIoError> {
+    pub fn subscribe(
+        &self,
+        consumer: impl Into<String>,
+    ) -> Result<DataPlaneSubscription, SessionIoError> {
         self.primary
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
-            .subscribe()
+            .subscribe(consumer)
             .map_err(Into::into)
     }
 
@@ -239,9 +242,9 @@ impl AutomationIo for SessionIo {
         SessionIo::send_to_text(self, target, data)
     }
 
-    fn subscribe(&self) -> Result<Box<dyn AutomationRx>, SessionIoError> {
+    fn subscribe(&self, consumer: &str) -> Result<Box<dyn AutomationRx>, SessionIoError> {
         Ok(Box::new(DataPlaneAutomationRx {
-            subscription: SessionIo::subscribe(self)?,
+            subscription: SessionIo::subscribe(self, consumer)?,
         }))
     }
 }
