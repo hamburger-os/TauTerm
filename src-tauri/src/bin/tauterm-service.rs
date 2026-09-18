@@ -364,9 +364,9 @@ mod service {
                 }
                 Some(serde_json::json!({}))
             }
-            "cleanup_orphans" => {
-                let cleaned = vpm.cleanup_orphans();
-                Some(serde_json::json!({ "cleaned": cleaned }))
+            "cleanup_orphans" => match vpm.cleanup_orphans() {
+                Ok(cleaned) => Some(serde_json::json!({ "cleaned": cleaned })),
+                Err(error) => return Response::err(id, error),
             }
             other => return Response::err(id, format!("unknown op: {}", other)),
         };
@@ -466,14 +466,19 @@ mod service {
                 error
             );
         }
-        let vpm = Mutex::new(VirtualPortManager::new(resource_dir, state_dir));
+        let vpm = Mutex::new(VirtualPortManager::new_privileged(resource_dir, state_dir));
         let clients: Mutex<Clients> = Mutex::new(HashMap::new());
 
         // 启动时只清理有 TauTerm ownership 证据、且当前无 active owner 的资源。
         if let Ok(mut v) = vpm.lock() {
-            let cleaned = v.cleanup_orphans();
-            if cleaned > 0 {
-                log::info!("startup: cleaned {} orphan port pair(s)", cleaned);
+            match v.cleanup_orphans() {
+                Ok(cleaned) if cleaned > 0 => {
+                    log::info!("startup: cleaned {} orphan port pair(s)", cleaned);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("startup orphan cleanup failed: {error}");
+                }
             }
         }
 
