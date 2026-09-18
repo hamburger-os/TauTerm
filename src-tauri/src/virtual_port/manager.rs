@@ -1379,6 +1379,46 @@ mod tests {
     }
 
     #[test]
+    fn stale_same_bus_forget_does_not_remove_replacement_ownership() {
+        let (mut manager, root) = test_manager();
+        let original = sample_endpoint(6);
+        manager.track_active_endpoint(original.clone()).unwrap();
+
+        let replacement = VirtualEndpoint {
+            bridge_path: "COM90".into(),
+            external_path: "COM91".into(),
+            resource_id: original.resource_id,
+        };
+        manager
+            .track_active_endpoint_with_owner(replacement.clone(), Some(std::process::id()))
+            .unwrap();
+
+        manager.forget_owned_endpoint(&original).unwrap();
+        assert_eq!(manager.load_owned_endpoints(), vec![replacement.clone()]);
+        manager.forget_owned_endpoint(&replacement).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deferred_cleanup_refuses_to_overwrite_reused_bus_ownership() {
+        let (mut manager, root) = test_manager();
+        let current = sample_endpoint(7);
+        manager.track_active_endpoint(current.clone()).unwrap();
+
+        let stale = VirtualEndpoint {
+            bridge_path: "COM94".into(),
+            external_path: "COM95".into(),
+            resource_id: current.resource_id,
+        };
+        let error = manager.defer_cleanup(&stale).unwrap_err();
+        assert!(error.contains("refusing to overwrite virtual-port ownership"));
+        assert_eq!(manager.load_owned_endpoints(), vec![current.clone()]);
+
+        manager.forget_owned_endpoint(&current).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn driver_identity_requires_both_exact_com_paths() {
         let endpoint = sample_endpoint(6);
         let exact = DriverEndpointIdentity {
