@@ -64,6 +64,8 @@ pub struct RttSnapshot {
     /// Loss in the best-effort WebView presentation queue only. History/recording are independent.
     pub dropped_presentation_bytes: u64,
     pub dropped_presentation_chunks: u64,
+    /// Retryable shared-target scheduler pressure observed while the session stayed connected.
+    pub runtime_pressure_events: u64,
     pub last_error: Option<RttError>,
 }
 
@@ -84,6 +86,7 @@ impl Default for RttSnapshot {
             dropped_automation_chunks: 0,
             dropped_presentation_bytes: 0,
             dropped_presentation_chunks: 0,
+            runtime_pressure_events: 0,
             last_error: None,
         }
     }
