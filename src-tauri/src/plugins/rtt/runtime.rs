@@ -165,8 +165,7 @@ impl RttShared {
     }
 
     pub(super) fn generation(&self) -> u64 {
-        self.snapshot()
-            .generation
+        self.snapshot().generation
     }
 
     pub(super) fn set_phase(&self, phase: RttPhase) {
