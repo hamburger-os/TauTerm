@@ -45,7 +45,7 @@ RTT service lease + RTT state
 
 `RttRuntime` 通过 `SessionService` 挂到 Container Session，并由 RTT 插件自己的 `SessionRuntimeRegistry<RttRuntime>` 建立弱索引。SessionStore 仍是用户可见连接生命周期的唯一权威所有者；RTT Runtime 只持有插件私有资源与状态。
 
-`EmbeddedDebugManager` 是进程内的物理探针所有权 registry。进入 registry 前，Auto/显式 selector 都先解析为 canonical selector；registry 以 canonical physical probe identity 为槽位，同一探针只有一个活动的 `DebugTargetRuntime`。相同 target/wire/speed 配置复用该 runtime；同一物理探针若请求不同目标配置则显式返回冲突，而不是尝试第二次打开 USB probe。每个 `DebugTargetRuntime` 都由单独 worker 线程唯一拥有 probe-rs `Session`，RTT worker 只通过有界调度队列提交短操作，`Core` 仍只在该 worker 中短生命周期借用。RTT 取得独占的 `rtt` service lease，防止同一物理目标出现第二个 RTT reader；未来变量采样等不同 service 可以复用同一 target worker，而不复制 probe handle。共享 target scheduler 为每个 service 建立独立有界队列，并按 service round-robin 取短操作；单个高频 observation service 不能占满整个 target queue 或持续饿死其它 service。
+`EmbeddedDebugManager` 是进程内的物理探针所有权 registry。进入 registry 前，Auto/显式 selector 都先解析为 canonical selector；registry 以 canonical physical probe identity 为槽位，同一探针只有一个活动的 `DebugTargetRuntime`。相同 target/wire/speed 配置复用该 runtime；同一物理探针若请求不同目标配置则显式返回冲突，而不是尝试第二次打开 USB probe。Probe 在 startup timeout 后若底层打开线程仍未退出，slot 保持 `Opening`；shutdown 超过边界而 detach 的旧 worker 也继续保留物理 Probe reservation，直到其真正退出，因此弱 Runtime 失效本身不等价于 Probe 已可重新打开。每个 `DebugTargetRuntime` 都由单独 worker 线程唯一拥有 probe-rs `Session`，RTT worker 只通过有界调度队列提交短操作，`Core` 仍只在该 worker 中短生命周期借用。RTT 取得独占的 `rtt` service lease，防止同一物理目标出现第二个 RTT reader；未来变量采样等不同 service 可以复用同一 target worker，而不复制 probe handle。共享 target scheduler 为每个 service 建立独立有界队列，并按 service round-robin 取短操作；单个高频 observation service 不能占满整个 target queue 或持续饿死其它 service。
 
 ## Backend
 
@@ -112,7 +112,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
-canonical RTT frame 在采集时同时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。未来 SystemView/defmt 等 decoder 必须订阅这一 raw source，不允许创建第二个 RTT reader；不同 subscriber 使用独立有界队列，慢 decoder 只影响自己的 delivery。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、recording loss、presentation loss 也必须保持不同语义。
+canonical RTT frame 在采集时同时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。未来 SystemView/defmt 等 decoder 必须通过 Runtime 的 observation subscription 订阅这一 raw source，不允许创建第二个 RTT reader；不同 subscriber 使用独立有界队列，并维护自己的 dropped counter，慢 decoder 只影响自己的 delivery。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、recording loss、presentation loss 也必须保持不同语义。
 
 ## 前端运行态与后台生命周期
 
