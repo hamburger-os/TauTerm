@@ -125,8 +125,7 @@ impl TargetScheduler {
             }
 
             if let Some(service) = state.service_order.pop_front() {
-                let mut remove_queue = false;
-                let operation = {
+                let (operation, remove_queue) = {
                     let queue = state
                         .queues
                         .get_mut(&service)
@@ -134,8 +133,7 @@ impl TargetScheduler {
                     let operation = queue
                         .pop_front()
                         .expect("scheduled service queue must not be empty");
-                    remove_queue = queue.is_empty();
-                    operation
+                    (operation, queue.is_empty())
                 };
                 state.total_pending = state.total_pending.saturating_sub(1);
                 if remove_queue {
@@ -192,7 +190,10 @@ impl DebugTargetRuntime {
 
                 loop {
                     match worker_scheduler.next() {
-                        ScheduledWork::Operation(operation) => (operation.operation)(&mut probe),
+                        ScheduledWork::Operation(operation) => {
+                            debug_assert!(!operation.service.is_empty());
+                            (operation.operation)(&mut probe);
+                        }
                         ScheduledWork::Shutdown(reply) => {
                             if let Some(reply) = reply {
                                 let _ = reply.send(());
