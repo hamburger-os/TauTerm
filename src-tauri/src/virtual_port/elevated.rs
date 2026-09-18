@@ -7,27 +7,31 @@
 //! typed virtual-port operations.
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(debug_assertions))]
 use std::ffi::OsString;
 use std::io::{Read, Write};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStrExt;
+#[cfg(not(debug_assertions))]
+use std::os::windows::ffi::OsStringExt;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+#[cfg(not(debug_assertions))]
 use windows_sys::core::{GUID, PWSTR};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_CANCELLED, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING};
+#[cfg(not(debug_assertions))]
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
     SetNamedPipeHandleState,
 };
 use windows_sys::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
-use windows_sys::Win32::UI::Shell::{
-    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS,
-    SHELLEXECUTEINFOW,
-};
+use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+#[cfg(not(debug_assertions))]
+use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramFiles, SHGetKnownFolderPath};
 
 use super::backend::{VirtualEndpoint, VirtualPortConfig};
 use super::manager::VirtualPortManager;
@@ -332,6 +336,7 @@ fn validate_endpoint(endpoint: &VirtualEndpoint) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(debug_assertions))]
 fn known_folder(id: &GUID) -> Option<PathBuf> {
     unsafe {
         let mut raw: PWSTR = std::ptr::null_mut();
