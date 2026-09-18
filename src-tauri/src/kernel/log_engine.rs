@@ -300,6 +300,8 @@ pub enum LogCommand {
 pub struct DataLogEntry {
     pub session_id: String,
     pub direction: DataDirection,
+    /// Optional logical substream identity for multiplexed sessions (for example RTT:0).
+    pub stream: Option<String>,
     pub data_mode: String,
     pub encoding: String,
     pub payload: Vec<u8>,
@@ -1176,6 +1178,7 @@ mod tests {
         DataLogEntry {
             session_id: session_id.to_string(),
             direction: DataDirection::RX,
+            stream: None,
             data_mode: "text".to_string(),
             encoding: "utf-8".to_string(),
             payload: b"hello".to_vec(),
