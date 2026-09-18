@@ -3,6 +3,7 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
+use crate::embedded_debug::observation::now_ms;
 use crate::kernel::log_engine::{
     session_log_is_active, try_send_session_log, DataDirection, DataLogEntry, LogEntry,
 };
@@ -285,13 +286,6 @@ fn cancel_pending_writes(writes: &mut VecDeque<PendingWrite>) {
             "RTT 会话正在关闭，未完成的写入已取消",
         )));
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 fn log_rtt_data(
