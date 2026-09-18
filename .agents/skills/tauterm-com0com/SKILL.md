@@ -197,7 +197,7 @@ direct-UAC Session 正常断开不弹第二次 UAC。普通 GUI 只结束本地 
 - 客户端与服务可执行文件必须位于同一安装目录；
 - 只接受固定 op：hello/status/install/create/remove/cleanup 等窄操作；
 - 不接受任意 setupc 参数、shell 文本或命令行透传；
-- `client_id` 只表示当前管道连接的运行期资源归属；连接必须先 `hello`，后续请求必须保持同一 `client_id`。服务为每个已验证 GUI 连接使用独立 worker，使多个 TauTerm 实例可并发连接；driver mutation 仍通过共享 manager + 全局 mutex 串行化。机器级 crash recovery 仍依赖持久化 endpoint ownership。
+- `client_id` 只表示当前管道连接的运行期资源归属；连接必须先 `hello`，后续请求必须保持同一 `client_id`。服务为每个已验证 GUI 连接使用独立 worker，使多个 TauTerm 实例可并发连接；driver mutation 仍通过共享 manager + 全局 mutex 串行化。pipe 断开不直接授权删除：只有已验证 GUI 进程实际退出后才清理该连接 endpoint；GUI 仍存活时保留 active ownership 供重连/re-adoption。机器级 crash recovery 仍依赖持久化 endpoint ownership。
 
 不要把“驱动里可枚举到的 bus”加入服务 endpoint ownership；ownership 只能由 TauTerm 自己的创建路径产生。
 
