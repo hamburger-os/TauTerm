@@ -27,6 +27,7 @@ pub enum RttErrorCode {
     ProbeDisconnected,
     SchedulerBusy,
     OperationTimeout,
+    OperationOutcomeUnknown,
     InvalidConfig,
     BackendFault,
     Cancelled,
@@ -59,6 +60,7 @@ impl RttErrorCode {
             Self::ProbeDisconnected => "probe_disconnected",
             Self::SchedulerBusy => "scheduler_busy",
             Self::OperationTimeout => "operation_timeout",
+            Self::OperationOutcomeUnknown => "operation_outcome_unknown",
             Self::InvalidConfig => "invalid_config",
             Self::BackendFault => "backend_fault",
             Self::Cancelled => "cancelled",
@@ -92,7 +94,9 @@ impl RttError {
     pub fn is_transient_runtime_pressure(&self) -> bool {
         matches!(
             self.code,
-            RttErrorCode::SchedulerBusy | RttErrorCode::OperationTimeout
+            RttErrorCode::SchedulerBusy
+                | RttErrorCode::OperationTimeout
+                | RttErrorCode::OperationOutcomeUnknown
         )
     }
 }
