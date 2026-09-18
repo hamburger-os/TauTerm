@@ -81,7 +81,7 @@
     ExecWait 'sc.exe query com0com' $R6
 
     ; 在总线 0 上创建临时端口对以触发驱动安装
-    ExecWait '"$INSTDIR\setupc.exe" install 0 - -' $0
+    ExecWait '"$INSTDIR\setupc.exe" --silent install 0 - -' $0
 
     ${If} $0 == 0
       DetailPrint "TauTerm: com0com driver installed."
@@ -94,7 +94,7 @@
 
       ; 删除临时端口对（用总线号 0 而非端口名 CNCA0），只保留驱动程序；
       ; 若删除失败会在设备管理器遗留一个可见的 COM 端口对，需提示用户。
-      ExecWait '"$INSTDIR\setupc.exe" remove 0' $1
+      ExecWait '"$INSTDIR\setupc.exe" --silent remove 0' $1
       ${If} $1 <> 0
         MessageBox MB_ICONEXCLAMATION \
           "com0com 临时端口对移除失败 (code $1).$\n\
@@ -191,15 +191,15 @@
       ; pipeline 只返回 findstr 的状态，setupc list 失败也可能被误判成“没有端口”。
       ; 状态无法确认时必须 fail closed：保留共享驱动。
       Delete "$TEMP\tauterm-com0com-list.txt"
-      ExecWait '"$SYSDIR\cmd.exe" /D /S /C ""$INSTDIR\setupc.exe" list > "$TEMP\tauterm-com0com-list.txt" 2>&1"' $R6
+      ExecWait '"$SYSDIR\cmd.exe" /D /S /C ""$INSTDIR\setupc.exe" --silent list > "$TEMP\tauterm-com0com-list.txt" 2>&1"' $R6
       ${If} $R6 == 0
         ExecWait '"$SYSDIR\findstr.exe" /R /C:"CNCA[0-9]" /C:"CNCB[0-9]" "$TEMP\tauterm-com0com-list.txt"' $R5
         ${If} $R5 == 1
           DetailPrint "TauTerm: Removing TauTerm-owned com0com driver..."
-          ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+          ExecWait '"$INSTDIR\setupc.exe" --silent uninstall' $0
           ${If} $0 <> 0
             Sleep 500
-            ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+            ExecWait '"$INSTDIR\setupc.exe" --silent uninstall' $0
           ${EndIf}
           DetailPrint "TauTerm: com0com driver removal completed with code $0."
         ${ElseIf} $R5 == 0
@@ -221,6 +221,7 @@
   ; 在线升级必须保留该状态，供新服务恢复异常中断资源；只有真正卸载时删除。
   DetailPrint "TauTerm: Removing privileged virtual-port state..."
   !insertmacro RMDIR_Retry "$COMMONAPPDATA\TauTerm\service" 3
+  !insertmacro RMDIR_Retry "$COMMONAPPDATA\TauTerm\virtual-port" 3
   ; 若 TauTerm 下没有其它机器级数据，顺带删除空父目录；非空时 RMDir 会安全失败。
   RMDir "$COMMONAPPDATA\TauTerm"
 
