@@ -984,8 +984,7 @@ impl VirtualPortManager {
         }
 
         if self.mode == ManagementMode::DirectUac {
-            let cleaned =
-                super::elevated::cleanup_endpoints(&self.resource_dir, orphans)?;
+            let cleaned = super::elevated::cleanup_endpoints(&self.resource_dir, orphans)?;
             for endpoint in &cleaned {
                 self.forget_owned_endpoint(endpoint);
             }
