@@ -29,6 +29,8 @@ pub(crate) enum DebugTargetRuntimeError {
     QueueFull,
     #[error("嵌入式调试目标 worker 已停止")]
     WorkerStopped,
+    #[error("等待嵌入式调试目标打开超时")]
+    StartupTimeout,
     #[error("嵌入式调试目标操作在调度前超时")]
     Timeout,
     #[error("嵌入式调试目标操作执行中超时，结果状态未知")]
@@ -220,7 +222,7 @@ impl DebugTargetRuntime {
             Err(_) => {
                 // The worker still owns config/probe open. A late startup observes the dropped
                 // startup receiver and exits without accepting target work.
-                return Err(DebugTargetRuntimeError::Timeout);
+                return Err(DebugTargetRuntimeError::StartupTimeout);
             }
         };
 
