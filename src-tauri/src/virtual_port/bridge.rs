@@ -216,9 +216,8 @@ impl EgressTarget {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(data)) => {
                 self.shared.release_bytes(data.len());
-                self.shared.mark_backpressured(
-                    "egress message queue exhausted while peer remained open",
-                );
+                self.shared
+                    .mark_backpressured("egress message queue exhausted while peer remained open");
                 Ok(())
             }
             Err(mpsc::TrySendError::Disconnected(data)) => {
@@ -307,9 +306,12 @@ impl VirtualPortBridge {
                 let shared = shared.clone();
                 let events = event_tx.clone();
                 worker_threads.push(std::thread::spawn(move || {
-                    if let Err(reason) =
-                        physical_to_virtual_writer_loop(writer_endpoint, egress_rx, &shared, &cancel)
-                    {
+                    if let Err(reason) = physical_to_virtual_writer_loop(
+                        writer_endpoint,
+                        egress_rx,
+                        &shared,
+                        &cancel,
+                    ) {
                         let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
                     }
                 }));
@@ -340,7 +342,8 @@ impl VirtualPortBridge {
             let cancel = cancel_flag.clone();
             let events = event_tx.clone();
             worker_threads.push(std::thread::spawn(move || {
-                if let Err(reason) = physical_subscription_pump(subscription, egress_targets, &cancel)
+                if let Err(reason) =
+                    physical_subscription_pump(subscription, egress_targets, &cancel)
                 {
                     let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
                 }
