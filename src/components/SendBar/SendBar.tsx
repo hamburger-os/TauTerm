@@ -59,7 +59,7 @@ function SendBarInner({ containerId }: SendBarProps) {
 
   return (
     <div className={styles.container}>
-      {SendTarget && <SendTarget sessionId={containerId} />}
+      {SendTarget && <SendTarget sessionId={containerId} disabled={executionMode !== null} />}
 
       <div className={`${styles.body} liquid-glass-panel`}>
         <div className={styles.modeSwitcher}>
