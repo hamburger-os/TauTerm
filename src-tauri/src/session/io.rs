@@ -53,11 +53,14 @@ impl SessionIo {
         self.primary.as_ref()
     }
 
-    pub fn subscribe(&self) -> Result<DataPlaneSubscription, SessionIoError> {
+    pub fn subscribe(
+        &self,
+        consumer: impl Into<String>,
+    ) -> Result<DataPlaneSubscription, SessionIoError> {
         self.primary
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
-            .subscribe()
+            .subscribe(consumer)
             .map_err(Into::into)
     }
 
