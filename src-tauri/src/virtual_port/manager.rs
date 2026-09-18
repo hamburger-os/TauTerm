@@ -670,7 +670,7 @@ impl VirtualPortManager {
         })
     }
 
-    fn reconcile_owned_state(&mut self) -> Result<(), String> {
+    fn reconcile_owned_state_locked(&mut self) -> Result<(), String> {
         let driver = self.query_driver_state();
         if !driver.queried {
             return Err("cannot enumerate com0com state while reconciling ownership".into());
@@ -699,8 +699,13 @@ impl VirtualPortManager {
         Ok(())
     }
 
+    fn reconcile_owned_state(&mut self) -> Result<(), String> {
+        let _mutation = DriverMutationGuard::acquire()?;
+        self.reconcile_owned_state_locked()
+    }
+
     fn rollback_verified_endpoint(&mut self, endpoint: &VirtualEndpoint) {
-        if let Err(error) = self.destroy_endpoint_privileged(endpoint) {
+        if let Err(error) = self.destroy_endpoint_privileged_locked(endpoint) {
             log::warn!(
                 "Failed to roll back verified virtual endpoint {} ↔ {} (bus {}): {}",
                 endpoint.bridge_path,
@@ -916,7 +921,7 @@ impl VirtualPortManager {
         let _mutation = DriverMutationGuard::acquire()?;
 
         let count = config.count.clamp(1, 4);
-        self.reconcile_owned_state()?;
+        self.reconcile_owned_state_locked()?;
 
         // Fail before touching the driver if the protected ledger cannot be durably replaced.
         let ownership_snapshot = self.try_load_owned_records()?;
@@ -1089,6 +1094,26 @@ impl VirtualPortManager {
 
     fn destroy_endpoint_privileged(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
         let _mutation = DriverMutationGuard::acquire()?;
+        self.destroy_endpoint_privileged_locked(endpoint)
+    }
+
+    fn destroy_endpoint_privileged_locked(
+        &mut self,
+        endpoint: &VirtualEndpoint,
+    ) -> Result<(), String> {
+        let active_authorized = self.active_endpoints.contains(endpoint);
+        let owned = self.try_load_owned_records()?;
+        let reclaim_authorized = owned
+            .iter()
+            .find(|record| record.endpoint == *endpoint)
+            .is_some_and(|record| self.record_is_reclaimable(record));
+        if !active_authorized && !reclaim_authorized {
+            return Err(format!(
+                "refusing to remove virtual endpoint {} ↔ {} (bus {}): current protected ownership no longer authorizes this identity",
+                endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
+            ));
+        }
+
         let bus = endpoint.resource_id.to_string();
         let mut last_error = None;
 
