@@ -184,9 +184,14 @@ assert.ok(rttPlugin.includes("sendBarEnabled: true"));
 assert.ok(rttTarget.includes("selectRttSendChannel"));
 assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
 assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
+assert.ok(rttRuntime.includes("selectedChannel"), "RTT viewer Channel must remain plugin-local UI state");
 assert.ok(
-  rttRuntime.includes("selectedChannel") && rttRuntime.includes("selectedSendChannel"),
-  "RTT observation source and SendBar target must remain independent",
+  rttTarget.includes("runtime.snapshot?.send_channel"),
+  "RTT SendBar target must come from the runtime-authoritative snapshot",
+);
+assert.ok(
+  !rttRuntime.includes("selectedSendChannel"),
+  "RTT frontend must not reintroduce a second SendBar target authority",
 );
 
 const sessionContext = source("src/context/SessionContext.tsx");
