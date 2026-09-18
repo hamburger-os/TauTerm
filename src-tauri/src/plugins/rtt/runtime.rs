@@ -515,7 +515,15 @@ impl RttRuntime {
             data,
             reply: reply_tx,
         })
-        .map_err(|error| RttError::backend(format!("RTT 命令队列不可用: {error}")))?;
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => RttError::new(
+                RttErrorCode::RttWriteQueueFull,
+                "RTT 写入队列繁忙，请降低发送速率",
+            ),
+            mpsc::TrySendError::Disconnected(_) => {
+                RttError::new(RttErrorCode::Cancelled, "RTT worker 已停止")
+            }
+        })?;
         reply_rx
             .recv_timeout(
                 self.config
