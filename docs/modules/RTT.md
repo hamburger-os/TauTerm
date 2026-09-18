@@ -124,7 +124,7 @@ RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、Send tar
 
 连接成功边界是 backend 已打开、RTT 已完成 attach/定位并取得初始 Channel metadata；此前公共 Session 不发布 Connected。
 
-正常关闭按“停止接受新工作 → 请求 worker shutdown → flush presentation → backend shutdown → join → runtime registry detach”收敛。运行期 probe 拔出、目标掉电或 backend fatal error 会把 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开；异常断开可使用公共 `retain_terminal` 保留当前进程内只读现场。
+正常关闭按“停止接受新工作 → 请求 RTT worker shutdown → flush presentation → backend shutdown → runtime registry detach”收敛。共享 debug-target worker 使用有界 shutdown handshake：正常返回时 join；若底层 probe I/O 卡死超过边界，则断开命令队列并放弃阻塞等待，让 worker 在底层调用最终返回后自行退出，不能因为不可取消的 USB/debug 调用把应用关闭永久卡死。运行期 probe 拔出、目标掉电或 backend fatal error 会把 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开；异常断开可使用公共 `retain_terminal` 保留当前进程内只读现场。
 
 ## UI
 
