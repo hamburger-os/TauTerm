@@ -254,7 +254,7 @@ impl RttBackend for ProbeRsRttBackend {
         let rtt = Arc::clone(&self.rtt);
         let core_index = self.core_index;
         let data = data.to_vec();
-        self.target
+        self.service
             .execute(TARGET_OPERATION_TIMEOUT, move |probe| {
                 let mut core = probe.session_mut().core(core_index).map_err(|error| {
                     RttError::new(
