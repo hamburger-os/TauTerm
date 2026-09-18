@@ -119,7 +119,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           <span>{snapshot?.backend?.probe ?? "—"}</span>
           {snapshot?.backend?.target && <span>{snapshot.backend.target}</span>}
           {snapshot?.backend?.control_block_address != null && (
-            <span>CB 0x{snapshot.backend.control_block_address.toString(16)}</span>
+            <span>CB {snapshot.backend.control_block_address}</span>
           )}
         </div>
         <div className={styles.stats}>
