@@ -14,24 +14,25 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 
 use super::backend::{
-    contains_elevation_indicator, register_internal_endpoint_path,
-    unregister_internal_endpoint_path, VirtualEndpoint, VirtualPortBackend, VirtualPortConfig,
-    VirtualPortError,
+    register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
+    VirtualPortBackend, VirtualPortConfig, VirtualPortError,
 };
 
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
-use windows_sys::Win32::System::Threading::{
-    GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE,
 };
-use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+use windows_sys::Win32::System::Threading::{
+    CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const ERROR_CANCELLED: u32 = 1223;
 const WAIT_OBJECT_0: u32 = 0;
+const WAIT_ABANDONED: u32 = 0x0000_0080;
 const WAIT_TIMEOUT: u32 = 258;
-const ELEVATED_TIMEOUT_MS: u32 = 120_000;
+const MUTATION_LOCK_TIMEOUT_MS: u32 = 120_000;
 
 const SETUPC_TIMEOUT_SECS: u64 = 30;
 const COM_PORT_SCAN_START: u32 = 20;
@@ -55,9 +56,24 @@ fn is_reserved_port(port: u32) -> bool {
     (RESERVED_PORT_BASE..=RESERVED_PORT_END).contains(&port)
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+const OWNERSHIP_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OwnedEndpointRecord {
+    endpoint: VirtualEndpoint,
+    owner_pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedState {
-    owned_endpoints: Vec<VirtualEndpoint>,
+    schema_version: u32,
+    owned_endpoints: Vec<OwnedEndpointRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManagementMode {
+    Privileged,
+    DirectUac,
 }
 
 #[derive(Debug, Default)]
@@ -71,7 +87,9 @@ struct DriverState {
 pub struct VirtualPortManager {
     active_endpoints: HashSet<VirtualEndpoint>,
     resource_dir: PathBuf,
-    state_dir: Option<PathBuf>,
+    state_dir: PathBuf,
+    mode: ManagementMode,
+    owner_pid: Option<u32>,
 }
 
 fn normalize_windows_path(path: &Path) -> PathBuf {
@@ -83,69 +101,6 @@ fn normalize_windows_path(path: &Path) -> PathBuf {
     }
 }
 
-fn is_elevation_error(error: &str) -> bool {
-    contains_elevation_indicator(error)
-}
-
-fn is_elevation_output(output: &std::process::Output) -> bool {
-    let combined = format!(
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    contains_elevation_indicator(&combined)
-}
-
-fn output_detail(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.trim().is_empty() {
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
-    } else {
-        stderr.trim().to_string()
-    }
-}
-
-fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    let setupc = resource_dir.join("setupc.exe");
-    if !setupc.exists() {
-        return Err(format!("setupc.exe not found: {:?}", setupc));
-    }
-
-    let mut command = Command::new(&setupc);
-    command
-        .current_dir(resource_dir)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW);
-
-    let child = command
-        .spawn()
-        .map_err(|error| format!("Failed to spawn setupc.exe: {error}"))?;
-    let pid = child.id();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    match rx.recv_timeout(std::time::Duration::from_secs(SETUPC_TIMEOUT_SECS)) {
-        Ok(result) => result.map_err(|error| format!("setupc.exe execution failed: {error}")),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            log::warn!(
-                "setupc.exe (PID {}) timed out after {}s; terminating it",
-                pid,
-                SETUPC_TIMEOUT_SECS
-            );
-            let _ = Command::new("taskkill")
-                .args(["/F", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
-            Err("setupc.exe execution timed out".into())
-        }
-        Err(_) => Err("setupc.exe process exited abnormally".into()),
-    }
-}
-
 fn wide(value: &str) -> Vec<u16> {
     std::ffi::OsStr::new(value)
         .encode_wide()
@@ -153,149 +108,98 @@ fn wide(value: &str) -> Vec<u16> {
         .collect()
 }
 
-/// 用一次 UAC 执行受控批处理。批处理内容只由本模块生成，不接受 UI 传入命令。
-fn run_elevated(batch: &str) -> Result<(), String> {
-    let batch_path = std::env::temp_dir().join(format!(
-        "tauterm-elev-{}.cmd",
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::write(&batch_path, batch).map_err(|error| format!("写入临时批处理失败: {error}"))?;
+struct DriverMutationGuard {
+    handle: HANDLE,
+}
 
-    let verb = wide("runas");
-    let file = wide("cmd.exe");
-    let params = wide(&format!("/c \"{}\"", batch_path.display()));
-    let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
-    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-    sei.lpVerb = verb.as_ptr();
-    sei.lpFile = file.as_ptr();
-    sei.lpParameters = params.as_ptr();
-    sei.nShow = 0;
-
-    if unsafe { ShellExecuteExW(&mut sei) } == 0 {
-        let error = unsafe { GetLastError() };
-        let _ = std::fs::remove_file(&batch_path);
-        if error == ERROR_CANCELLED {
-            return Err("User cancelled the UAC elevation prompt".into());
+impl DriverMutationGuard {
+    fn acquire() -> Result<Self, String> {
+        let name = wide(r"Global\TauTermCom0comMutation");
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return Err(format!(
+                "failed to create com0com mutation mutex (Win32 {})",
+                unsafe { GetLastError() }
+            ));
         }
-        return Err(format!("提权启动失败 (win32 error {error})"));
+        let wait = unsafe { WaitForSingleObject(handle, MUTATION_LOCK_TIMEOUT_MS) };
+        if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
+            unsafe { CloseHandle(handle) };
+            if wait == WAIT_TIMEOUT {
+                return Err("timed out waiting for com0com mutation lock".into());
+            }
+            return Err(format!("failed waiting for com0com mutation lock ({wait})"));
+        }
+        Ok(Self { handle })
     }
-
-    let wait = if sei.hProcess.is_null() {
-        WAIT_OBJECT_0
-    } else {
-        unsafe { WaitForSingleObject(sei.hProcess, ELEVATED_TIMEOUT_MS) }
-    };
-    if wait == WAIT_TIMEOUT && !sei.hProcess.is_null() {
-        unsafe { TerminateProcess(sei.hProcess, 1) };
-    }
-
-    let mut exit_code = 0u32;
-    if !sei.hProcess.is_null() {
-        unsafe { GetExitCodeProcess(sei.hProcess, &mut exit_code) };
-        unsafe { CloseHandle(sei.hProcess) };
-    }
-    let _ = std::fs::remove_file(&batch_path);
-
-    if wait == WAIT_TIMEOUT {
-        return Err("提权操作超时".into());
-    }
-    if exit_code != 0 {
-        return Err(format!("提权操作失败 (exit code {exit_code})"));
-    }
-    Ok(())
 }
 
-/// 删除一个 TauTerm 已拥有的 bus。先在同一提权事务中确认 bus 仍存在：已经不存在
-/// 视为清理成功；仍存在时执行 remove，必要时解绑 COM 名称后重试。
-fn append_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
-    let done = format!("remove_done_{bus}");
-    batch.push_str(&format!(
-        "set \"TAUTERM_VPORT_LIST=%TEMP%\\tauterm-vport-list-%RANDOM%-%RANDOM%.txt\"\r\n\
-\"{setupc}\" list > \"%TAUTERM_VPORT_LIST%\" 2>&1\r\n\
-if errorlevel 1 (\r\n\
-  del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
-  exit /b 1\r\n\
-)\r\n\
-findstr /B /C:\"CNCA{bus} \" \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
-if errorlevel 1 (\r\n\
-  del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
-  goto {done}\r\n\
-)\r\n\
-del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1\r\n\
-\"{setupc}\" remove {bus} >nul 2>&1\r\n\
-if errorlevel 1 (\r\n\
-  \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n\
-  \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n\
-  ping -n 2 127.0.0.1 >nul\r\n\
-  \"{setupc}\" remove {bus} >nul 2>&1\r\n\
-  if errorlevel 1 exit /b 1\r\n\
-)\r\n\
-:{done}\r\n"
-    ));
-}
-fn append_best_effort_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
-    batch.push_str(&format!(
-        "\"{setupc}\" remove {bus} >nul 2>&1\r\n\
-if errorlevel 1 (\r\n\
-  \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n\
-  \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n\
-  ping -n 2 127.0.0.1 >nul\r\n\
-  \"{setupc}\" remove {bus} >nul 2>&1\r\n\
-)\r\n"
-    ));
+impl Drop for DriverMutationGuard {
+    fn drop(&mut self) {
+        unsafe {
+            ReleaseMutex(self.handle);
+            CloseHandle(self.handle);
+        }
+    }
 }
 
-fn build_elevated_create_batch(
-    resource: &str,
-    setupc: &str,
-    orphans: &[VirtualEndpoint],
-    pairs: &[VirtualEndpoint],
-) -> String {
-    let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
-    for orphan in orphans {
-        append_remove_batch(&mut batch, setupc, orphan.resource_id);
+fn process_is_running(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
     }
-    for endpoint in pairs {
-        batch.push_str(&format!(
-            "\"{setupc}\" install {bus} PortName={bridge},dsr=ropen PortName={external},PlugInMode=yes\r\n\
-if errorlevel 1 goto rollback\r\n",
-            bus = endpoint.resource_id,
-            bridge = endpoint.bridge_path,
-            external = endpoint.external_path
-        ));
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if !handle.is_null() {
+        unsafe { CloseHandle(handle) };
+        return true;
     }
-    batch.push_str("goto success\r\n:rollback\r\n");
-    for endpoint in pairs {
-        append_best_effort_remove_batch(&mut batch, setupc, endpoint.resource_id);
-    }
-    batch.push_str("exit /b 1\r\n:success\r\nexit /b 0\r\n");
-    batch
+    // Access denied/other lookup failures are treated as "possibly alive" so cleanup fails safe.
+    unsafe { GetLastError() } != ERROR_INVALID_PARAMETER
 }
 
 impl VirtualPortManager {
-    pub fn new(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
+    fn build(
+        resource_dir: PathBuf,
+        state_dir: PathBuf,
+        mode: ManagementMode,
+        owner_pid: Option<u32>,
+    ) -> Self {
         let manager = Self {
             active_endpoints: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
-            state_dir: Some(normalize_windows_path(&state_dir)),
+            state_dir: normalize_windows_path(&state_dir),
+            mode,
+            owner_pid,
         };
-        // 上次进程记录的 owned endpoint 在当前进程尚无 active owner，因此属于
-        // 待恢复/清理资源；同时隐藏其内部 bridge COM，避免出现在普通串口列表中。
         for endpoint in manager.load_owned_endpoints() {
             register_internal_endpoint_path(&endpoint.bridge_path);
         }
         manager
     }
 
-    /// 特权服务模式：生命周期由服务端 client_id 内存记账控制，不把未知驱动 bus
-    /// 视为自己的资源，也不在启动时扫描并删除第三方 com0com 端口对。
-    pub fn new_stateless(resource_dir: PathBuf) -> Self {
-        Self {
-            active_endpoints: HashSet::new(),
-            resource_dir: normalize_windows_path(&resource_dir),
-            state_dir: None,
-        }
+    pub fn new_privileged(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
+        Self::build(resource_dir, state_dir, ManagementMode::Privileged, None)
+    }
+
+    pub fn new_direct_uac(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
+        Self::build(
+            resource_dir,
+            state_dir,
+            ManagementMode::DirectUac,
+            Some(std::process::id()),
+        )
+    }
+
+    pub fn new_privileged_for_owner(
+        resource_dir: PathBuf,
+        state_dir: PathBuf,
+        owner_pid: u32,
+    ) -> Self {
+        Self::build(
+            resource_dir,
+            state_dir,
+            ManagementMode::Privileged,
+            Some(owner_pid),
+        )
     }
 
     pub fn resource_dir(&self) -> &PathBuf {
@@ -326,16 +230,12 @@ impl VirtualPortManager {
         super::windows_driver::is_com0com_driver_installed()
     }
 
-    fn state_path(&self) -> Option<PathBuf> {
-        self.state_dir
-            .as_ref()
-            .map(|directory| directory.join("com0com_state.json"))
+    fn state_path(&self) -> PathBuf {
+        self.state_dir.join("com0com_state.json")
     }
 
-    fn load_owned_endpoints(&self) -> Vec<VirtualEndpoint> {
-        let Some(path) = self.state_path() else {
-            return Vec::new();
-        };
+    fn load_owned_records(&self) -> Vec<OwnedEndpointRecord> {
+        let path = self.state_path();
         if !path.exists() {
             return Vec::new();
         }
@@ -348,32 +248,54 @@ impl VirtualPortManager {
             }
         };
         match serde_json::from_str::<PersistedState>(&content) {
-            Ok(mut state) => {
+            Ok(mut state) if state.schema_version == OWNERSHIP_SCHEMA_VERSION => {
                 state
                     .owned_endpoints
-                    .sort_by_key(|endpoint| endpoint.resource_id);
+                    .sort_by_key(|record| record.endpoint.resource_id);
                 state
                     .owned_endpoints
-                    .dedup_by_key(|endpoint| endpoint.resource_id);
+                    .dedup_by_key(|record| record.endpoint.resource_id);
                 state.owned_endpoints
             }
-            Err(error) => {
-                let backup = path.with_extension("json.bak");
-                let _ = std::fs::copy(&path, &backup);
-                log::warn!(
-                    "virtual-port ownership state has obsolete/corrupt schema ({error}); backed up to {:?}",
-                    backup
+            Ok(state) => {
+                self.reset_obsolete_state(
+                    &path,
+                    &format!(
+                        "unsupported schema version {} (expected {})",
+                        state.schema_version, OWNERSHIP_SCHEMA_VERSION
+                    ),
                 );
-                self.persist_owned_endpoints(&[]);
+                Vec::new()
+            }
+            Err(error) => {
+                self.reset_obsolete_state(&path, &error.to_string());
                 Vec::new()
             }
         }
     }
 
-    fn persist_owned_endpoints(&self, endpoints: &[VirtualEndpoint]) {
-        let Some(path) = self.state_path() else {
-            return;
-        };
+    fn reset_obsolete_state(&self, path: &Path, reason: &str) {
+        let backup = path.with_extension(format!(
+            "json.{}.bak",
+            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+        ));
+        let _ = std::fs::copy(path, &backup);
+        log::warn!(
+            "virtual-port ownership state has obsolete/corrupt schema ({reason}); backed up to {:?} and reset",
+            backup
+        );
+        self.persist_owned_records(&[]);
+    }
+
+    fn load_owned_endpoints(&self) -> Vec<VirtualEndpoint> {
+        self.load_owned_records()
+            .into_iter()
+            .map(|record| record.endpoint)
+            .collect()
+    }
+
+    fn persist_owned_records(&self, records: &[OwnedEndpointRecord]) {
+        let path = self.state_path();
         if let Some(parent) = path.parent() {
             if let Err(error) = std::fs::create_dir_all(parent) {
                 log::warn!("Failed to create virtual-port state directory: {error}");
@@ -381,10 +303,11 @@ impl VirtualPortManager {
             }
         }
 
-        let mut owned = endpoints.to_vec();
-        owned.sort_by_key(|endpoint| endpoint.resource_id);
-        owned.dedup_by_key(|endpoint| endpoint.resource_id);
+        let mut owned = records.to_vec();
+        owned.sort_by_key(|record| record.endpoint.resource_id);
+        owned.dedup_by_key(|record| record.endpoint.resource_id);
         let state = PersistedState {
+            schema_version: OWNERSHIP_SCHEMA_VERSION,
             owned_endpoints: owned,
         };
         let json = match serde_json::to_string(&state) {
@@ -411,13 +334,16 @@ impl VirtualPortManager {
         if endpoints.is_empty() {
             return;
         }
-        let mut owned = self.load_owned_endpoints();
+        let mut owned = self.load_owned_records();
         for endpoint in endpoints {
             register_internal_endpoint_path(&endpoint.bridge_path);
-            owned.retain(|existing| existing.resource_id != endpoint.resource_id);
-            owned.push(endpoint.clone());
+            owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
+            owned.push(OwnedEndpointRecord {
+                endpoint: endpoint.clone(),
+                owner_pid: self.owner_pid,
+            });
         }
-        self.persist_owned_endpoints(&owned);
+        self.persist_owned_records(&owned);
     }
 
     fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) {
@@ -427,17 +353,23 @@ impl VirtualPortManager {
         self.remember_owned_endpoints(std::slice::from_ref(&endpoint));
     }
 
+    fn adopt_active_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
+        for endpoint in endpoints {
+            self.track_active_endpoint(endpoint.clone());
+        }
+    }
+
     fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
-        let mut owned = self.load_owned_endpoints();
+        let mut owned = self.load_owned_records();
         let removed_paths = owned
             .iter()
-            .filter(|existing| existing.resource_id == endpoint.resource_id)
-            .map(|existing| existing.bridge_path.clone())
+            .filter(|existing| existing.endpoint.resource_id == endpoint.resource_id)
+            .map(|existing| existing.endpoint.bridge_path.clone())
             .collect::<Vec<_>>();
-        owned.retain(|existing| existing.resource_id != endpoint.resource_id);
-        self.persist_owned_endpoints(&owned);
+        owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
+        self.persist_owned_records(&owned);
 
         if removed_paths.is_empty() {
             unregister_internal_endpoint_path(&endpoint.bridge_path);
@@ -454,20 +386,35 @@ impl VirtualPortManager {
         self.remember_owned_endpoints(std::slice::from_ref(endpoint));
     }
 
-    fn orphan_endpoints(&self) -> Vec<VirtualEndpoint> {
-        let active_ids = self
+    fn record_is_reclaimable(&self, record: &OwnedEndpointRecord) -> bool {
+        if self
             .active_endpoints
             .iter()
-            .map(|endpoint| endpoint.resource_id)
-            .collect::<HashSet<_>>();
-        self.load_owned_endpoints()
+            .any(|active| active.resource_id == record.endpoint.resource_id)
+        {
+            return false;
+        }
+        match record.owner_pid {
+            Some(pid) if Some(pid) != self.owner_pid && process_is_running(pid) => false,
+            _ => true,
+        }
+    }
+
+    fn orphan_endpoints(&self) -> Vec<VirtualEndpoint> {
+        self.load_owned_records()
             .into_iter()
-            .filter(|endpoint| !active_ids.contains(&endpoint.resource_id))
+            .filter(|record| self.record_is_reclaimable(record))
+            .map(|record| record.endpoint)
             .collect()
     }
 
-    /// 不启动 setupc 的本地状态，只包含 TauTerm 自己的 ownership。用于 direct-UAC
-    /// fallback 在提权前分配候选 bus/COM，避免普通进程产生必然的 740 探测噪声。
+    pub(crate) fn is_reclaimable_owned_endpoint(&self, endpoint: &VirtualEndpoint) -> bool {
+        self.load_owned_records().into_iter().any(|record| {
+            record.endpoint == *endpoint && self.record_is_reclaimable(&record)
+        })
+    }
+
+    /// 不启动 setupc 的本地 ownership 投影，仅用于冲突避让与恢复判断。
     fn local_driver_state(&self) -> DriverState {
         let mut state = DriverState::default();
         for endpoint in self.load_owned_endpoints() {
@@ -532,6 +479,39 @@ impl VirtualPortManager {
         state
     }
 
+    fn resolve_installed_bus(&self, bridge_path: &str, external_path: &str) -> Option<u32> {
+        let output = run_setupc(&self.resource_dir, &["list"]).ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let mut bridge_bus = None;
+        let mut external_bus = None;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let trimmed = line.trim();
+            let port_name = trimmed
+                .split("PortName=")
+                .nth(1)
+                .and_then(|value| value.split(',').next())
+                .map(str::trim);
+            let parse_bus = |prefix: &str| {
+                trimmed
+                    .strip_prefix(prefix)
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .and_then(|value| value.parse::<u32>().ok())
+            };
+            if port_name == Some(bridge_path) {
+                bridge_bus = parse_bus("CNCA");
+            }
+            if port_name == Some(external_path) {
+                external_bus = parse_bus("CNCB");
+            }
+        }
+        match (bridge_bus, external_bus) {
+            (Some(a), Some(b)) if a == b && !is_reserved_bus(a) => Some(a),
+            _ => None,
+        }
+    }
+
     fn reconcile_orphan_state(&mut self) {
         let driver = self.query_driver_state();
         if !driver.queried {
@@ -586,8 +566,8 @@ impl VirtualPortManager {
         bus
     }
 
-    /// 仅供已提权上下文（TauTermService）直接安装驱动。
-    pub fn install_driver(&mut self) -> Result<(), String> {
+    fn install_driver_privileged(&mut self) -> Result<(), String> {
+        let _mutation = DriverMutationGuard::acquire()?;
         if self.detect_driver() {
             return Ok(());
         }
@@ -609,30 +589,15 @@ impl VirtualPortManager {
         Ok(())
     }
 
-    pub fn install_driver_elevated(&mut self) -> Result<(), String> {
-        if self.detect_driver() {
-            return Ok(());
+    pub fn install_driver(&mut self) -> Result<(), String> {
+        match self.mode {
+            ManagementMode::Privileged => self.install_driver_privileged(),
+            ManagementMode::DirectUac => {
+                super::elevated::ensure_driver(&self.resource_dir, &self.state_dir)
+            }
         }
-        if !self.are_files_present() {
-            return Err("com0com driver files missing".into());
-        }
-
-        let driver = self.local_driver_state();
-        let bus = self.next_free_bus(&driver);
-        let setupc = self.setupc_path().display().to_string();
-        let resource = self.resource_dir.display().to_string();
-        let batch = format!(
-            "@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n\
-\"{setupc}\" install {bus} - - >nul 2>&1\r\n\
-if errorlevel 1 exit /b 1\r\n\
-\"{setupc}\" remove {bus} >nul 2>&1\r\n\
-exit /b 0\r\n"
-        );
-        run_elevated(&batch)
     }
 
-    /// direct-uac-on-demand 的唯一创建入口。普通 GUI 不先运行 setupc 探测；驱动缺失
-    /// 时安装与 endpoint 创建都在用户明确操作触发的提权事务中完成。
     pub fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
@@ -643,16 +608,34 @@ exit /b 0\r\n"
         if !self.are_files_present() {
             return Err(VirtualPortError::FilesMissing);
         }
-        if !self.detect_driver() {
-            self.install_driver_elevated()
+
+        match self.mode {
+            ManagementMode::DirectUac => {
+                let cleanup = self.orphan_endpoints();
+                let endpoints = super::elevated::ensure_endpoints(
+                    &self.resource_dir,
+                    &self.state_dir,
+                    config.count.clamp(1, 4),
+                    cleanup,
+                )
                 .map_err(VirtualPortError::from_backend)?;
-            if !self.detect_driver() {
-                return Err(VirtualPortError::DriverMissing);
+                self.adopt_active_endpoints(&endpoints);
+                Ok(endpoints)
+            }
+            ManagementMode::Privileged => {
+                if !self.detect_driver() {
+                    self.install_driver_privileged()
+                        .map_err(VirtualPortError::from_backend)?;
+                    if !self.detect_driver() {
+                        return Err(VirtualPortError::DriverMissing);
+                    }
+                }
+                self.create_endpoints_privileged(config)
+                    .map_err(VirtualPortError::from_backend)
             }
         }
-        self.create_endpoints_elevated(config)
-            .map_err(VirtualPortError::from_backend)
     }
+
     /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身或 TauTerm ownership。
     pub fn find_available_port_pairs(count: u32, extra_occupied: &HashSet<u32>) -> Vec<(u32, u32)> {
         let mut in_use = serialport::available_ports()
@@ -701,7 +684,7 @@ exit /b 0\r\n"
     }
 
     /// 已提权上下文（TauTermService）使用的直接创建路径。
-    pub fn create_endpoints(
+    fn create_endpoints_privileged(
         &mut self,
         config: &VirtualPortConfig,
     ) -> Result<Vec<VirtualEndpoint>, String> {
@@ -711,6 +694,7 @@ exit /b 0\r\n"
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
+        let _mutation = DriverMutationGuard::acquire()?;
 
         let count = config.count.clamp(1, 4);
         let driver = self.query_driver_state();
@@ -745,6 +729,16 @@ exit /b 0\r\n"
                 &["install", &bus_arg, &bridge_arg, &external_arg],
             ) {
                 Ok(output) if output.status.success() => {
+                    let actual_bus = self
+                        .resolve_installed_bus(&endpoint.bridge_path, &endpoint.external_path)
+                        .ok_or_else(|| {
+                            format!(
+                                "setupc reported success but the requested mapping {} ↔ {} was not present",
+                                endpoint.bridge_path, endpoint.external_path
+                            )
+                        })?;
+                    let mut endpoint = endpoint;
+                    endpoint.resource_id = actual_bus;
                     log::info!(
                         "Virtual port pair created: {} ↔ {} (bus {})",
                         endpoint.bridge_path,
@@ -753,13 +747,7 @@ exit /b 0\r\n"
                     );
                     self.track_active_endpoint(endpoint.clone());
                     pairs.push(endpoint);
-                    bus = self.next_bus_after(bus, &driver);
-                }
-                Ok(output) if is_elevation_output(&output) => {
-                    for created in pairs.clone() {
-                        let _ = self.destroy_endpoint(&created);
-                    }
-                    return Err(output_detail(&output));
+                    bus = self.next_bus_after(actual_bus, &driver);
                 }
                 Ok(output) => {
                     let detail = output_detail(&output);
@@ -811,102 +799,19 @@ exit /b 0\r\n"
         Ok(pairs)
     }
 
-    /// GUI direct fallback 的显式 UAC 创建路径。提权前只使用普通串口枚举与 TauTerm
-    /// ownership；不运行 setupc list，因此不会为了“先探测一下”制造 740 日志。
-    pub fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        if !config.enabled || config.count == 0 {
-            return Ok(Vec::new());
-        }
-        if !self.are_files_present() {
-            return Err("com0com driver files missing".into());
-        }
-
-        let orphans = self.orphan_endpoints();
-        let count = config.count.clamp(1, 4);
-        let driver = self.local_driver_state();
-        let candidates = Self::find_available_port_pairs(count, &driver.occupied_ports);
-        if candidates.len() < count as usize {
-            return Err("No available COM port pairs".into());
-        }
-
-        let mut next_bus = self.next_free_bus(&driver);
-        let mut pairs = Vec::new();
-        for (bridge_number, external_number) in candidates.into_iter().take(count as usize) {
-            pairs.push(VirtualEndpoint {
-                bridge_path: format!("COM{bridge_number}"),
-                external_path: format!("COM{external_number}"),
-                resource_id: next_bus,
-            });
-            next_bus = self.next_bus_after(next_bus, &driver);
-        }
-
-        // 在启动提权子进程前先登记 ownership。即使进程超时/被终止，任何已经安装但
-        // 来不及 rollback 的资源也不会成为 TauTerm 完全无法追踪的未知端口。
-        self.remember_owned_endpoints(&pairs);
-
-        let setupc = self.setupc_path().display().to_string();
-        let resource = self.resource_dir.display().to_string();
-        let batch = build_elevated_create_batch(&resource, &setupc, &orphans, &pairs);
-
-        if let Err(error) = run_elevated(&batch) {
-            if error.to_lowercase().contains("cancel") {
-                // UAC 被取消时子进程从未运行，因此这些预登记目标一定不存在。
-                for endpoint in &pairs {
-                    self.forget_owned_endpoint(endpoint);
-                }
-                return Err("User cancelled the UAC elevation prompt".to_string());
-            }
-
-            // 批处理正常失败会执行 best-effort rollback；超时/异常终止则可能只完成
-            // 部分操作。此时保留 ownership，交给下一次显式 cleanup 安全核对/回收。
-            return Err(format!("Elevated virtual-port creation failed: {error}"));
-        }
-
-        // 同一提权事务已确认 orphan 不存在或已成功清理。
-        for orphan in &orphans {
-            self.forget_owned_endpoint(orphan);
-        }
-        for endpoint in &pairs {
-            self.track_active_endpoint(endpoint.clone());
-        }
-        Ok(pairs)
-    }
-
-    pub fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
-        if !self.are_files_present() {
-            return Err("com0com driver files missing".into());
-        }
-        let orphans = self.orphan_endpoints();
-        if orphans.is_empty() {
-            return Ok(0);
-        }
-
-        let setupc = self.setupc_path().display().to_string();
-        let resource = self.resource_dir.display().to_string();
-        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
-        for orphan in &orphans {
-            append_remove_batch(&mut batch, &setupc, orphan.resource_id);
-        }
-        batch.push_str("exit /b 0\r\n");
-
-        run_elevated(&batch).map_err(|error| {
-            if error.to_lowercase().contains("cancel") {
-                "User cancelled the UAC elevation prompt".to_string()
-            } else {
-                format!("Elevated virtual-port cleanup failed: {error}")
-            }
-        })?;
-
-        for orphan in &orphans {
-            self.forget_owned_endpoint(orphan);
-        }
-        Ok(orphans.len() as u32)
-    }
-
     pub fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
+        if self.mode == ManagementMode::DirectUac {
+            // Disconnect must stay non-interactive. Keep ownership and let the next explicit
+            // create/cleanup action reclaim the endpoint through the one-shot helper.
+            self.defer_cleanup(endpoint);
+            return Ok(());
+        }
+        self.destroy_endpoint_privileged(endpoint)
+    }
+
+    fn destroy_endpoint_privileged(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
+        let _mutation = DriverMutationGuard::acquire()?;
+
         let bus = endpoint.resource_id.to_string();
 
         match run_setupc(&self.resource_dir, &["remove", &bus]) {
@@ -917,14 +822,6 @@ exit /b 0\r\n"
                     endpoint.bridge_path,
                     endpoint.external_path
                 );
-                return Ok(());
-            }
-            Err(error) if is_elevation_error(&error) => {
-                self.defer_cleanup(endpoint);
-                return Ok(());
-            }
-            Ok(output) if is_elevation_output(&output) => {
-                self.defer_cleanup(endpoint);
                 return Ok(());
             }
             Err(error) => {
@@ -957,14 +854,6 @@ exit /b 0\r\n"
                     );
                     return Ok(());
                 }
-                Err(error) if is_elevation_error(&error) => {
-                    self.defer_cleanup(endpoint);
-                    return Ok(());
-                }
-                Ok(output) if is_elevation_output(&output) => {
-                    self.defer_cleanup(endpoint);
-                    return Ok(());
-                }
                 Ok(_) | Err(_) if attempt + 1 < DESTROY_STAGE2_RETRY_COUNT => {
                     std::thread::sleep(std::time::Duration::from_millis(
                         DESTROY_STAGE2_RETRY_DELAY_MS,
@@ -990,10 +879,17 @@ exit /b 0\r\n"
     }
 
     pub fn cleanup_all(&mut self) {
-        for endpoint in self.active_endpoints.iter().cloned().collect::<Vec<_>>() {
-            if let Err(error) = self.destroy_endpoint(&endpoint) {
+        let active = self.active_endpoints.iter().cloned().collect::<Vec<_>>();
+        for endpoint in active {
+            let result = if self.mode == ManagementMode::DirectUac {
+                self.defer_cleanup(&endpoint);
+                Ok(())
+            } else {
+                self.destroy_endpoint_privileged(&endpoint)
+            };
+            if let Err(error) = result {
                 log::warn!(
-                    "Failed to destroy virtual endpoint {} ↔ {}: {}",
+                    "Failed to release virtual endpoint {} ↔ {}: {}",
                     endpoint.bridge_path,
                     endpoint.external_path,
                     error
@@ -1010,19 +906,31 @@ exit /b 0\r\n"
         }
     }
 
-    /// 清理上一个进程遗留的、且能证明属于 TauTerm 的端口对。该直接路径只适用于
-    /// 特权服务上下文；GUI fallback 使用 `cleanup_endpoints_elevated`。
-    pub fn cleanup_orphans(&mut self) -> u32 {
-        if self.state_dir.is_none() {
-            return 0;
+    pub fn cleanup_orphans(&mut self) -> Result<u32, String> {
+        let orphans = self.orphan_endpoints();
+        if orphans.is_empty() {
+            return Ok(0);
         }
+
+        if self.mode == ManagementMode::DirectUac {
+            let cleaned = super::elevated::cleanup_endpoints(
+                &self.resource_dir,
+                &self.state_dir,
+                orphans.clone(),
+            )?;
+            for endpoint in &orphans {
+                self.forget_owned_endpoint(endpoint);
+            }
+            return Ok(cleaned);
+        }
+
         self.reconcile_orphan_state();
         let orphans = self.orphan_endpoints();
         let total = orphans.len();
         let mut cleaned = 0u32;
         for endpoint in orphans {
             let resource_id = endpoint.resource_id;
-            if self.destroy_endpoint(&endpoint).is_ok()
+            if self.destroy_endpoint_privileged(&endpoint).is_ok()
                 && !self
                     .orphan_endpoints()
                     .iter()
@@ -1034,8 +942,9 @@ exit /b 0\r\n"
         if cleaned > 0 {
             log::info!("Orphan virtual-port cleanup completed: {cleaned}/{total}");
         }
-        cleaned
+        Ok(cleaned)
     }
+
 }
 
 impl VirtualPortBackend for VirtualPortManager {
