@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
@@ -13,7 +13,6 @@ pub enum FirmwareArtifactError {
 /// interpreted by their respective domain modules instead of turning this into a universal parser.
 #[derive(Clone)]
 pub struct FirmwareArtifact {
-    path: PathBuf,
     bytes: Arc<[u8]>,
 }
 
@@ -25,13 +24,8 @@ impl FirmwareArtifact {
             detail: error.to_string(),
         })?;
         Ok(Self {
-            path: path.to_path_buf(),
             bytes: Arc::from(bytes),
         })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn bytes(&self) -> &[u8] {
