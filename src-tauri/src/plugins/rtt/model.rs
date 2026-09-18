@@ -50,6 +50,10 @@ pub struct RttSnapshot {
     pub phase: RttPhase,
     pub backend: Option<RttBackendDescriptor>,
     pub channels: Vec<RttChannelInfo>,
+    /// Runtime-authoritative Up Channel used when new automation consumers subscribe.
+    pub automation_source_channel: Option<u32>,
+    /// Runtime-authoritative Down Channel used by shared SendBar/AutomationIo.
+    pub send_channel: Option<u32>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub dropped_history_bytes: u64,
@@ -70,6 +74,8 @@ impl Default for RttSnapshot {
             phase: RttPhase::Idle,
             backend: None,
             channels: Vec::new(),
+            automation_source_channel: None,
+            send_channel: None,
             rx_bytes: 0,
             tx_bytes: 0,
             dropped_history_bytes: 0,
