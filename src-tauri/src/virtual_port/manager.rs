@@ -1322,11 +1322,11 @@ mod tests {
     fn active_owned_endpoint_is_not_orphan() {
         let (mut manager, root) = test_manager();
         let endpoint = sample_endpoint(1);
-        manager.track_active_endpoint(endpoint.clone());
+        manager.track_active_endpoint(endpoint.clone()).unwrap();
         assert_eq!(manager.pending_orphan_count(), 0);
-        manager.defer_cleanup(&endpoint);
+        manager.defer_cleanup(&endpoint).unwrap();
         assert_eq!(manager.pending_orphan_count(), 1);
-        manager.forget_owned_endpoint(&endpoint);
+        manager.forget_owned_endpoint(&endpoint).unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1334,13 +1334,13 @@ mod tests {
     fn current_schema_records_owner_pid() {
         let (mut manager, root) = test_manager();
         let endpoint = sample_endpoint(2);
-        manager.track_active_endpoint(endpoint.clone());
+        manager.track_active_endpoint(endpoint.clone()).unwrap();
         let raw = std::fs::read_to_string(manager.state_path()).unwrap();
         let state: PersistedState = serde_json::from_str(&raw).unwrap();
         assert_eq!(state.schema_version, OWNERSHIP_SCHEMA_VERSION);
         assert_eq!(state.owned_endpoints.len(), 1);
         assert_eq!(state.owned_endpoints[0].owner_pid, Some(std::process::id()));
-        manager.forget_owned_endpoint(&endpoint);
+        manager.forget_owned_endpoint(&endpoint).unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1373,7 +1373,9 @@ mod tests {
             std::process::id(),
         );
         let endpoint = sample_endpoint(3);
-        writer.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+        writer
+            .remember_owned_endpoints(std::slice::from_ref(&endpoint))
+            .unwrap();
         drop(writer);
 
         let reader = VirtualPortManager::build(
@@ -1391,15 +1393,15 @@ mod tests {
         let (mut manager, root) = test_manager();
         let first = sample_endpoint(4);
         let second = sample_endpoint(5);
-        manager.track_active_endpoint(first.clone());
-        manager.track_active_endpoint(second.clone());
-        manager.defer_cleanup(&first);
-        manager.defer_cleanup(&second);
-        manager.forget_owned_endpoint(&first);
+        manager.track_active_endpoint(first.clone()).unwrap();
+        manager.track_active_endpoint(second.clone()).unwrap();
+        manager.defer_cleanup(&first).unwrap();
+        manager.defer_cleanup(&second).unwrap();
+        manager.forget_owned_endpoint(&first).unwrap();
 
         let owned = manager.load_owned_endpoints();
         assert_eq!(owned, vec![second.clone()]);
-        manager.forget_owned_endpoint(&second);
+        manager.forget_owned_endpoint(&second).unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
