@@ -94,7 +94,6 @@ impl DriverEndpointIdentity {
 #[derive(Debug, Default)]
 struct DriverState {
     occupied_ports: HashSet<u32>,
-    buses: HashSet<u32>,
     actual_buses: HashSet<u32>,
     endpoints_by_bus: HashMap<u32, DriverEndpointIdentity>,
     max_bus: Option<u32>,
@@ -578,7 +577,6 @@ impl VirtualPortManager {
 
                     if let Some((prefix, bus)) = parsed {
                         if !is_reserved_bus(bus) {
-                            state.buses.insert(bus);
                             state.actual_buses.insert(bus);
                             state.max_bus =
                                 Some(state.max_bus.map_or(bus, |current| current.max(bus)));
