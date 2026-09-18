@@ -171,10 +171,7 @@ impl DebugTargetRuntime {
 impl Drop for DebugTargetRuntime {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        let join_safe = match self
-            .command_tx
-            .try_send(TargetCommand::Shutdown(reply_tx))
-        {
+        let join_safe = match self.command_tx.try_send(TargetCommand::Shutdown(reply_tx)) {
             Ok(()) => reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok(),
             Err(mpsc::TrySendError::Disconnected(_)) => true,
             Err(mpsc::TrySendError::Full(_)) => false,
