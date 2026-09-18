@@ -210,7 +210,7 @@ impl Drop for DebugServiceLease {
         };
         if let Ok(mut active) = runtime.active_services.lock() {
             active.remove(&self.service);
-        }
+        };
     }
 }
 
