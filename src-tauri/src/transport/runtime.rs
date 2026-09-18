@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crate::transport::error::{TransportError, TransportErrorKind};
@@ -17,6 +17,24 @@ const SUBSCRIPTION_CAPACITY: usize = 256;
 pub enum DataPlaneEvent {
     Data(Vec<u8>),
     Closed(TransportCloseInfo),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataPlaneSubscriptionEnd {
+    BacklogExceeded { capacity_messages: usize },
+    RuntimeStopped,
+}
+
+impl std::fmt::Display for DataPlaneSubscriptionEnd {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BacklogExceeded { capacity_messages } => write!(
+                formatter,
+                "bounded backlog exceeded (capacity_messages={capacity_messages})"
+            ),
+            Self::RuntimeStopped => formatter.write_str("transport runtime stopped"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -57,12 +75,24 @@ pub struct DataPlaneSubscription {
     id: u64,
     command_tx: mpsc::SyncSender<RuntimeCommand>,
     receiver: mpsc::Receiver<DataPlaneEvent>,
+    disconnect_reason: Arc<Mutex<Option<DataPlaneSubscriptionEnd>>>,
+}
+
+impl DataPlaneSubscription {
+    pub fn disconnect_reason(&self) -> Option<DataPlaneSubscriptionEnd> {
+        self.disconnect_reason
+            .lock()
+            .ok()
+            .and_then(|reason| reason.clone())
+    }
 }
 
 struct RuntimeSubscriber {
     id: u64,
     consumer: String,
+    capacity_messages: usize,
     sender: mpsc::SyncSender<DataPlaneEvent>,
+    disconnect_reason: Arc<Mutex<Option<DataPlaneSubscriptionEnd>>>,
 }
 
 impl Deref for DataPlaneSubscription {
@@ -148,19 +178,39 @@ impl DataPlaneHandle {
         &self,
         consumer: impl Into<String>,
     ) -> Result<DataPlaneSubscription, TransportError> {
+        self.subscribe_with_capacity(consumer, SUBSCRIPTION_CAPACITY)
+    }
+
+    pub fn subscribe_with_capacity(
+        &self,
+        consumer: impl Into<String>,
+        capacity_messages: usize,
+    ) -> Result<DataPlaneSubscription, TransportError> {
+        if capacity_messages == 0 {
+            return Err(TransportError::new(
+                TransportErrorKind::InvalidInput,
+                "subscribe",
+                "subscription capacity must be greater than zero",
+            ));
+        }
         let id = next_subscription_id();
-        let (event_tx, event_rx) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
+        let consumer = consumer.into();
+        let disconnect_reason = Arc::new(Mutex::new(None));
+        let (event_tx, event_rx) = mpsc::sync_channel(capacity_messages);
         self.command_tx
             .send(RuntimeCommand::Subscribe {
                 id,
-                consumer: consumer.into(),
+                consumer,
+                capacity_messages,
                 subscriber: event_tx,
+                disconnect_reason: disconnect_reason.clone(),
             })
             .map_err(|_| runtime_closed("subscribe"))?;
         Ok(DataPlaneSubscription {
             id,
             command_tx: self.command_tx.clone(),
             receiver: event_rx,
+            disconnect_reason,
         })
     }
 
@@ -544,7 +594,9 @@ enum RuntimeCommand {
     Subscribe {
         id: u64,
         consumer: String,
+        capacity_messages: usize,
         subscriber: mpsc::SyncSender<DataPlaneEvent>,
+        disconnect_reason: Arc<Mutex<Option<DataPlaneSubscriptionEnd>>>,
     },
     Unsubscribe {
         id: u64,
@@ -628,6 +680,17 @@ fn apply_command_outcome(
     }
 }
 
+fn set_subscription_end(
+    slot: &Arc<Mutex<Option<DataPlaneSubscriptionEnd>>>,
+    reason: DataPlaneSubscriptionEnd,
+) {
+    if let Ok(mut current) = slot.lock() {
+        if current.is_none() {
+            *current = Some(reason);
+        }
+    }
+}
+
 fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
     if data.is_empty() {
         return;
@@ -651,10 +714,17 @@ fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
             {
                 Ok(()) => true,
                 Err(mpsc::TrySendError::Full(_)) => {
+                    set_subscription_end(
+                        &subscriber.disconnect_reason,
+                        DataPlaneSubscriptionEnd::BacklogExceeded {
+                            capacity_messages: subscriber.capacity_messages,
+                        },
+                    );
                     log::warn!(
-                        "DataPlane subscriber {} ({}) exceeded bounded backlog; detaching consumer",
+                        "DataPlane subscriber {} ({}) exceeded bounded backlog (capacity_messages={}); detaching consumer",
                         subscriber.id,
-                        subscriber.consumer
+                        subscriber.consumer,
+                        subscriber.capacity_messages
                     );
                     false
                 }
@@ -834,6 +904,12 @@ fn run_blocking_runtime(
         }
     }
 
+    for subscriber in &state.subscribers {
+        set_subscription_end(
+            &subscriber.disconnect_reason,
+            DataPlaneSubscriptionEnd::RuntimeStopped,
+        );
+    }
     exclusive_active.store(false, Ordering::Release);
     connected.store(false, Ordering::Release);
     if !driver_shutdown {
@@ -887,7 +963,9 @@ fn handle_command(
         RuntimeCommand::Subscribe {
             id,
             consumer,
+            capacity_messages,
             subscriber,
+            disconnect_reason,
         } => {
             // A new subscription has an empty bounded queue. Coalesce the bounded startup backlog
             // into one event so many tiny pre-subscribe reads cannot exhaust queue slots before the
@@ -902,13 +980,24 @@ fn handle_command(
                 state.startup_buffer_bytes = 0;
                 Some(data)
             };
-            let alive =
-                startup.is_none_or(|data| subscriber.try_send(DataPlaneEvent::Data(data)).is_ok());
+            let alive = startup.is_none_or(|data| match subscriber.try_send(DataPlaneEvent::Data(data)) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    set_subscription_end(
+                        &disconnect_reason,
+                        DataPlaneSubscriptionEnd::BacklogExceeded { capacity_messages },
+                    );
+                    false
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => false,
+            });
             if alive {
                 state.subscribers.push(RuntimeSubscriber {
                     id,
                     consumer,
+                    capacity_messages,
                     sender: subscriber,
+                    disconnect_reason,
                 });
             }
             CommandOutcome::Continue
@@ -1057,10 +1146,17 @@ fn broadcast_close(subscribers: &mut Vec<RuntimeSubscriber>, info: TransportClos
         {
             Ok(()) => true,
             Err(mpsc::TrySendError::Full(_)) => {
+                set_subscription_end(
+                    &subscriber.disconnect_reason,
+                    DataPlaneSubscriptionEnd::BacklogExceeded {
+                        capacity_messages: subscriber.capacity_messages,
+                    },
+                );
                 log::warn!(
-                    "DataPlane subscriber {} ({}) backlog was full while closing; detaching consumer",
+                    "DataPlane subscriber {} ({}) backlog was full while closing (capacity_messages={}); detaching consumer",
                     subscriber.id,
-                    subscriber.consumer
+                    subscriber.consumer,
+                    subscriber.capacity_messages
                 );
                 false
             }
