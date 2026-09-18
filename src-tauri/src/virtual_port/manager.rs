@@ -1311,6 +1311,28 @@ mod tests {
     }
 
     #[test]
+    fn driver_identity_requires_both_exact_com_paths() {
+        let endpoint = sample_endpoint(6);
+        let exact = DriverEndpointIdentity {
+            bridge_path: Some(endpoint.bridge_path.clone()),
+            external_path: Some(endpoint.external_path.clone()),
+        };
+        assert!(exact.matches(&endpoint));
+
+        let reused_bus = DriverEndpointIdentity {
+            bridge_path: Some(endpoint.bridge_path.clone()),
+            external_path: Some("COM199".into()),
+        };
+        assert!(!reused_bus.matches(&endpoint));
+
+        let incomplete = DriverEndpointIdentity {
+            bridge_path: Some(endpoint.bridge_path.clone()),
+            external_path: None,
+        };
+        assert!(!incomplete.matches(&endpoint));
+    }
+
+    #[test]
     fn reserved_region_is_never_allocated() {
         let occupied = (20..199).collect::<HashSet<_>>();
         let pairs = VirtualPortManager::find_available_port_pairs(2, &occupied);
