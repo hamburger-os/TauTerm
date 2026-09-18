@@ -42,14 +42,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
-  const normalizedPreviewParams = selectedPlugin?.normalizeConnectionParams?.(pluginParams) ?? pluginParams;
-  const presentationDefaultSessionName = selectedPlugin?.sessionPresentation
-    ?.defaultName?.(normalizedPreviewParams, endpoint)
-    ?.trim() ?? "";
   const sessionNamePlaceholder = resolvedDefaultSessionName
-    || presentationDefaultSessionName
-    || selectedPlugin?.manifest.name
-    || "Session";
+    || (selectedMode ? pluginRegistry.getSessionDefaultName(selectedMode, pluginParams, endpoint) : "Session");
   const modeEndpoints = state.endpoints.filter(item => item.connection_type === selectedMode);
   const pluginConnectionConfigValid = selectedPlugin?.isConnectionConfigValid?.(pluginParams, endpoint) !== false;
   const canResolveEndpoint = Boolean(selectedPlugin?.resolveEndpoint || endpoint.trim());
@@ -121,7 +115,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   }, [isOpen, editSessionId]);
 
   useEffect(() => {
-    if (!isOpen || step !== "config" || editSessionId || !selectedPlugin?.resolveDefaultSessionName) {
+    if (!isOpen || step !== "config" || editSessionId || sessionName.trim() || !selectedPlugin?.resolveDefaultSessionName) {
       ++defaultNameRequestRef.current;
       setResolvedDefaultSessionName("");
       return;
@@ -136,7 +130,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       .catch(() => {
         if (defaultNameRequestRef.current === requestId) setResolvedDefaultSessionName("");
       });
-  }, [isOpen, step, editSessionId, selectedMode, selectedPlugin, pluginParams, endpoint]);
+  }, [isOpen, step, editSessionId, selectedMode, selectedPlugin, pluginParams, endpoint, sessionName]);
 
   useEffect(() => {
     if (!isOpen || step !== "config") return;
