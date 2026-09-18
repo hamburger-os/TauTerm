@@ -416,11 +416,6 @@ impl ServiceBackend {
         Ok(())
     }
 
-    fn forget_all_endpoints(&self) -> Result<(), String> {
-        let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
-        Self::clear_local_endpoints(&mut inner);
-        Ok(())
-    }
 }
 
 impl VirtualPortBackend for ServiceBackend {
@@ -484,8 +479,23 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn cleanup_all(&mut self) {
-        if self.call("cleanup_client", serde_json::json!({})).is_ok() {
-            let _ = self.forget_all_endpoints();
+        let endpoints = match self.inner.lock() {
+            Ok(inner) => inner.endpoints.values().cloned().collect::<Vec<_>>(),
+            Err(error) => {
+                log::warn!("failed to lock virtual-port service backend for cleanup: {error}");
+                return;
+            }
+        };
+
+        for endpoint in endpoints {
+            if let Err(error) = self.destroy_endpoint(&endpoint) {
+                log::warn!(
+                    "virtual-port service cleanup deferred for {} (bus {}): {}",
+                    endpoint.external_path,
+                    endpoint.resource_id,
+                    error
+                );
+            }
         }
     }
 
