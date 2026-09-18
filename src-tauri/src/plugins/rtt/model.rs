@@ -54,6 +54,9 @@ pub struct RttSnapshot {
     pub tx_bytes: u64,
     pub dropped_history_bytes: u64,
     pub dropped_history_chunks: u64,
+    /// Loss in the bounded Auto Reply/Lua receive queue. Raw history/logging are independent.
+    pub dropped_automation_bytes: u64,
+    pub dropped_automation_chunks: u64,
     /// Loss in the best-effort WebView presentation queue only. History/recording are independent.
     pub dropped_presentation_bytes: u64,
     pub dropped_presentation_chunks: u64,
@@ -71,6 +74,8 @@ impl Default for RttSnapshot {
             tx_bytes: 0,
             dropped_history_bytes: 0,
             dropped_history_chunks: 0,
+            dropped_automation_bytes: 0,
+            dropped_automation_chunks: 0,
             dropped_presentation_bytes: 0,
             dropped_presentation_chunks: 0,
             last_error: None,
