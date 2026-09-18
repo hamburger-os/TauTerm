@@ -218,8 +218,16 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
 
 export function selectRttChannel(sessionId: string, channelIndex: number): void {
   const prev = current(sessionId);
-  if (prev.selectedChannel === channelIndex) return;
-  publish(sessionId, { ...prev, selectedChannel: channelIndex });
+  if (prev.selectedChannel !== channelIndex) {
+    publish(sessionId, { ...prev, selectedChannel: channelIndex });
+  }
+  const channel = current(sessionId).snapshot?.channels.find(item => item.index === channelIndex);
+  if (channel?.up) {
+    void invoke("rtt_set_automation_source_channel", { sessionId, channelIndex }).catch(error => {
+      const latest = current(sessionId);
+      publish(sessionId, { ...latest, error: String(error) });
+    });
+  }
 }
 
 export function setRttViewMode(sessionId: string, channelIndex: number, mode: RttViewMode): void {
@@ -231,7 +239,7 @@ export function setRttViewMode(sessionId: string, channelIndex: number, mode: Rt
 }
 
 export async function selectRttSendChannel(sessionId: string, channelIndex: number): Promise<void> {
-  await invoke("rtt_set_automation_channel", { sessionId, channelIndex });
+  await invoke("rtt_set_send_channel", { sessionId, channelIndex });
   const prev = current(sessionId);
   publish(sessionId, { ...prev, selectedSendChannel: channelIndex });
 }
