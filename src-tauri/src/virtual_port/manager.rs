@@ -524,7 +524,8 @@ impl VirtualPortManager {
     }
 
     fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
-        self.active_endpoints.retain(|existing| existing != endpoint);
+        self.active_endpoints
+            .retain(|existing| existing != endpoint);
         if self.mode == ManagementMode::Privileged {
             let owned = self.try_load_owned_records()?;
             if owned.iter().any(|record| record.endpoint == *endpoint) {
