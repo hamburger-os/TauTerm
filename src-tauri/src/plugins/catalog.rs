@@ -47,6 +47,7 @@ macro_rules! tauterm_invoke_handler {
             $crate::plugins::rtt::commands::rtt_history,
             $crate::plugins::rtt::commands::rtt_write,
             $crate::plugins::rtt::commands::rtt_refresh_channels,
+            $crate::plugins::rtt::commands::rtt_set_automation_channel,
             $crate::plugins::local_shell::resolve_local_shell_session_name,
             $crate::plugins::ssh::commands::sftp_list_dir_cmd,
             $crate::plugins::ssh::commands::sftp_stat_cmd,
