@@ -28,7 +28,7 @@ Windows 虚拟串口的 endpoint ownership 统一存放在受保护的机器级�
 
 Release 构建无法连接服务时进入 `direct-uac-on-demand` 并记录真实服务故障；只有受保护的 Program Files 安装目录允许真正进入 helper 提权事务，portable/user-writable release 会在 helper 边界 fail closed。Debug 构建从启动时就处于该后端。普通启动阶段只读取 protected ownership 与 SCM 驱动状态，不运行 `setupc list`、不主动执行特权 cleanup，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入特权流程。所有产品 `setupc` 调用必须使用 `--silent`，并由特权上下文在全局 mutation lock 内完成状态枚举、bus/COM 分配、install 和安装后实际映射核验，禁止普通 GUI 预分配 bus，也禁止接受 com0com 的交互式“换一个 CNCA/CNCB 标识符”作为成功结果。
 
-App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
+App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；服务命名管道拒绝 remote clients，并在同目录可执行文件/PID 校验后为每个 GUI 连接建立独立处理线程，使多个 TauTerm 实例可以同时使用同一特权服务。每条连接必须先完成 hello，后续请求的 client_id 必须与该连接绑定值一致；com0com mutation 仍由共享 manager 与全局 mutex 串行化。命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
 ### Native helper 与动态库
 
