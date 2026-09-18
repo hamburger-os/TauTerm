@@ -14,6 +14,7 @@ use crate::kernel::session_store::{ContainerSessionCreateOptions, ContainerSessi
 use crate::plugin_application::{
     unchanged_session_config, ConnectSessionRequest, SessionConfigHandler, SessionConnectFuture,
 };
+use crate::session::AutomationIo;
 use crate::AppState;
 use error::RttError;
 use runtime::RttRuntime;
@@ -113,7 +114,7 @@ async fn connect_session(
                 params: params.clone(),
                 transfer_enabled: false,
                 transfer_protocol: None,
-                send_bar_enabled: false,
+                send_bar_enabled: true,
                 id_override: session_id,
             },
             ContainerSessionRuntime {
@@ -121,6 +122,7 @@ async fn connect_session(
                 file_transfer: None,
                 channel_factory: None,
                 io: None,
+                automation_io: Some(runtime.clone() as Arc<dyn AutomationIo>),
                 attachment: Some(Arc::new(RuntimeAttach {
                     runtime: runtime.clone(),
                     runtimes: plugin.runtimes.clone(),
