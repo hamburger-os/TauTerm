@@ -304,6 +304,9 @@ impl DebugTargetRuntime {
         self: &Arc<Self>,
         service: impl Into<String>,
     ) -> Result<DebugServiceLease, DebugTargetRuntimeError> {
+        if self.worker_exited.load(Ordering::Acquire) {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
         let service = service.into();
         let mut active = self
             .active_services
@@ -434,6 +437,10 @@ impl EmbeddedDebugManager {
             match &*runtime_slot {
                 TargetSlotState::Active(active) => {
                     if let Some(runtime) = active.runtime.upgrade() {
+                        if runtime.worker_exited.load(Ordering::Acquire) {
+                            *runtime_slot = TargetSlotState::Vacant;
+                            continue;
+                        }
                         if runtime.connection_config == resolved.connection_config() {
                             return Ok(runtime);
                         }
