@@ -60,7 +60,6 @@ enum ElevatedOperation {
 #[derive(Debug, Serialize, Deserialize)]
 struct ElevatedRequest {
     resource_dir: PathBuf,
-    state_dir: PathBuf,
     owner_pid: u32,
     operation: ElevatedOperation,
 }
@@ -80,32 +79,17 @@ struct ElevatedReply {
     error: Option<String>,
 }
 
-pub fn direct_state_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("TauTerm")
-        .join("virtual-port")
-}
-
-pub fn ensure_driver(resource_dir: &Path, state_dir: &Path) -> Result<(), String> {
-    invoke(
-        resource_dir,
-        state_dir,
-        ElevatedOperation::EnsureDriver,
-    )
-    .map(|_| ())
+pub fn ensure_driver(resource_dir: &Path) -> Result<(), String> {
+    invoke(resource_dir, ElevatedOperation::EnsureDriver).map(|_| ())
 }
 
 pub fn ensure_endpoints(
     resource_dir: &Path,
-    state_dir: &Path,
     count: u32,
     cleanup: Vec<VirtualEndpoint>,
 ) -> Result<Vec<VirtualEndpoint>, String> {
     invoke(
         resource_dir,
-        state_dir,
         ElevatedOperation::EnsureEndpoints { count, cleanup },
     )
     .map(|result| result.endpoints)
@@ -113,22 +97,16 @@ pub fn ensure_endpoints(
 
 pub fn cleanup_endpoints(
     resource_dir: &Path,
-    state_dir: &Path,
     endpoints: Vec<VirtualEndpoint>,
 ) -> Result<u32, String> {
     invoke(
         resource_dir,
-        state_dir,
         ElevatedOperation::CleanupEndpoints { endpoints },
     )
     .map(|result| result.cleaned)
 }
 
-fn invoke(
-    resource_dir: &Path,
-    state_dir: &Path,
-    operation: ElevatedOperation,
-) -> Result<ElevatedResult, String> {
+fn invoke(resource_dir: &Path, operation: ElevatedOperation) -> Result<ElevatedResult, String> {
     let pipe_name = format!(
         r"\\.\pipe\TauTermVirtualPort-{}",
         uuid::Uuid::new_v4().simple()
@@ -168,7 +146,6 @@ fn invoke(
     let mut stream = unsafe { std::fs::File::from_raw_handle(pipe as RawHandle) };
     let request = ElevatedRequest {
         resource_dir: resource_dir.to_path_buf(),
-        state_dir: state_dir.to_path_buf(),
         owner_pid: std::process::id(),
         operation,
     };
@@ -247,15 +224,10 @@ fn run_helper(pipe_name: &str) -> Result<(), String> {
 
 fn execute_request(request: ElevatedRequest) -> Result<ElevatedResult, String> {
     let resource_dir = validate_resource_dir(&request.resource_dir)?;
-    let state_dir = validate_state_dir(&request.state_dir)?;
-    std::fs::create_dir_all(&state_dir)
-        .map_err(|error| format!("failed to create virtual-port state directory: {error}"))?;
+    let state_dir = super::windows_state::ensure_ownership_state_dir()?;
 
-    let mut manager = VirtualPortManager::new_privileged_for_owner(
-        resource_dir,
-        state_dir,
-        request.owner_pid,
-    );
+    let mut manager =
+        VirtualPortManager::new_privileged_for_owner(resource_dir, state_dir, request.owner_pid);
 
     match request.operation {
         ElevatedOperation::EnsureDriver => {
@@ -331,17 +303,6 @@ fn validate_endpoint(endpoint: &VirtualEndpoint) -> Result<(), String> {
         return Err("virtual endpoint is outside TauTerm allocation bounds".into());
     }
     Ok(())
-}
-
-fn validate_state_dir(path: &Path) -> Result<PathBuf, String> {
-    let expected = direct_state_dir();
-    if !windows_path_eq(path, &expected) {
-        return Err(format!(
-            "virtual-port helper rejected unexpected state directory: {}",
-            path.display()
-        ));
-    }
-    Ok(expected)
 }
 
 fn validate_resource_dir(path: &Path) -> Result<PathBuf, String> {
@@ -540,11 +501,6 @@ fn wide(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn direct_state_directory_is_stable() {
-        assert!(direct_state_dir().ends_with(Path::new("TauTerm").join("virtual-port")));
-    }
 
     #[test]
     fn endpoint_validation_rejects_reserved_or_foreign_paths() {
