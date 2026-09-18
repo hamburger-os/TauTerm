@@ -333,7 +333,8 @@ impl ServiceBackend {
     fn reset_connection(inner: &mut ServiceInner) {
         inner.pipe = None;
         inner.client_id.clear();
-        Self::clear_local_endpoints(inner);
+        // Keep endpoint identity and internal-port hiding across a transient service restart.
+        // The next hello re-adopts protected records for this GUI PID in TauTermService.
     }
 
     fn call(&self, op: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
