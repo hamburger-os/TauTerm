@@ -481,10 +481,10 @@ impl VirtualPortManager {
         {
             return false;
         }
-        match record.owner_pid {
-            Some(pid) if Some(pid) != self.owner_pid && process_is_running(pid) => false,
-            _ => true,
-        }
+        !matches!(
+            record.owner_pid,
+            Some(pid) if Some(pid) != self.owner_pid && process_is_running(pid)
+        )
     }
 
     fn orphan_endpoints(&self) -> Vec<VirtualEndpoint> {
