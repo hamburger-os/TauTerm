@@ -35,12 +35,21 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [endpoint, setEndpoint] = useState("");
   const [sessionOptions, setSessionOptions] = useState<SessionConnectOptions>(EMPTY_SESSION_OPTIONS);
   const [sessionName, setSessionName] = useState("");
+  const [resolvedDefaultSessionName, setResolvedDefaultSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [refreshingEndpoints, setRefreshingEndpoints] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
+  const normalizedPreviewParams = selectedPlugin?.normalizeConnectionParams?.(pluginParams) ?? pluginParams;
+  const presentationDefaultSessionName = selectedPlugin?.sessionPresentation
+    ?.defaultName?.(normalizedPreviewParams, endpoint)
+    ?.trim() ?? "";
+  const sessionNamePlaceholder = resolvedDefaultSessionName
+    || presentationDefaultSessionName
+    || selectedPlugin?.manifest.name
+    || "Session";
   const modeEndpoints = state.endpoints.filter(item => item.connection_type === selectedMode);
   const pluginConnectionConfigValid = selectedPlugin?.isConnectionConfigValid?.(pluginParams, endpoint) !== false;
   const canResolveEndpoint = Boolean(selectedPlugin?.resolveEndpoint || endpoint.trim());
@@ -49,6 +58,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
   const endpointRefreshRequestRef = useRef(0);
+  const defaultNameRequestRef = useRef(0);
 
   const availableModes = pluginRegistry.getByCapability("connection").map(plugin => ({
     id: plugin.manifest.id,
@@ -72,7 +82,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setRefreshingEndpoints(false);
       setPluginParams({});
       setEndpoint("");
+      ++defaultNameRequestRef.current;
       setSessionName("");
+      setResolvedDefaultSessionName("");
       setSessionOptions({ ...EMPTY_SESSION_OPTIONS });
       setStep("mode");
       return;
@@ -104,8 +116,27 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setEndpoint("");
     setSessionOptions({ ...EMPTY_SESSION_OPTIONS });
     setSessionName("");
+    setResolvedDefaultSessionName("");
     setStep("mode");
   }, [isOpen, editSessionId]);
+
+  useEffect(() => {
+    if (!isOpen || step !== "config" || editSessionId || !selectedPlugin?.resolveDefaultSessionName) {
+      ++defaultNameRequestRef.current;
+      setResolvedDefaultSessionName("");
+      return;
+    }
+
+    const requestId = ++defaultNameRequestRef.current;
+    setResolvedDefaultSessionName("");
+    void pluginRegistry.resolveSessionDefaultName(selectedMode, pluginParams, endpoint)
+      .then(name => {
+        if (defaultNameRequestRef.current === requestId) setResolvedDefaultSessionName(name);
+      })
+      .catch(() => {
+        if (defaultNameRequestRef.current === requestId) setResolvedDefaultSessionName("");
+      });
+  }, [isOpen, step, editSessionId, selectedMode, selectedPlugin, pluginParams, endpoint]);
 
   useEffect(() => {
     if (!isOpen || step !== "config") return;
@@ -130,6 +161,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setEndpoint("");
     setSessionOptions(pluginRegistry.getDefaultSessionOptions(modeId));
     setSessionName("");
+    setResolvedDefaultSessionName("");
     setStep("config");
     setError(null);
   }, []);
@@ -138,8 +170,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setStep("mode");
     setPluginParams({});
     setEndpoint("");
+    ++defaultNameRequestRef.current;
     setSessionOptions({ ...EMPTY_SESSION_OPTIONS });
     setSessionName("");
+    setResolvedDefaultSessionName("");
     setError(null);
   }, []);
 
@@ -290,7 +324,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     <input
                       className={`${styles.input} liquid-glass-input`}
                       type="text"
-                      placeholder={selectedPlugin?.manifest.name ?? "Session"}
+                      placeholder={sessionNamePlaceholder}
                       value={sessionName}
                       onChange={event => setSessionName(event.target.value)}
                       disabled={connecting}
