@@ -21,6 +21,8 @@ use std::time::Duration;
 
 const CHANNEL_REFRESH_TIMEOUT_CAP: Duration = Duration::from_secs(2);
 const TARGET_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_UP_CHANNELS_PER_POLL: usize = 4;
+const MAX_READS_PER_UP_CHANNEL: usize = 4;
 
 pub struct ProbeRsRttBackend {
     target: Arc<DebugTargetRuntime>,
@@ -31,6 +33,7 @@ pub struct ProbeRsRttBackend {
     region: ScanRegion,
     refresh_timeout: Duration,
     channels: Vec<RttChannelInfo>,
+    poll_cursor: usize,
 }
 
 pub fn list_probes() -> Vec<RttProbeInfo> {
@@ -103,6 +106,7 @@ impl ProbeRsRttBackend {
             region,
             refresh_timeout: config.attach_timeout.min(CHANNEL_REFRESH_TIMEOUT_CAP),
             channels,
+            poll_cursor: 0,
         })
     }
 }
@@ -196,7 +200,8 @@ impl RttBackend for ProbeRsRttBackend {
     fn poll(&mut self, output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
         let rtt = Arc::clone(&self.rtt);
         let core_index = self.core_index;
-        let chunks = self
+        let poll_cursor = self.poll_cursor;
+        let (chunks, next_poll_cursor) = self
             .target
             .execute(TARGET_OPERATION_TIMEOUT, move |probe| {
                 let mut core = probe.session_mut().core(core_index).map_err(|error| {
@@ -208,10 +213,21 @@ impl RttBackend for ProbeRsRttBackend {
                 let mut rtt = rtt
                     .lock()
                     .map_err(|error| RttError::backend(error.to_string()))?;
+                let channel_count = rtt.up_channels().iter().count();
+                if channel_count == 0 {
+                    return Ok((Vec::new(), 0));
+                }
+
+                let start = poll_cursor % channel_count;
+                let channel_budget = channel_count.min(MAX_UP_CHANNELS_PER_POLL);
                 let mut chunks = Vec::new();
                 let mut buffer = [0u8; 4 * 1024];
-                for channel in rtt.up_channels().iter_mut() {
-                    for _ in 0..4 {
+                for (position, channel) in rtt.up_channels().iter_mut().enumerate() {
+                    let distance = (position + channel_count - start) % channel_count;
+                    if distance >= channel_budget {
+                        continue;
+                    }
+                    for _ in 0..MAX_READS_PER_UP_CHANNEL {
                         let count = channel
                             .read(&mut core, &mut buffer)
                             .map_err(map_rtt_io_error)?;
@@ -227,9 +243,10 @@ impl RttBackend for ProbeRsRttBackend {
                         }
                     }
                 }
-                Ok(chunks)
+                Ok((chunks, (start + channel_budget) % channel_count))
             })
             .map_err(map_target_runtime_error)??;
+        self.poll_cursor = next_poll_cursor;
         output.extend(chunks);
         Ok(())
     }
