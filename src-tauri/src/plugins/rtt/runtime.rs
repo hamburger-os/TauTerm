@@ -2,7 +2,9 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
-use crate::embedded_debug::observation::{ObservationSequencer, ObservationSource};
+use crate::embedded_debug::observation::{
+    ObservationSequencer, ObservationSource, ObservationSubscription,
+};
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
@@ -19,7 +21,8 @@ const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const RAW_OBSERVATION_SUBSCRIPTION_CAPACITY: usize = 1024;
-const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
+const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_REPLY_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -539,6 +542,11 @@ impl RttRuntime {
         self.shared.history(channel_index, after_sequence)
     }
 
+    /// Subscribe to canonical RTT acquisition records without opening another RTT reader.
+    pub fn subscribe_observations(&self) -> ObservationSubscription<StoredRttChunk> {
+        self.shared.raw_source.subscribe()
+    }
+
     pub fn set_automation_source_channel(&self, channel_index: u32) -> Result<(), RttError> {
         self.shared.set_automation_source_channel(channel_index)
     }
@@ -576,7 +584,7 @@ impl RttRuntime {
             .recv_timeout(
                 self.config
                     .write_timeout
-                    .saturating_add(Duration::from_secs(1)),
+                    .saturating_add(WRITE_REPLY_GRACE),
             )
             .map_err(|_| RttError::new(RttErrorCode::RttWriteTimeout, "等待 RTT 写入结果超时"))?
     }
