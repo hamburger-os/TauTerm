@@ -324,7 +324,7 @@ pub fn run() {
                             // service identity boundary. Select the documented direct-UAC backend
                             // immediately instead of generating an expected pipe-handshake warning.
                             log::info!(
-                                "虚拟串口管理后端: direct-uac-on-demand（development build）"
+                                "虚拟串口管理后端: development-direct-uac（debug build）"
                             );
                             *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
                         }
