@@ -112,7 +112,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
-canonical RTT frame 在采集时同时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。未来 SystemView/defmt 等 decoder 必须通过 Runtime 的 observation subscription 订阅这一 raw source，不允许创建第二个 RTT reader；不同 subscriber 使用独立有界队列，并维护自己的 dropped counter，慢 decoder 只影响自己的 delivery。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、recording loss、presentation loss 也必须保持不同语义。
+canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。现有 AutomationRx 已直接订阅该 canonical source，并在订阅时固定 Up Channel；未来 SystemView/defmt 等 decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
 ## 前端运行态与后台生命周期
 
