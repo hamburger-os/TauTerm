@@ -101,7 +101,7 @@ Windows mutation 还使用一个全局命名 mutex，把 TauTermService、direct
 生命周期规则：
 
 - active endpoint 永远不是 orphan；external peer 打开/关闭不改变父 Serial Session ownership；
-- 特权服务正常断开客户端时直接销毁该客户端 endpoint，并同步删除 protected ownership；若 endpoint 暂时占用导致 remove 失败，则保持原 COM identity 与 ownership 进入 deferred cleanup，不通过解绑 PortName 的方式破坏后续身份核验；
+- 特权服务正常关闭时由 GUI 显式 remove endpoint；若服务 pipe 异常断开，服务必须先确认已验证 GUI 进程确实退出，再清理该连接 endpoint。GUI 仍存活时保留 active ownership 供重连/重新接管，避免旧连接 cleanup 与新连接 re-adoption 竞态误删；若 endpoint 暂时占用导致 remove 失败，则保持原 COM identity 与 ownership 进入 deferred cleanup，不通过解绑 PortName 的方式破坏后续身份核验；
 - direct-UAC Session 断开不突然弹第二次 UAC：GUI 只结束本地 active/hide 状态，protected ownership 保留为可恢复记录；下一次明确创建或手动清理动作由 helper 在受控特权事务中回收；创建路径先确保新端点成功，再清理旧 orphan，避免创建失败时让 GUI 对旧端点的本地可见性状态失真；
 - 服务与 direct helper 共用同一个 machine ledger，因此服务恢复后也能识别 direct-UAC 异常遗留；另一个仍存活的 TauTerm 进程所拥有的记录必须保留；
 - 手动“清理残留端口”只处理 protected ledger 中可证明归属且当前可回收的 endpoint；每次 remove 前还必须重新核验当前 bus 的 CNCA/CNCB→COM 映射与 ledger 完全一致。bus 不存在或已被重新映射时只失效旧 ownership，禁止扫描/删除第三方或已复用的 com0com bus；
