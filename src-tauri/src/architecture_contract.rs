@@ -473,8 +473,10 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
     );
     assert!(
         runtime.contains("TargetSlotState::Opening")
+            && runtime.contains("struct ActiveTarget")
+            && runtime.contains("TargetClosing")
             && runtime.contains("worker_exited: Arc<AtomicBool>"),
-        "probe ownership must remain reserved while a timed-out startup worker is still exiting"
+        "probe ownership must remain reserved while startup or detached shutdown workers are still exiting"
     );
     assert!(
         runtime.contains("SERVICE_QUEUE_CAPACITY")
