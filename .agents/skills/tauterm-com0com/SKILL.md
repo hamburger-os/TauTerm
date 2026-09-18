@@ -169,7 +169,7 @@ setupc --silent remove <bus>
 
 若端口仍被占用，可解绑 COM 名称后有限重试。成功后从 protected ledger 与内部 bridge registry 移除。
 
-direct-UAC Session 正常断开不弹第二次 UAC。普通 GUI 只结束本地 active/hide 状态，protected ownership 继续保留；下一次明确 create/manual cleanup 时 helper 在同一次 UAC 事务里先回收。因为 service 与 helper 共用 ledger，之后恢复正常的 TauTermService 也能识别这些 direct-UAC 记录；仍有 live owner PID 的记录必须跳过。
+direct-UAC Session 正常断开不弹第二次 UAC。普通 GUI 只结束本地 active/hide 状态，protected ownership 继续保留；下一次明确 create/manual cleanup 时由 helper 在受控 UAC 事务中回收；create 路径先确保新 endpoint 成功，再清理旧 orphan，避免创建失败时 GUI 对旧 endpoint 的本地隐藏状态失真。因为 service 与 helper 共用 ledger，之后恢复正常的 TauTermService 也能识别这些 direct-UAC 记录；仍有 live owner PID 的记录必须跳过。
 
 ### 4.3 崩溃、旧 schema 与第三方资源
 
