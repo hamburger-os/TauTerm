@@ -268,7 +268,12 @@ mod service {
 
     type Clients = HashMap<String, Vec<VirtualEndpoint>>;
 
-    fn dispatch(vpm: &mut VirtualPortManager, clients: &mut Clients, req: &Request) -> Response {
+    fn dispatch(
+        vpm: &mut VirtualPortManager,
+        clients: &mut Clients,
+        req: &Request,
+        client_pid: u32,
+    ) -> Response {
         let id = req.id;
         let data = match req.op.as_str() {
             "hello" => {
