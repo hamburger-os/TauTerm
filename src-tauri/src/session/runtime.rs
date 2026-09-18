@@ -28,7 +28,7 @@ impl SessionDataPlane {
         on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
         let handle = runtime.handle.clone();
-        let subscription = handle.subscribe()?;
+        let subscription = handle.subscribe(format!("session:{session_id}:presentation"))?;
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let event_shutdown_requested = shutdown_requested.clone();
         let (activation_tx, activation_rx) = mpsc::channel::<()>();
