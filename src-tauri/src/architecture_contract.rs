@@ -449,7 +449,6 @@ fn connect_dialog_uses_registry_session_option_policy() {
     );
 }
 
-
 #[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
