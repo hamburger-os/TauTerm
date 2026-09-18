@@ -5,7 +5,8 @@
 //! this directory. This keeps persisted ownership usable as privileged deletion evidence without
 //! trusting user-writable AppData.
 
-use std::os::windows::ffi::OsStrExt;
+use std::ffi::OsString;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
@@ -14,12 +15,39 @@ use windows_sys::Win32::Security::{
     SetFileSecurityW, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
     PROTECTED_DACL_SECURITY_INFORMATION,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
+use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
+use windows_sys::core::PWSTR;
+
+fn program_data_dir() -> PathBuf {
+    unsafe {
+        let mut raw: PWSTR = std::ptr::null_mut();
+        let result = SHGetKnownFolderPath(
+            &FOLDERID_ProgramData,
+            0,
+            std::ptr::null_mut(),
+            &mut raw,
+        );
+        if result == 0 && !raw.is_null() {
+            let mut len = 0usize;
+            while *raw.add(len) != 0 {
+                len += 1;
+            }
+            let path = PathBuf::from(OsString::from_wide(std::slice::from_raw_parts(raw, len)));
+            CoTaskMemFree(raw.cast());
+            return path;
+        }
+        if !raw.is_null() {
+            CoTaskMemFree(raw.cast());
+        }
+    }
+
+    // Fail to a fixed machine path rather than a caller-controlled environment variable.
+    PathBuf::from(r"C:\ProgramData")
+}
 
 fn machine_state_root() -> PathBuf {
-    std::env::var_os("PROGRAMDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-        .join("TauTerm")
+    program_data_dir().join("TauTerm")
 }
 
 pub fn ownership_state_dir() -> PathBuf {
@@ -57,9 +85,7 @@ pub fn ensure_ownership_state_dir() -> Result<PathBuf, String> {
 }
 
 fn validate_machine_path(path: &Path) -> Result<(), String> {
-    let program_data = std::env::var_os("PROGRAMDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    let program_data = program_data_dir();
     let canonical_root = program_data
         .canonicalize()
         .map_err(|error| format!("failed to canonicalize ProgramData: {error}"))?;
