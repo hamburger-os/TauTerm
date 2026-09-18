@@ -2,7 +2,7 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
-use crate::embedded_debug::observation::ObservationSequencer;
+use crate::embedded_debug::observation::{ObservationSequencer, ObservationSource};
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
@@ -18,6 +18,7 @@ const HISTORY_PER_SESSION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
+const RAW_OBSERVATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
@@ -146,6 +147,7 @@ pub(super) struct RttShared {
     snapshot: Mutex<RttSnapshot>,
     history: Mutex<HistoryStore>,
     sequencer: ObservationSequencer,
+    raw_source: ObservationSource<StoredRttChunk>,
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
@@ -163,6 +165,7 @@ impl RttShared {
             }),
             history: Mutex::new(HistoryStore::default()),
             sequencer,
+            raw_source: ObservationSource::new(RAW_OBSERVATION_SUBSCRIPTION_CAPACITY),
             channel_offsets: Mutex::new(BTreeMap::new()),
             automation_source_channel: Mutex::new(None),
             send_channel: Mutex::new(None),
@@ -263,6 +266,7 @@ impl RttShared {
             snapshot.dropped_history_chunks = loss.0;
             snapshot.dropped_history_bytes = loss.1;
         }
+        let _ = self.raw_source.publish(&chunk);
         self.publish_automation(&chunk);
         chunk
     }
@@ -338,6 +342,10 @@ impl RttShared {
             .lock()
             .map(|value| value.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn subscribe_raw_observations(&self) -> mpsc::Receiver<StoredRttChunk> {
+        self.raw_source.subscribe()
     }
 
     fn history(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
@@ -820,6 +828,20 @@ mod tests {
             subscription.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn canonical_rtt_observations_are_published_once_from_acquisition() {
+        let shared = RttShared::new();
+        let observations = shared.subscribe_raw_observations();
+        let chunk = shared.record_rx(3, b"trace".to_vec());
+
+        let observed = observations.recv_timeout(Duration::from_millis(50)).unwrap();
+        assert_eq!(observed.generation, chunk.generation);
+        assert_eq!(observed.sequence, chunk.sequence);
+        assert_eq!(observed.channel_index, 3);
+        assert_eq!(observed.channel_offset, 0);
+        assert_eq!(observed.data, b"trace");
     }
 
     #[test]
