@@ -825,11 +825,7 @@ impl SessionStore {
                     .map_err(|e| format!("发送脚本失败: {}", e));
             }
             let consumer = format!("script:{session_id}");
-            let subscription = Some(
-                automation
-                    .subscribe(&consumer)
-                    .map_err(|e| e.to_string())?,
-            );
+            let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
             let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
             let shutdown = Arc::new(AtomicBool::new(false));
             let thread = spawn_script_thread(
@@ -861,11 +857,7 @@ impl SessionStore {
         }
         let automation: Arc<dyn AutomationIo> = sub.io.clone();
         let consumer = format!("script:{session_id}");
-        let subscription = Some(
-            automation
-                .subscribe(&consumer)
-                .map_err(|e| e.to_string())?,
-        );
+        let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
         let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread = spawn_script_thread(
