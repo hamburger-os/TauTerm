@@ -110,7 +110,7 @@ pub(super) fn run(
                 }) => {
                     if writes.len() >= MAX_PENDING_WRITES {
                         let _ = reply.send(Err(RttError::new(
-                            RttErrorCode::RttWriteTimeout,
+                            RttErrorCode::RttWriteQueueFull,
                             "RTT 写入队列繁忙，请降低发送速率",
                         )));
                     } else {
