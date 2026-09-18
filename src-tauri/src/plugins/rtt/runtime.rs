@@ -185,38 +185,52 @@ impl RttShared {
         descriptor: super::model::RttBackendDescriptor,
         channels: Vec<super::model::RttChannelInfo>,
     ) {
-        if let Ok(mut selected) = self.automation_source_channel.lock() {
-            let still_readable = selected.is_some_and(|index| {
-                channels
-                    .iter()
-                    .any(|channel| channel.index == index && channel.up.is_some())
-            });
-            if !still_readable {
-                *selected = channels
-                    .iter()
-                    .find(|channel| channel.index == 0 && channel.up.is_some())
-                    .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
-                    .map(|channel| channel.index);
-            }
-        }
-        if let Ok(mut selected) = self.send_channel.lock() {
-            let still_writable = selected.is_some_and(|index| {
-                channels
-                    .iter()
-                    .any(|channel| channel.index == index && channel.down.is_some())
-            });
-            if !still_writable {
-                *selected = channels
-                    .iter()
-                    .find(|channel| channel.index == 0 && channel.down.is_some())
-                    .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
-                    .map(|channel| channel.index);
-            }
-        }
+        let automation_source_channel = self
+            .automation_source_channel
+            .lock()
+            .ok()
+            .map(|mut selected| {
+                let still_readable = selected.is_some_and(|index| {
+                    channels
+                        .iter()
+                        .any(|channel| channel.index == index && channel.up.is_some())
+                });
+                if !still_readable {
+                    *selected = channels
+                        .iter()
+                        .find(|channel| channel.index == 0 && channel.up.is_some())
+                        .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                        .map(|channel| channel.index);
+                }
+                *selected
+            })
+            .flatten();
+        let send_channel = self
+            .send_channel
+            .lock()
+            .ok()
+            .map(|mut selected| {
+                let still_writable = selected.is_some_and(|index| {
+                    channels
+                        .iter()
+                        .any(|channel| channel.index == index && channel.down.is_some())
+                });
+                if !still_writable {
+                    *selected = channels
+                        .iter()
+                        .find(|channel| channel.index == 0 && channel.down.is_some())
+                        .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
+                        .map(|channel| channel.index);
+                }
+                *selected
+            })
+            .flatten();
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.phase = RttPhase::Running;
             snapshot.backend = Some(descriptor);
             snapshot.channels = channels;
+            snapshot.automation_source_channel = automation_source_channel;
+            snapshot.send_channel = send_channel;
             snapshot.last_error = None;
         }
     }
@@ -294,9 +308,14 @@ impl RttShared {
     }
 
     pub(super) fn record_presentation_drop(&self, bytes: usize) {
+        self.record_presentation_drop_batch(1, bytes);
+    }
+
+    pub(super) fn record_presentation_drop_batch(&self, chunks: usize, bytes: usize) {
         if let Ok(mut snapshot) = self.snapshot.lock() {
-            snapshot.dropped_presentation_chunks =
-                snapshot.dropped_presentation_chunks.saturating_add(1);
+            snapshot.dropped_presentation_chunks = snapshot
+                .dropped_presentation_chunks
+                .saturating_add(chunks as u64);
             snapshot.dropped_presentation_bytes = snapshot
                 .dropped_presentation_bytes
                 .saturating_add(bytes as u64);
@@ -371,6 +390,9 @@ impl RttShared {
             .automation_source_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.automation_source_channel = Some(channel_index);
+        }
         Ok(())
     }
 
@@ -380,6 +402,9 @@ impl RttShared {
             .send_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.send_channel = Some(channel_index);
+        }
         Ok(())
     }
 
@@ -475,10 +500,13 @@ impl RttRuntime {
             .worker
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(handle);
+        // Native startup may first spend up to the shared target-open deadline before RTT attach
+        // begins. Keep the outer lifecycle budget strictly larger than all nested startup stages
+        // so a valid slow probe open is not misreported as an RTT attach timeout.
         let startup_timeout = self
             .config
             .attach_timeout
-            .saturating_add(Duration::from_secs(5));
+            .saturating_add(Duration::from_secs(15));
         match startup_rx.recv_timeout(startup_timeout) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
