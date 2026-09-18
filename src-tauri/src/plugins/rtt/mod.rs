@@ -103,7 +103,7 @@ async fn connect_session(
     let config = config::RttConfig::from_params(&params).map_err(|error| error.to_string())?;
     let backend = config.backend;
     let plugin = state.plugin::<RttPlugin>(PLUGIN_ID);
-    let runtime = Arc::new(RttRuntime::new(config));
+    let runtime = Arc::new(RttRuntime::new(config, Arc::clone(&state.embedded_debug)));
     let session_name = name.unwrap_or_else(|| match backend {
         config::RttBackendKind::ProbeRs => "RTT @ Debug Probe".to_string(),
         config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing".to_string(),

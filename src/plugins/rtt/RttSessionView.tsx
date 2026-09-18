@@ -24,6 +24,7 @@ import {
 import styles from "./RttSessionView.module.css";
 
 const HEX_VIEW_BYTES = 64 * 1024;
+const LOG_VIEW_MAX_CHUNKS = 2_000;
 
 function formatHex(chunks: readonly RttChunk[]): string {
   const rows: string[] = [];
@@ -102,8 +103,11 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
     void ensureRttHistory(sessionId, selectedChannel);
   }, [runtimeReadable, selectedChannel, sessionId, snapshot?.generation]);
 
-  const hex = useMemo(() => formatHex(chunks), [chunks]);
-  const logRows = useMemo(() => decodeLogChunks(chunks), [chunks]);
+  const hex = useMemo(() => mode === "hex" ? formatHex(chunks) : "", [chunks, mode]);
+  const logRows = useMemo(
+    () => mode === "log" ? decodeLogChunks(chunks.slice(-LOG_VIEW_MAX_CHUNKS)) : [],
+    [chunks, mode],
+  );
 
   const refreshChannels = useCallback(async () => {
     if (!connected || !snapshot?.backend?.capabilities.enumerate_channels) return;

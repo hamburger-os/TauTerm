@@ -3,6 +3,7 @@ use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
 use crate::embedded_debug::observation::ObservationSequencer;
+use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
 use std::collections::{BTreeMap, VecDeque};
@@ -422,6 +423,7 @@ impl RttShared {
 
 pub struct RttRuntime {
     config: RttConfig,
+    embedded_debug: Arc<EmbeddedDebugManager>,
     shared: Arc<RttShared>,
     command_tx: Mutex<Option<mpsc::SyncSender<WorkerCommand>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -431,9 +433,10 @@ pub struct RttRuntime {
 }
 
 impl RttRuntime {
-    pub fn new(config: RttConfig) -> Self {
+    pub(crate) fn new(config: RttConfig, embedded_debug: Arc<EmbeddedDebugManager>) -> Self {
         Self {
             config,
+            embedded_debug,
             shared: Arc::new(RttShared::new()),
             command_tx: Mutex::new(None),
             worker: Mutex::new(None),
@@ -453,6 +456,7 @@ impl RttRuntime {
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let context = WorkerContext {
             config: self.config.clone(),
+            embedded_debug: Arc::clone(&self.embedded_debug),
             app,
             session_id: session_id.to_string(),
             shared: Arc::clone(&self.shared),
@@ -792,8 +796,9 @@ mod tests {
             "backend": "jlink_existing"
         }))
         .unwrap();
-        let a = RttRuntime::new(config.clone());
-        let b = RttRuntime::new(config);
+        let manager = Arc::new(EmbeddedDebugManager::new());
+        let a = RttRuntime::new(config.clone(), Arc::clone(&manager));
+        let b = RttRuntime::new(config, manager);
         assert_ne!(a.snapshot().generation, b.snapshot().generation);
     }
 }

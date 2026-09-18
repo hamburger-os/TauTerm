@@ -1,13 +1,13 @@
 use probe_rs::probe::{list::Lister, DebugProbeSelector, WireProtocol};
 use probe_rs::{Permissions, Session};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DebugWireProtocol {
     Swd,
     Jtag,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebugProbeConfig {
     pub selector: Option<String>,
     pub target: String,
@@ -21,6 +21,26 @@ pub struct DebugProbeInfo {
     pub display_name: String,
     pub identifier: String,
     pub serial_number: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedDebugProbeConfig {
+    pub selector: String,
+    pub probe_label: String,
+    pub target: String,
+    pub wire_protocol: DebugWireProtocol,
+    pub speed_khz: Option<u32>,
+}
+
+impl ResolvedDebugProbeConfig {
+    pub(crate) fn connection_config(&self) -> DebugProbeConfig {
+        DebugProbeConfig {
+            selector: Some(self.selector.clone()),
+            target: self.target.clone(),
+            wire_protocol: self.wire_protocol,
+            speed_khz: self.speed_khz,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,11 +65,11 @@ pub enum DebugProbeOpenError {
     TargetAttach { target: String, detail: String },
 }
 
-/// Single-owner probe + target session.
+/// Probe + target session owned exclusively by the shared embedded-debug target worker.
 ///
-/// The value is deliberately not wrapped in shared mutable ownership. A concrete observation
-/// worker owns it on one thread and borrows Session only for short core operations. This gives
-/// RTT and future variable/trace producers the same ownership rule without a global probe registry.
+/// The value is deliberately not exposed through shared mutable ownership. `DebugTargetRuntime`
+/// keeps it on one thread and observation services submit short operations through the bounded
+/// scheduler, so RTT and future memory/trace producers cannot concurrently borrow the probe.
 pub struct DebugProbeRuntime {
     session: Session,
     target: String,
@@ -57,26 +77,14 @@ pub struct DebugProbeRuntime {
 }
 
 impl DebugProbeRuntime {
-    pub fn open(config: &DebugProbeConfig) -> Result<Self, DebugProbeOpenError> {
-        let lister = Lister::new();
-        let (mut probe, probe_label) = if let Some(raw_selector) = &config.selector {
-            let selector = raw_selector
-                .parse::<DebugProbeSelector>()
-                .map_err(|error| DebugProbeOpenError::InvalidSelector(error.to_string()))?;
-            let probe = lister.open(selector).map_err(map_open_error)?;
-            (probe, raw_selector.clone())
-        } else {
-            let probes = lister.list_all();
-            match probes.as_slice() {
-                [] => return Err(DebugProbeOpenError::NotFound),
-                [info] => {
-                    let label = info.to_string();
-                    let probe = info.open().map_err(map_open_error)?;
-                    (probe, label)
-                }
-                _ => return Err(DebugProbeOpenError::Ambiguous),
-            }
-        };
+    pub(crate) fn open_resolved(
+        config: &ResolvedDebugProbeConfig,
+    ) -> Result<Self, DebugProbeOpenError> {
+        let selector = config
+            .selector
+            .parse::<DebugProbeSelector>()
+            .map_err(|error| DebugProbeOpenError::InvalidSelector(error.to_string()))?;
+        let mut probe = Lister::new().open(selector).map_err(map_open_error)?;
 
         let wire_protocol = match config.wire_protocol {
             DebugWireProtocol::Swd => WireProtocol::Swd,
@@ -108,7 +116,7 @@ impl DebugProbeRuntime {
         Ok(Self {
             session,
             target: config.target.clone(),
-            probe_label,
+            probe_label: config.probe_label.clone(),
         })
     }
 
@@ -123,6 +131,33 @@ impl DebugProbeRuntime {
     pub fn probe_label(&self) -> &str {
         &self.probe_label
     }
+}
+
+pub(crate) fn resolve_probe_config(
+    config: &DebugProbeConfig,
+) -> Result<ResolvedDebugProbeConfig, DebugProbeOpenError> {
+    let lister = Lister::new();
+    let (selector, probe_label) = if let Some(raw_selector) = &config.selector {
+        let selector = raw_selector
+            .parse::<DebugProbeSelector>()
+            .map_err(|error| DebugProbeOpenError::InvalidSelector(error.to_string()))?;
+        (selector.to_string(), raw_selector.clone())
+    } else {
+        let probes = lister.list_all();
+        match probes.as_slice() {
+            [] => return Err(DebugProbeOpenError::NotFound),
+            [info] => (DebugProbeSelector::from(info).to_string(), info.to_string()),
+            _ => return Err(DebugProbeOpenError::Ambiguous),
+        }
+    };
+
+    Ok(ResolvedDebugProbeConfig {
+        selector,
+        probe_label,
+        target: config.target.clone(),
+        wire_protocol: config.wire_protocol,
+        speed_khz: config.speed_khz,
+    })
 }
 
 pub fn list_probes() -> Vec<DebugProbeInfo> {
@@ -153,6 +188,22 @@ fn map_open_error(error: probe_rs::probe::DebugProbeError) -> DebugProbeOpenErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolved_connection_config_keeps_canonical_selector_and_target_settings() {
+        let resolved = ResolvedDebugProbeConfig {
+            selector: "canonical".to_string(),
+            probe_label: "Probe".to_string(),
+            target: "chip".to_string(),
+            wire_protocol: DebugWireProtocol::Jtag,
+            speed_khz: Some(2_000),
+        };
+        let config = resolved.connection_config();
+        assert_eq!(config.selector.as_deref(), Some("canonical"));
+        assert_eq!(config.target, "chip");
+        assert_eq!(config.wire_protocol, DebugWireProtocol::Jtag);
+        assert_eq!(config.speed_khz, Some(2_000));
+    }
 
     #[test]
     fn shared_probe_config_keeps_wire_protocol_vendor_neutral() {

@@ -59,7 +59,7 @@ Transport 只拥有底层资源和 I/O；Protocol 解释协议语义；Session R
 | [NETWORK.md](modules/NETWORK.md) | TCP/UDP Network Debug、TFTP、Telnet 与 iperf |
 | [MODBUS.md](modules/MODBUS.md) | Modbus RTU/ASCII/TCP Client、Monitor、Transactions、Raw 与 Server Simulator |
 | [TRDP.md](modules/TRDP.md) | TRDP Node/Monitor、抓包、XML/Dataset 与 native runtime |
-| [RTT.md](modules/RTT.md) | RTT 调试探针接入、多 Channel、后台 runtime 与 Terminal/Text/HEX 工作流 |
+| [RTT.md](modules/RTT.md) | 共享 debug-target ownership、RTT 多 Channel、后台 runtime 与 Terminal/Log/HEX 工作流 |
 | [AUTOMATION.md](modules/AUTOMATION.md) | SendBar、自动回复、Lua 脚本与 SessionIo 统一发送语义 |
 | [OBSERVABILITY_TOOLS.md](modules/OBSERVABILITY_TOOLS.md) | 数据批处理、日志、统计和无连接工程工具 |
 | [PLATFORM_SECURITY.md](modules/PLATFORM_SECURITY.md) | 凭据、权限、native helper、打包与 updater 信任边界 |

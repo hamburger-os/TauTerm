@@ -4,6 +4,7 @@ use super::error::{RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
 use crate::embedded_debug::observation::now_ms;
+use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::log_engine::{
     session_log_is_active, try_send_session_log, DataDirection, DataLogEntry, LogEntry,
 };
@@ -39,6 +40,7 @@ pub(super) enum WorkerCommand {
 
 pub(super) struct WorkerContext {
     pub config: RttConfig,
+    pub embedded_debug: Arc<EmbeddedDebugManager>,
     pub app: AppHandle,
     pub session_id: String,
     pub shared: Arc<RttShared>,
@@ -61,6 +63,7 @@ pub(super) fn run(
 ) {
     let WorkerContext {
         config,
+        embedded_debug,
         app,
         session_id,
         shared,
@@ -69,7 +72,7 @@ pub(super) fn run(
     } = context;
 
     shared.set_phase(RttPhase::OpeningBackend);
-    let mut backend = match open_backend(&config) {
+    let mut backend = match open_backend(&config, &embedded_debug) {
         Ok(backend) => backend,
         Err(error) => {
             shared.set_error(error.clone());

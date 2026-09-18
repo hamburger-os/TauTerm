@@ -38,6 +38,7 @@ pub fn maybe_run_elevated_helper() -> bool {
         || plugins::catalog::maybe_run_elevated_shell_helper()
 }
 
+use embedded_debug::runtime::EmbeddedDebugManager;
 use kernel::config_store::ConfigStore;
 use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
 use kernel::plugin_runtime::PluginRuntime;
@@ -63,6 +64,7 @@ pub struct AppState {
     pub theme_engine: ThemeEngine,
     pub credential_store: CredentialStore,
     pub log_engine: Mutex<LogEngine>,
+    pub(crate) embedded_debug: Arc<EmbeddedDebugManager>,
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
@@ -412,6 +414,7 @@ pub fn run() {
             theme_engine: ThemeEngine::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
+            embedded_debug: Arc::new(EmbeddedDebugManager::new()),
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new_direct_uac(
                 std::env::temp_dir().join("TauTerm").join("missing-resources"),

@@ -20,14 +20,19 @@ SessionStore / Container Session
      RttRuntime
         │
         ▼
- single-owner RTT worker
-   ┌───────────────┴───────────────┐
-   │                               │
-Native debug-probe backend   Existing J-Link backend
-   │                               │
-probe-rs Session / RTT       127.0.0.1 RTT TELNET
-   │                               │
-   └──────── canonical RTT frames ─┘
+ bounded RTT worker
+   ┌───────────────┴────────────────────────┐
+   │                                        │
+Native debug-probe backend          Existing J-Link backend
+   │                                        │
+EmbeddedDebugManager                127.0.0.1 RTT TELNET
+   │
+shared DebugTargetRuntime worker
+   │
+probe-rs Session / short Core borrow
+   │
+RTT service lease + RTT state
+   └──────── canonical RTT frames ──────────┘
                     │
        ┌────────────┼─────────────┐
        ▼            ▼             ▼
@@ -40,13 +45,13 @@ probe-rs Session / RTT       127.0.0.1 RTT TELNET
 
 `RttRuntime` 通过 `SessionService` 挂到 Container Session，并由 RTT 插件自己的 `SessionRuntimeRegistry<RttRuntime>` 建立弱索引。SessionStore 仍是用户可见连接生命周期的唯一权威所有者；RTT Runtime 只持有插件私有资源与状态。
 
-调试探针对象只由单独 worker 线程拥有。Tauri command 不直接借用 probe/session/core，而是通过有界命令队列请求写入、刷新 Channel 或关闭。probe-rs `Core` 只作为一次操作的短生命周期借用。
+`EmbeddedDebugManager` 是进程内的物理探针所有权 registry。进入 registry 前，Auto/显式 selector 都先解析为 canonical selector；registry 以 canonical physical probe identity 为槽位，同一探针只有一个活动的 `DebugTargetRuntime`。相同 target/wire/speed 配置复用该 runtime；同一物理探针若请求不同目标配置则显式返回冲突，而不是尝试第二次打开 USB probe。每个 `DebugTargetRuntime` 都由单独 worker 线程唯一拥有 probe-rs `Session`，RTT worker 只通过有界调度队列提交短操作，`Core` 仍只在该 worker 中短生命周期借用。RTT 取得独占的 `rtt` service lease，防止同一物理目标出现第二个 RTT reader；未来变量采样等不同 service 可以复用同一 target worker，而不复制 probe handle。
 
 ## Backend
 
 ### 原生调试探针
 
-原生 backend 使用锁定版本的 `probe-rs`，负责探针发现、SWD/JTAG、目标 attach、CPU Core、RTT 定位和 Up/Down Channel I/O。配置支持：
+原生 backend 使用锁定版本的 `probe-rs`。probe 枚举和连接身份仍由公共 embedded-debug 层提供，RTT 模块只拥有 Control Block 定位、Channel metadata、Up/Down I/O 与 RTT 错误语义。配置支持：
 
 - 自动选择唯一探针或显式 probe selector；
 - 目标芯片；
@@ -60,7 +65,7 @@ probe-rs Session / RTT       127.0.0.1 RTT TELNET
 
 attach timeout、poll cadence、write timeout 属于 Runtime 调度策略，不是 Saved Session 的用户参数。接口速度留空才表示 probe 默认速度，不使用 `0` 作为 UI 哨兵值。
 
-Channel 刷新使用当前 Session/Core 与原定位策略重新 attach RTT，成功后原子替换 RTT handle 与 Channel metadata；失败时保留原 runtime。
+Channel 刷新通过共享 target worker 使用当前 Session/Core 与原定位策略重新 attach RTT，成功后原子替换 RTT handle 与 Channel metadata；失败时保留原 runtime。RTT poll/write/refresh 都不能直接取得 probe-rs Session 所有权。
 
 ### 已有 J-Link 调试会话
 
@@ -95,7 +100,7 @@ RTT 数据离开 backend 的当刻就形成 canonical frame，包含：
 
 sequence/offset 不在 WebView presentation 阶段补造，因此不同 Channel 的原始到达顺序和每 Channel 偏移不会因批处理而丢失。
 
-worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。每次循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
+worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native backend 的一次 target-worker Up poll 同样限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免 RTT 在共享 probe scheduler 上形成一个无界长操作。每次循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
 
 ## 历史、日志与丢失语义
 
@@ -111,7 +116,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 ## 前端运行态与后台生命周期
 
-RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、Send target 与 view mode 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。
+RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、Send target 与 view mode 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。前端缓存同时执行 per-channel 与 per-session 总预算，Log 视图只挂载有界的近期 chunk，避免多 Channel 长时运行把 WebView 内存和 DOM 数量按 Channel 数线性放大。
 
 同一 Saved Session 重连会创建新的 generation；新 generation 到达时清空旧 presentation cache 并重新同步 source/target，禁止旧事件污染新 runtime。
 
@@ -119,7 +124,7 @@ RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、Send tar
 
 连接成功边界是 backend 已打开、RTT 已完成 attach/定位并取得初始 Channel metadata；此前公共 Session 不发布 Connected。
 
-正常关闭按“停止接受新工作 → 请求 worker shutdown → flush presentation → backend shutdown → join → runtime registry detach”收敛。运行期 probe 拔出、目标掉电或 backend fatal error 会把 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开；异常断开可使用公共 `retain_terminal` 保留当前进程内只读现场。
+正常关闭按“停止接受新工作 → 请求 RTT worker shutdown → flush presentation → backend shutdown → runtime registry detach”收敛。共享 debug-target worker 使用有界 shutdown handshake：正常返回时 join；若底层 probe I/O 卡死超过边界，则断开命令队列并放弃阻塞等待，让 worker 在底层调用最终返回后自行退出，不能因为不可取消的 USB/debug 调用把应用关闭永久卡死。运行期 probe 拔出、目标掉电或 backend fatal error 会把 runtime 置为 Faulted，并通过 SessionStore 统一标记 Session 断开；异常断开可使用公共 `retain_terminal` 保留当前进程内只读现场。
 
 ## UI
 
@@ -131,13 +136,14 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 ## 扩展边界
 
-SuperWatch/实时变量和 SystemView/RTOS Trace 已证明未来会共享“probe/target 所有权、固件符号、调度、原始观测事件与丢失语义”，但它们不是 RTT 协议本身。本次只把已被当前 RTT 使用验证的公共边界抽出：`AutomationIo`、显式 logical stream 日志、canonical acquisition frame 与 presentation/recording loss 分离。
+SuperWatch/实时变量和 SystemView/RTOS Trace 会共享“probe/target 所有权、固件符号、调度、原始观测事件与丢失语义”，但它们不是 RTT 协议本身。native probe 所有权已经提升到共享 Embedded Debug runtime：RTT 只是其中一个 service，不能再创建插件私有 probe worker。
 
-未来加入直接内存采样时，应把 native probe 所有权从 RTT backend 提升为共享 Embedded Debug runtime，再由 RTT、Memory Sampler 等服务公平调度；SystemView 则作为 RTT raw frame 上的独立 decoder。不得把变量读取或 SystemView 解析塞进 RTT backend。
+未来直接内存采样必须通过同一个 `EmbeddedDebugManager` 获取 target worker，并使用独立 service lease/公平的短操作调度；SystemView/defmt 则订阅 RTT canonical raw source，不允许建立第二个 RTT reader。变量/DWARF/SVD 解析、采样策略和 Trace decoder 都留在各自 observation domain，不能塞进 RTT backend 或公共 Kernel。
 
 ## 代码锚点
 
 - `src/plugin-manifests/rtt.json`
+- `src-tauri/src/embedded_debug/`
 - `src-tauri/src/plugins/rtt/`
 - `src/plugins/rtt/`
 - `src-tauri/src/session/io.rs`
