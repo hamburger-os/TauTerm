@@ -127,14 +127,6 @@ pub(super) fn run(
             }
         }
 
-        // shutdown_inner sets the atomic flag before enqueueing the explicit Shutdown command so
-        // fatal-disconnect reporting can distinguish a requested close. Give the command queue one
-        // scheduling turn first; if it was already unavailable/full, the atomic flag is still an
-        // unconditional escape hatch and shutdown never depends on a successful control enqueue.
-        if shutting_down.load(Ordering::Acquire) {
-            break;
-        }
-
         let mut reads = Vec::<RttReadChunk>::new();
         if let Err(error) = backend.poll(&mut reads) {
             fatal_error = Some(error);
