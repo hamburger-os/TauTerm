@@ -326,6 +326,12 @@ impl VirtualPortManager {
     }
 
     fn reset_obsolete_state(&self, path: &Path, reason: &str) {
+        if self.mode == ManagementMode::DirectUac {
+            log::warn!(
+                "virtual-port ownership state requires privileged repair ({reason}); GUI leaves the protected ledger untouched"
+            );
+            return;
+        }
         let backup = path.with_extension(format!(
             "json.{}.bak",
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
@@ -346,6 +352,10 @@ impl VirtualPortManager {
     }
 
     fn persist_owned_records(&self, records: &[OwnedEndpointRecord]) {
+        if self.mode == ManagementMode::DirectUac {
+            log::error!("refusing to write protected virtual-port ownership from direct GUI mode");
+            return;
+        }
         let path = self.state_path();
         if let Some(parent) = path.parent() {
             if let Err(error) = std::fs::create_dir_all(parent) {
