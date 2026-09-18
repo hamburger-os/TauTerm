@@ -120,6 +120,7 @@ function trimChunks(chunks: RttChunk[]): RttChunk[] {
 
 function trimBuffers(
   buffers: Record<number, readonly RttChunk[]>,
+  preferredChannel: number | null,
 ): Record<number, readonly RttChunk[]> {
   const next: Record<number, readonly RttChunk[]> = { ...buffers };
   const starts = new Map<number, number>();
@@ -131,7 +132,13 @@ function trimBuffers(
   while (total > CLIENT_HISTORY_BYTES_PER_SESSION) {
     let oldestChannel: number | null = null;
     let oldestSequence = Number.POSITIVE_INFINITY;
-    for (const [rawChannel, chunks] of Object.entries(next)) {
+    const candidates = Object.entries(next).filter(([rawChannel, chunks]) => {
+      const channel = Number(rawChannel);
+      const first = chunks[starts.get(channel) ?? 0];
+      return first && channel !== preferredChannel;
+    });
+    const pool = candidates.length > 0 ? candidates : Object.entries(next);
+    for (const [rawChannel, chunks] of pool) {
       const channel = Number(rawChannel);
       const first = chunks[starts.get(channel) ?? 0];
       if (first && first.sequence < oldestSequence) {
@@ -184,7 +191,10 @@ function appendBatch(sessionId: string, generation: number, chunks: readonly Rtt
     if (appendable.length === 0) continue;
     nextBuffers[channelIndex] = trimChunks([...existing, ...appendable]);
   }
-  publish(sessionId, { ...prev, buffers: Object.freeze(trimBuffers(nextBuffers)) });
+  publish(sessionId, {
+    ...prev,
+    buffers: Object.freeze(trimBuffers(nextBuffers, prev.selectedChannel)),
+  });
 }
 
 function ensureListeners(): Promise<void> {
@@ -269,7 +279,10 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
     }
     const nextBuffers: Record<number, readonly RttChunk[]> = { ...prev.buffers };
     nextBuffers[channelIndex] = mergeHistory(nextBuffers[channelIndex] ?? [], history.chunks);
-    publish(sessionId, { ...prev, buffers: Object.freeze(trimBuffers(nextBuffers)) });
+    publish(sessionId, {
+      ...prev,
+      buffers: Object.freeze(trimBuffers(nextBuffers, prev.selectedChannel)),
+    });
   } catch (cause) {
     loaded.delete(channelIndex);
     const prev = current(sessionId);
