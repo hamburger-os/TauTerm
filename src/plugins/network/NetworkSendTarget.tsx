@@ -18,7 +18,7 @@ import styles from "../../components/SendBar/TargetBar.module.css";
 
 const ALL_NETWORK_PEERS = "__all__";
 
-export default function NetworkSendTarget({ sessionId }: { sessionId: string }) {
+export default function NetworkSendTarget({ sessionId, disabled = false }: { sessionId: string; disabled?: boolean }) {
   const { t } = useTranslation();
   const { showToast } = useToast();
   const { state } = useSession();
@@ -71,6 +71,7 @@ export default function NetworkSendTarget({ sessionId }: { sessionId: string }) 
             selectNetworkPeer(sessionId, next || null);
           }}
           title={t("network.selectTarget")}
+          disabled={disabled}
         >
           <option value={ALL_NETWORK_PEERS}>{t("network.targetAllClients")}</option>
           {peers.map(peer => (
@@ -91,6 +92,7 @@ export default function NetworkSendTarget({ sessionId }: { sessionId: string }) 
         value={runtime.manualTarget}
         onChange={(event) => setNetworkManualTarget(sessionId, event.target.value)}
         spellCheck={false}
+        disabled={disabled}
       />
       <select
         className={`${styles.select} liquid-glass-input liquid-glass-select`}
@@ -99,6 +101,7 @@ export default function NetworkSendTarget({ sessionId }: { sessionId: string }) 
           if (event.target.value) setNetworkManualTarget(sessionId, event.target.value);
         }}
         title={t("network.selectTarget")}
+        disabled={disabled}
       >
         <option value="">{t("network.selectTarget")}</option>
         {runtime.udpSources.map(addr => <option key={addr} value={addr}>{addr}</option>)}
