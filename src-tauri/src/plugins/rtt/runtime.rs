@@ -433,7 +433,7 @@ pub struct RttRuntime {
 }
 
 impl RttRuntime {
-    pub fn new(config: RttConfig, embedded_debug: Arc<EmbeddedDebugManager>) -> Self {
+    pub(crate) fn new(config: RttConfig, embedded_debug: Arc<EmbeddedDebugManager>) -> Self {
         Self {
             config,
             embedded_debug,
