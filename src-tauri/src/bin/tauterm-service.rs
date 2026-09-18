@@ -292,7 +292,10 @@ mod service {
                         ),
                     );
                 }
-                let adopted = vpm.adopt_owned_endpoints_for_owner(client_pid);
+                let adopted = match vpm.adopt_owned_endpoints_for_owner(client_pid) {
+                    Ok(adopted) => adopted,
+                    Err(error) => return Response::err(id, error),
+                };
                 clients.insert(req.client_id.clone(), adopted.clone());
                 Some(serde_json::json!({
                     "protocol_version": SERVICE_PROTOCOL_VERSION,
