@@ -319,6 +319,9 @@ fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
         DebugTargetRuntimeError::Timeout => {
             RttError::new(RttErrorCode::OperationTimeout, error.to_string())
         }
+        DebugTargetRuntimeError::InFlightTimeout => {
+            RttError::new(RttErrorCode::OperationOutcomeUnknown, error.to_string())
+        }
         DebugTargetRuntimeError::QueueFull => {
             RttError::new(RttErrorCode::SchedulerBusy, error.to_string())
         }
