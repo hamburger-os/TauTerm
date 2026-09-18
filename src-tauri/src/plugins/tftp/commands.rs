@@ -84,6 +84,7 @@ async fn connect_session(
                 file_transfer: conn.file_transfer,
                 channel_factory: conn.channel_factory,
                 io: None,
+                automation_io: None,
                 attachment: conn.on_attached,
                 teardown_delay: conn.teardown_delay,
             },
