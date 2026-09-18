@@ -4,7 +4,7 @@ use super::probe_runtime::{
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -124,15 +124,12 @@ impl DebugTargetRuntime {
         }))
     }
 
-    pub(crate) fn descriptor(&self) -> &DebugTargetDescriptor {
-        &self.descriptor
-    }
-
     /// Execute one short operation on the single owner of the probe-rs Session.
     ///
-    /// Scheduling failures are returned separately from the service's own error type so protocol
-    /// modules keep ownership of their error taxonomy.
-    pub(crate) fn execute<T, E, F>(
+    /// A command that waited in the shared queue until its caller deadline is discarded before
+    /// touching the target. This prevents a timed-out write/read request from producing a late
+    /// target-side effect after another service temporarily occupied the worker.
+    fn execute<T, E, F>(
         &self,
         timeout: Duration,
         operation: F,
@@ -142,20 +139,27 @@ impl DebugTargetRuntime {
         E: Send + 'static,
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
+        let deadline = Instant::now() + timeout;
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.command_tx
             .try_send(TargetCommand::Execute(Box::new(move |probe| {
-                let _ = reply_tx.send(operation(probe));
+                if Instant::now() >= deadline {
+                    let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
+                    return;
+                }
+                let _ = reply_tx.send(Ok(operation(probe)));
             })))
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => DebugTargetRuntimeError::QueueFull,
                 mpsc::TrySendError::Disconnected(_) => DebugTargetRuntimeError::WorkerStopped,
             })?;
 
-        reply_rx.recv_timeout(timeout).map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
-            mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
-        })
+        reply_rx
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
+                mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
+            })?
     }
 
     pub(crate) fn acquire_service(
@@ -171,7 +175,7 @@ impl DebugTargetRuntime {
             return Err(DebugTargetRuntimeError::ServiceBusy { service });
         }
         Ok(DebugServiceLease {
-            runtime: Arc::downgrade(self),
+            runtime: Arc::clone(self),
             service,
         })
     }
@@ -199,16 +203,32 @@ impl Drop for DebugTargetRuntime {
 }
 
 pub(crate) struct DebugServiceLease {
-    runtime: Weak<DebugTargetRuntime>,
+    runtime: Arc<DebugTargetRuntime>,
     service: String,
+}
+
+impl DebugServiceLease {
+    pub(crate) fn descriptor(&self) -> &DebugTargetDescriptor {
+        &self.runtime.descriptor
+    }
+
+    pub(crate) fn execute<T, E, F>(
+        &self,
+        timeout: Duration,
+        operation: F,
+    ) -> Result<Result<T, E>, DebugTargetRuntimeError>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+        F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
+    {
+        self.runtime.execute(timeout, operation)
+    }
 }
 
 impl Drop for DebugServiceLease {
     fn drop(&mut self) {
-        let Some(runtime) = self.runtime.upgrade() else {
-            return;
-        };
-        if let Ok(mut active) = runtime.active_services.lock() {
+        if let Ok(mut active) = self.runtime.active_services.lock() {
             active.remove(&self.service);
         };
     }
