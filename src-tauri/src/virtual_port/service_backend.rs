@@ -415,7 +415,6 @@ impl ServiceBackend {
         }
         Ok(())
     }
-
 }
 
 impl VirtualPortBackend for ServiceBackend {
