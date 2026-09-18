@@ -1,8 +1,10 @@
 use super::RttBackend;
 use crate::embedded_debug::firmware_artifact::{FirmwareArtifact, FirmwareArtifactError};
 use crate::embedded_debug::probe_runtime::{
-    list_probes as list_debug_probes, DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime,
-    DebugWireProtocol,
+    list_probes as list_debug_probes, DebugProbeConfig, DebugProbeOpenError, DebugWireProtocol,
+};
+use crate::embedded_debug::runtime::{
+    DebugServiceLease, DebugTargetRuntime, DebugTargetRuntimeError, EmbeddedDebugManager,
 };
 use crate::plugins::rtt::config::{RttConfig, RttLocator, RttWireProtocol};
 use crate::plugins::rtt::error::{RttError, RttErrorCode};
@@ -14,13 +16,17 @@ use probe_rs::rtt::{
     find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion,
 };
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const CHANNEL_REFRESH_TIMEOUT_CAP: Duration = Duration::from_secs(2);
+const TARGET_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct ProbeRsRttBackend {
-    probe: DebugProbeRuntime,
-    rtt: Rtt,
+    target: Arc<DebugTargetRuntime>,
+    _service_lease: DebugServiceLease,
+    rtt: Arc<Mutex<Rtt>>,
+    control_block_address: u64,
     core_index: usize,
     region: ScanRegion,
     refresh_timeout: Duration,
@@ -40,8 +46,11 @@ pub fn list_probes() -> Vec<RttProbeInfo> {
 }
 
 impl ProbeRsRttBackend {
-    pub fn open(config: &RttConfig) -> Result<Self, RttError> {
-        let target = config
+    pub fn open(
+        config: &RttConfig,
+        embedded_debug: &EmbeddedDebugManager,
+    ) -> Result<Self, RttError> {
+        let target_name = config
             .target
             .clone()
             .ok_or_else(|| RttError::invalid_config("ProbeRs 模式缺少目标芯片"))?;
@@ -49,39 +58,55 @@ impl ProbeRsRttBackend {
             RttWireProtocol::Swd => DebugWireProtocol::Swd,
             RttWireProtocol::Jtag => DebugWireProtocol::Jtag,
         };
-        let mut probe = DebugProbeRuntime::open(&DebugProbeConfig {
-            selector: config.probe_selector.clone(),
-            target,
-            wire_protocol,
-            speed_khz: config.speed_khz,
-        })
-        .map_err(map_probe_open_error)?;
+        let target = embedded_debug
+            .acquire_target(&DebugProbeConfig {
+                selector: config.probe_selector.clone(),
+                target: target_name,
+                wire_protocol,
+                speed_khz: config.speed_khz,
+            })
+            .map_err(map_target_runtime_error)?;
+        let service_lease = target
+            .acquire_service("rtt")
+            .map_err(map_target_runtime_error)?;
 
         let region = resolve_scan_region(config)?;
-        let mut core = probe
-            .session_mut()
-            .core(config.core_index)
-            .map_err(|error| {
-                RttError::new(
-                    RttErrorCode::CoreNotFound,
-                    format!("无法打开 CPU Core {}: {error}", config.core_index),
-                )
-            })?;
-        let mut rtt = try_attach_to_rtt(&mut core, config.attach_timeout, &region)
-            .map_err(map_rtt_attach_error)?;
-        drop(core);
-        let channels = collect_channels(&mut rtt)?;
+        let core_index = config.core_index;
+        let attach_timeout = config.attach_timeout;
+        let attach_region = region.clone();
+        let (rtt, channels) = target
+            .execute(
+                attach_timeout.saturating_add(Duration::from_secs(1)),
+                move |probe| {
+                    let mut core = probe.session_mut().core(core_index).map_err(|error| {
+                        RttError::new(
+                            RttErrorCode::CoreNotFound,
+                            format!("无法打开 CPU Core {core_index}: {error}"),
+                        )
+                    })?;
+                    let mut rtt = try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
+                        .map_err(map_rtt_attach_error)?;
+                    drop(core);
+                    let channels = collect_channels(&mut rtt)?;
+                    Ok((rtt, channels))
+                },
+            )
+            .map_err(map_target_runtime_error)??;
+        let control_block_address = rtt.ptr();
 
         Ok(Self {
-            probe,
-            rtt,
-            core_index: config.core_index,
+            target,
+            _service_lease: service_lease,
+            rtt: Arc::new(Mutex::new(rtt)),
+            control_block_address,
+            core_index,
             region,
             refresh_timeout: config.attach_timeout.min(CHANNEL_REFRESH_TIMEOUT_CAP),
             channels,
         })
     }
 }
+
 fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
     match &config.locator {
         RttLocator::Auto => {
@@ -152,9 +177,9 @@ impl RttBackend for ProbeRsRttBackend {
         RttBackendDescriptor {
             kind: "probe_rs".into(),
             display_name: "ProbeRs".into(),
-            target: Some(self.probe.target().to_string()),
-            probe: Some(self.probe.probe_label().to_string()),
-            control_block_address: Some(format!("0x{:X}", self.rtt.ptr())),
+            target: Some(self.target.descriptor().target.clone()),
+            probe: Some(self.target.descriptor().probe_label.clone()),
+            control_block_address: Some(format!("0x{:X}", self.control_block_address)),
             capabilities: RttBackendCapabilities {
                 enumerate_channels: true,
                 channel_metadata: true,
@@ -169,78 +194,119 @@ impl RttBackend for ProbeRsRttBackend {
     }
 
     fn poll(&mut self, output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
-        let mut core = self
-            .probe
-            .session_mut()
-            .core(self.core_index)
-            .map_err(|error| {
-                RttError::new(
-                    RttErrorCode::ProbeDisconnected,
-                    format!("RTT 轮询时无法访问 CPU Core: {error}"),
-                )
-            })?;
-        let mut buffer = [0u8; 4 * 1024];
-        for channel in self.rtt.up_channels().iter_mut() {
-            for _ in 0..4 {
-                let count = channel
-                    .read(&mut core, &mut buffer)
-                    .map_err(map_rtt_io_error)?;
-                if count == 0 {
-                    break;
+        let rtt = Arc::clone(&self.rtt);
+        let core_index = self.core_index;
+        let chunks = self
+            .target
+            .execute(TARGET_OPERATION_TIMEOUT, move |probe| {
+                let mut core = probe.session_mut().core(core_index).map_err(|error| {
+                    RttError::new(
+                        RttErrorCode::ProbeDisconnected,
+                        format!("RTT 轮询时无法访问 CPU Core: {error}"),
+                    )
+                })?;
+                let mut rtt = rtt
+                    .lock()
+                    .map_err(|error| RttError::backend(error.to_string()))?;
+                let mut chunks = Vec::new();
+                let mut buffer = [0u8; 4 * 1024];
+                for channel in rtt.up_channels().iter_mut() {
+                    for _ in 0..4 {
+                        let count = channel
+                            .read(&mut core, &mut buffer)
+                            .map_err(map_rtt_io_error)?;
+                        if count == 0 {
+                            break;
+                        }
+                        chunks.push(RttReadChunk {
+                            channel_index: channel.number() as u32,
+                            data: buffer[..count].to_vec(),
+                        });
+                        if count < buffer.len() {
+                            break;
+                        }
+                    }
                 }
-                output.push(RttReadChunk {
-                    channel_index: channel.number() as u32,
-                    data: buffer[..count].to_vec(),
-                });
-                if count < buffer.len() {
-                    break;
-                }
-            }
-        }
+                Ok(chunks)
+            })
+            .map_err(map_target_runtime_error)??;
+        output.extend(chunks);
         Ok(())
     }
 
     fn write(&mut self, channel_index: u32, data: &[u8]) -> Result<usize, RttError> {
-        let mut core = self
-            .probe
-            .session_mut()
-            .core(self.core_index)
-            .map_err(|error| {
-                RttError::new(
-                    RttErrorCode::ProbeDisconnected,
-                    format!("RTT 写入时无法访问 CPU Core: {error}"),
-                )
-            })?;
-        let channel = self
-            .rtt
-            .down_channel(channel_index as usize)
-            .ok_or_else(|| {
-                RttError::new(
-                    RttErrorCode::RttChannelNotFound,
-                    format!("RTT Down Channel {channel_index} 不存在"),
-                )
-            })?;
-        channel.write(&mut core, data).map_err(map_rtt_io_error)
+        let rtt = Arc::clone(&self.rtt);
+        let core_index = self.core_index;
+        let data = data.to_vec();
+        self.target
+            .execute(TARGET_OPERATION_TIMEOUT, move |probe| {
+                let mut core = probe.session_mut().core(core_index).map_err(|error| {
+                    RttError::new(
+                        RttErrorCode::ProbeDisconnected,
+                        format!("RTT 写入时无法访问 CPU Core: {error}"),
+                    )
+                })?;
+                let mut rtt = rtt
+                    .lock()
+                    .map_err(|error| RttError::backend(error.to_string()))?;
+                let channel = rtt.down_channel(channel_index as usize).ok_or_else(|| {
+                    RttError::new(
+                        RttErrorCode::RttChannelNotFound,
+                        format!("RTT Down Channel {channel_index} 不存在"),
+                    )
+                })?;
+                channel.write(&mut core, &data).map_err(map_rtt_io_error)
+            })
+            .map_err(map_target_runtime_error)?
     }
 
     fn refresh_channels(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
-        let mut core = self
-            .probe
-            .session_mut()
-            .core(self.core_index)
-            .map_err(|error| {
-                RttError::new(
-                    RttErrorCode::ProbeDisconnected,
-                    format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
-                )
-            })?;
-        let mut refreshed = try_attach_to_rtt(&mut core, self.refresh_timeout, &self.region)
-            .map_err(map_rtt_attach_error)?;
-        drop(core);
-        let channels = collect_channels(&mut refreshed)?;
-        self.rtt = refreshed;
+        let rtt = Arc::clone(&self.rtt);
+        let core_index = self.core_index;
+        let refresh_timeout = self.refresh_timeout;
+        let region = self.region.clone();
+        let (channels, control_block_address) = self
+            .target
+            .execute(
+                refresh_timeout.saturating_add(Duration::from_secs(1)),
+                move |probe| {
+                    let mut core = probe.session_mut().core(core_index).map_err(|error| {
+                        RttError::new(
+                            RttErrorCode::ProbeDisconnected,
+                            format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
+                        )
+                    })?;
+                    let mut refreshed = try_attach_to_rtt(&mut core, refresh_timeout, &region)
+                        .map_err(map_rtt_attach_error)?;
+                    drop(core);
+                    let channels = collect_channels(&mut refreshed)?;
+                    let control_block_address = refreshed.ptr();
+                    *rtt.lock()
+                        .map_err(|error| RttError::backend(error.to_string()))? = refreshed;
+                    Ok((channels, control_block_address))
+                },
+            )
+            .map_err(map_target_runtime_error)??;
+        self.control_block_address = control_block_address;
         self.channels = channels;
         Ok(self.channels.clone())
+    }
+}
+
+fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
+    match error {
+        DebugTargetRuntimeError::Open(error) => map_probe_open_error(error),
+        DebugTargetRuntimeError::ServiceBusy { .. } => {
+            RttError::new(RttErrorCode::ProbeBusy, error.to_string())
+        }
+        DebugTargetRuntimeError::Timeout => {
+            RttError::new(RttErrorCode::ProbeDisconnected, error.to_string())
+        }
+        DebugTargetRuntimeError::QueueFull
+        | DebugTargetRuntimeError::WorkerStopped
+        | DebugTargetRuntimeError::WorkerStart(_) => {
+            RttError::new(RttErrorCode::BackendFault, error.to_string())
+        }
     }
 }
 
@@ -261,6 +327,7 @@ fn map_probe_open_error(error: DebugProbeOpenError) -> RttError {
     };
     RttError::new(code, error.to_string())
 }
+
 fn map_rtt_attach_error(error: ProbeRttError) -> RttError {
     match error {
         ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => {
