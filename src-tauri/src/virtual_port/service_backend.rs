@@ -22,7 +22,7 @@ use super::backend::{
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
-const SERVICE_PROTOCOL_VERSION: u64 = 1;
+const SERVICE_PROTOCOL_VERSION: u64 = 2;
 const GENERIC_READ: u32 = 0x80000000;
 const GENERIC_WRITE: u32 = 0x40000000;
 const OPEN_EXISTING: u32 = 3;
@@ -311,6 +311,22 @@ impl ServiceBackend {
                     .map(|version| version.to_string())
                     .unwrap_or_else(|| "missing".into())
             ));
+        }
+
+        let adopted: Vec<VirtualEndpoint> = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("adopted_endpoints"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("invalid adopted endpoint list from service: {error}"))?
+            .unwrap_or_default();
+
+        Self::clear_local_endpoints(inner);
+        for endpoint in adopted {
+            register_internal_endpoint_path(&endpoint.bridge_path);
+            inner.endpoints.insert(endpoint.resource_id, endpoint);
         }
 
         inner.client_id = client_id;
