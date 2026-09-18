@@ -393,7 +393,9 @@ impl VirtualPortManager {
             "virtual-port ownership state has obsolete/corrupt schema ({reason}); backed up to {:?} and reset",
             backup
         );
-        self.persist_owned_records(&[]);
+        if let Err(error) = self.persist_owned_records(&[]) {
+            log::warn!("failed to reset obsolete virtual-port ownership state: {error}");
+        }
     }
 
     fn load_owned_endpoints(&self) -> Vec<VirtualEndpoint> {
@@ -403,17 +405,17 @@ impl VirtualPortManager {
             .collect()
     }
 
-    fn persist_owned_records(&self, records: &[OwnedEndpointRecord]) {
+    fn persist_owned_records(&self, records: &[OwnedEndpointRecord]) -> Result<(), String> {
         if self.mode == ManagementMode::DirectUac {
-            log::error!("refusing to write protected virtual-port ownership from direct GUI mode");
-            return;
+            return Err(
+                "refusing to write protected virtual-port ownership from direct GUI mode".into(),
+            );
         }
         let path = self.state_path();
         if let Some(parent) = path.parent() {
-            if let Err(error) = std::fs::create_dir_all(parent) {
-                log::warn!("Failed to create virtual-port state directory: {error}");
-                return;
-            }
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!("failed to create virtual-port state directory: {error}")
+            })?;
         }
 
         let mut owned = records.to_vec();
@@ -423,79 +425,83 @@ impl VirtualPortManager {
             schema_version: OWNERSHIP_SCHEMA_VERSION,
             owned_endpoints: owned,
         };
-        let json = match serde_json::to_string(&state) {
-            Ok(json) => json,
-            Err(error) => {
-                log::error!("Failed to serialize virtual-port ownership state: {error}");
-                return;
-            }
-        };
+        let json = serde_json::to_string(&state)
+            .map_err(|error| format!("failed to serialize virtual-port ownership state: {error}"))?;
 
-        let mut file = match atomic_write_file::AtomicWriteFile::open(&path) {
-            Ok(file) => file,
-            Err(error) => {
-                log::warn!("Failed to open virtual-port ownership state for atomic write: {error}");
-                return;
-            }
-        };
-        if let Err(error) = file.write_all(json.as_bytes()) {
-            log::warn!("Failed to write virtual-port ownership state: {error}");
-            return;
-        }
-        if let Err(error) = file.commit() {
-            log::warn!("Failed to atomically commit virtual-port ownership state: {error}");
-        }
+        let mut file = atomic_write_file::AtomicWriteFile::open(&path)
+            .map_err(|error| {
+                format!("failed to open virtual-port ownership state for atomic write: {error}")
+            })?;
+        file.write_all(json.as_bytes())
+            .map_err(|error| format!("failed to write virtual-port ownership state: {error}"))?;
+        file.commit()
+            .map_err(|error| format!("failed to atomically commit virtual-port ownership state: {error}"))
     }
 
     fn remember_owned_endpoints_with_owner(
         &mut self,
         endpoints: &[VirtualEndpoint],
         owner_pid: Option<u32>,
-    ) {
+    ) -> Result<(), String> {
         if endpoints.is_empty() {
-            return;
+            return Ok(());
         }
         let mut owned = self.load_owned_records();
         for endpoint in endpoints {
-            register_internal_endpoint_path(&endpoint.bridge_path);
             owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
             owned.push(OwnedEndpointRecord {
                 endpoint: endpoint.clone(),
                 owner_pid,
             });
         }
-        self.persist_owned_records(&owned);
+        self.persist_owned_records(&owned)?;
+        for endpoint in endpoints {
+            register_internal_endpoint_path(&endpoint.bridge_path);
+        }
+        Ok(())
     }
 
-    fn remember_owned_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
-        self.remember_owned_endpoints_with_owner(endpoints, self.owner_pid);
+    fn remember_owned_endpoints(
+        &mut self,
+        endpoints: &[VirtualEndpoint],
+    ) -> Result<(), String> {
+        self.remember_owned_endpoints_with_owner(endpoints, self.owner_pid)
     }
 
     fn track_active_endpoint_with_owner(
         &mut self,
         endpoint: VirtualEndpoint,
         owner_pid: Option<u32>,
-    ) {
+    ) -> Result<(), String> {
+        if self.mode == ManagementMode::Privileged {
+            self.remember_owned_endpoints_with_owner(
+                std::slice::from_ref(&endpoint),
+                owner_pid,
+            )?;
+        } else {
+            register_internal_endpoint_path(&endpoint.bridge_path);
+        }
+
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
-        self.active_endpoints.insert(endpoint.clone());
-        register_internal_endpoint_path(&endpoint.bridge_path);
-        if self.mode == ManagementMode::Privileged {
-            self.remember_owned_endpoints_with_owner(std::slice::from_ref(&endpoint), owner_pid);
-        }
+        self.active_endpoints.insert(endpoint);
+        Ok(())
     }
 
-    fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) {
-        self.track_active_endpoint_with_owner(endpoint, self.owner_pid);
+    fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) -> Result<(), String> {
+        self.track_active_endpoint_with_owner(endpoint, self.owner_pid)
     }
 
     fn adopt_active_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
         for endpoint in endpoints {
-            self.track_active_endpoint(endpoint.clone());
+            self.active_endpoints
+                .retain(|existing| existing.resource_id != endpoint.resource_id);
+            self.active_endpoints.insert(endpoint.clone());
+            register_internal_endpoint_path(&endpoint.bridge_path);
         }
     }
 
-    fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) {
+    fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
 
@@ -503,7 +509,7 @@ impl VirtualPortManager {
             // The direct GUI has read-only access to machine ownership state. The elevated helper
             // already committed/removed the protected record; the GUI only updates local hiding.
             unregister_internal_endpoint_path(&endpoint.bridge_path);
-            return;
+            return Ok(());
         }
 
         let mut owned = self.load_owned_records();
@@ -513,7 +519,7 @@ impl VirtualPortManager {
             .map(|existing| existing.endpoint.bridge_path.clone())
             .collect::<Vec<_>>();
         owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
-        self.persist_owned_records(&owned);
+        self.persist_owned_records(&owned)?;
 
         if removed_paths.is_empty() {
             unregister_internal_endpoint_path(&endpoint.bridge_path);
@@ -522,14 +528,16 @@ impl VirtualPortManager {
                 unregister_internal_endpoint_path(&path);
             }
         }
+        Ok(())
     }
 
-    fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) {
+    fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
         if self.mode == ManagementMode::Privileged {
-            self.remember_owned_endpoints(std::slice::from_ref(endpoint));
+            self.remember_owned_endpoints(std::slice::from_ref(endpoint))?;
         }
+        Ok(())
     }
 
     fn record_is_reclaimable(&self, record: &OwnedEndpointRecord) -> bool {
