@@ -61,9 +61,9 @@ struct ElevatedRequest {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct ElevatedResult {
-    endpoints: Vec<VirtualEndpoint>,
-    cleaned: u32,
+pub(crate) struct ElevatedResult {
+    pub(crate) endpoints: Vec<VirtualEndpoint>,
+    pub(crate) cleaned_endpoints: Vec<VirtualEndpoint>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,23 +83,22 @@ pub fn ensure_endpoints(
     resource_dir: &Path,
     count: u32,
     cleanup: Vec<VirtualEndpoint>,
-) -> Result<Vec<VirtualEndpoint>, String> {
+) -> Result<ElevatedResult, String> {
     invoke(
         resource_dir,
         ElevatedOperation::EnsureEndpoints { count, cleanup },
     )
-    .map(|result| result.endpoints)
 }
 
 pub fn cleanup_endpoints(
     resource_dir: &Path,
     endpoints: Vec<VirtualEndpoint>,
-) -> Result<u32, String> {
+) -> Result<Vec<VirtualEndpoint>, String> {
     invoke(
         resource_dir,
         ElevatedOperation::CleanupEndpoints { endpoints },
     )
-    .map(|result| result.cleaned)
+    .map(|result| result.cleaned_endpoints)
 }
 
 fn invoke(resource_dir: &Path, operation: ElevatedOperation) -> Result<ElevatedResult, String> {
@@ -235,18 +234,34 @@ fn execute_request(request: ElevatedRequest) -> Result<ElevatedResult, String> {
                 return Err(format!("invalid virtual endpoint count: {count}"));
             }
             validate_cleanup_set(&manager, &cleanup)?;
-            for endpoint in cleanup {
-                manager.destroy_endpoint(&endpoint)?;
-            }
+
+            // Create the new endpoints first. This keeps the GUI's old orphan visibility state
+            // truthful if creation fails: no old endpoint has been removed behind its back.
             let endpoints = manager
                 .ensure_endpoints(&VirtualPortConfig {
                     enabled: true,
                     count,
                 })
                 .map_err(|error| error.to_string())?;
+
+            let mut cleaned_endpoints = Vec::new();
+            for endpoint in cleanup {
+                match manager.destroy_endpoint(&endpoint) {
+                    Ok(()) => cleaned_endpoints.push(endpoint),
+                    Err(error) => {
+                        log::warn!(
+                            "deferred cleanup for old direct-UAC endpoint {} (bus {}): {}",
+                            endpoint.external_path,
+                            endpoint.resource_id,
+                            error
+                        );
+                    }
+                }
+            }
+
             Ok(ElevatedResult {
                 endpoints,
-                cleaned: 0,
+                cleaned_endpoints,
             })
         }
         ElevatedOperation::CleanupEndpoints { endpoints } => {
@@ -254,14 +269,24 @@ fn execute_request(request: ElevatedRequest) -> Result<ElevatedResult, String> {
                 return Err("too many virtual endpoints in cleanup request".into());
             }
             validate_cleanup_set(&manager, &endpoints)?;
-            let mut cleaned = 0u32;
+
+            let mut cleaned_endpoints = Vec::new();
             for endpoint in endpoints {
-                manager.destroy_endpoint(&endpoint)?;
-                cleaned = cleaned.saturating_add(1);
+                match manager.destroy_endpoint(&endpoint) {
+                    Ok(()) => cleaned_endpoints.push(endpoint),
+                    Err(error) => {
+                        log::warn!(
+                            "virtual-port helper could not clean {} (bus {}): {}",
+                            endpoint.external_path,
+                            endpoint.resource_id,
+                            error
+                        );
+                    }
+                }
             }
             Ok(ElevatedResult {
                 endpoints: Vec::new(),
-                cleaned,
+                cleaned_endpoints,
             })
         }
     }
