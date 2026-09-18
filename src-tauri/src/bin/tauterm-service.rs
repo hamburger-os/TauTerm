@@ -53,7 +53,7 @@ mod service {
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const WAIT_OBJECT_0: u32 = 0;
-    const DISCONNECT_EXIT_GRACE_MS: u32 = 5_000;
+    const INFINITE: u32 = 0xFFFF_FFFF;
 
     const GENERIC_READ: u32 = 0x80000000;
     const GENERIC_WRITE: u32 = 0x40000000;
@@ -191,15 +191,58 @@ mod service {
         }
     }
 
-    fn client_exited_within(pid: u32, timeout_ms: u32) -> bool {
-        let process = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
-        if process.is_null() {
-            // Fail closed: an unverifiable PID must not authorize endpoint deletion.
-            return false;
+    fn schedule_disconnect_cleanup(
+        vpm: Arc<Mutex<VirtualPortManager>>,
+        client_pid: u32,
+        endpoints: Vec<VirtualEndpoint>,
+    ) {
+        if endpoints.is_empty() {
+            return;
         }
-        let result = unsafe { WaitForSingleObject(process, timeout_ms) };
-        unsafe { CloseHandle(process) };
-        result == WAIT_OBJECT_0
+
+        let process = unsafe { OpenProcess(SYNCHRONIZE, 0, client_pid) };
+        if process.is_null() {
+            // Fail closed: an unverifiable PID must not authorize endpoint deletion. Protected
+            // ownership remains available for service restart/manual reconciliation.
+            log::warn!(
+                "cannot monitor GUI PID {} after service disconnect; preserving {} virtual endpoint(s)",
+                client_pid,
+                endpoints.len()
+            );
+            return;
+        }
+
+        let _ = std::thread::spawn(move || {
+            let wait = unsafe { WaitForSingleObject(process, INFINITE) };
+            unsafe { CloseHandle(process) };
+            if wait != WAIT_OBJECT_0 {
+                log::warn!(
+                    "GUI PID {} exit watcher failed; preserving {} virtual endpoint(s)",
+                    client_pid,
+                    endpoints.len()
+                );
+                return;
+            }
+
+            match vpm.lock() {
+                Ok(mut manager) => {
+                    for endpoint in &endpoints {
+                        if let Err(error) = manager.destroy_endpoint(endpoint) {
+                            log::warn!(
+                                "post-exit cleanup bus {} deferred after error: {}",
+                                endpoint.resource_id,
+                                error
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!(
+                        "virtual-port manager lock poisoned during post-exit cleanup: {error}"
+                    );
+                }
+            }
+        });
     }
 
     fn read_exact(pipe: HANDLE, buf: &mut [u8]) -> bool {
@@ -473,34 +516,16 @@ mod service {
         }
 
         // A broken pipe is not proof that the GUI process is gone: ServiceBackend may reconnect
-        // while the previous server thread is still unwinding. Only delete this connection's
-        // endpoints after the authenticated process itself has exited. Otherwise keep the active
-        // set + protected ownership intact so a replacement connection can re-adopt it safely.
-        if client_exited_within(client_pid, DISCONNECT_EXIT_GRACE_MS) {
-            match vpm.lock() {
-                Ok(mut manager) => {
-                    for endpoint in &endpoints {
-                        if let Err(error) = manager.destroy_endpoint(endpoint) {
-                            log::warn!(
-                                "disconnect cleanup bus {} deferred after error: {}",
-                                endpoint.resource_id,
-                                error
-                            );
-                        }
-                    }
-                }
-                Err(error) => {
-                    log::warn!(
-                        "virtual-port manager lock poisoned during disconnect cleanup: {error}"
-                    );
-                }
-            }
-        } else if !endpoints.is_empty() {
+        // while this server thread is unwinding. Keep the endpoint active and attach cleanup to
+        // the authenticated process handle. Reconnects can safely re-adopt the same identity;
+        // cleanup happens only after that exact process exits.
+        if !endpoints.is_empty() {
             log::info!(
-                "service connection closed while GUI PID {} is still alive; preserving {} virtual endpoint(s) for reconnect",
+                "service connection closed for GUI PID {}; preserving {} virtual endpoint(s) until process exit",
                 client_pid,
                 endpoints.len()
             );
+            schedule_disconnect_cleanup(Arc::clone(vpm), client_pid, endpoints);
         }
     }
 
