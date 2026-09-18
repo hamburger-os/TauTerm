@@ -8,12 +8,11 @@
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use windows_sys::Win32::Foundation::GetLastError;
+use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
 use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
 use windows_sys::Win32::Security::{
     SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
 };
-use windows_sys::Win32::System::Memory::LocalFree;
 
 pub fn ownership_state_dir() -> PathBuf {
     std::env::var_os("PROGRAMDATA")
@@ -120,6 +119,9 @@ mod tests {
     fn ownership_path_is_machine_level() {
         let path = ownership_state_dir();
         assert!(path.ends_with(Path::new("TauTerm").join("virtual-port")));
-        assert!(!path.to_string_lossy().to_ascii_lowercase().contains("appdata"));
+        assert!(!path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains("appdata"));
     }
 }
