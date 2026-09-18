@@ -482,14 +482,16 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
     assert!(
         observation.contains("pub struct ObservationSource")
             && observation.contains("mpsc::sync_channel")
-            && observation.contains("subscriber.try_send"),
+            && observation.contains("subscriber.sender.try_send")
+            && observation.contains("pub fn dropped(&self) -> u64"),
         "embedded observation consumers must share a typed bounded source instead of starting duplicate hardware readers"
     );
 
     let rtt_runtime = read_source("plugins/rtt/runtime.rs");
     assert!(
         rtt_runtime.contains("raw_source: ObservationSource<StoredRttChunk>")
-            && rtt_runtime.contains("self.raw_source.publish(&chunk)"),
+            && rtt_runtime.contains("self.raw_source.publish(&chunk)")
+            && rtt_runtime.contains("pub fn subscribe_observations"),
         "RTT acquisition must publish canonical frames to the shared typed observation source"
     );
 }
