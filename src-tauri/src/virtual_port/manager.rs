@@ -206,13 +206,13 @@ impl DriverMutationGuard {
             bInheritHandle: 0,
         };
         let handle = unsafe { CreateMutexW(&security, 0, name.as_ptr()) };
+        let create_error = handle.is_null().then(|| unsafe { GetLastError() });
         unsafe {
             let _ = LocalFree(descriptor);
         }
-        if handle.is_null() {
+        if let Some(error) = create_error {
             return Err(format!(
-                "failed to create/open com0com mutation mutex (Win32 {})",
-                unsafe { GetLastError() }
+                "failed to create/open com0com mutation mutex (Win32 {error})"
             ));
         }
         let wait = unsafe { WaitForSingleObject(handle, MUTATION_LOCK_TIMEOUT_MS) };
