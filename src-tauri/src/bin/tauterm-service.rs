@@ -351,20 +351,6 @@ mod service {
                     None => return Response::err(id, "missing 'bus'".into()),
                 }
             }
-            "cleanup_client" => {
-                if let Some(list) = clients.remove(&req.client_id) {
-                    for pair in list {
-                        if let Err(error) = vpm.destroy_endpoint(&pair) {
-                            log::warn!(
-                                "cleanup_client bus {} deferred after error: {}",
-                                pair.resource_id,
-                                error
-                            );
-                        }
-                    }
-                }
-                Some(serde_json::json!({}))
-            }
             "cleanup_orphans" => match vpm.cleanup_orphans() {
                 Ok(cleaned) => Some(serde_json::json!({ "cleaned": cleaned })),
                 Err(error) => return Response::err(id, error),
