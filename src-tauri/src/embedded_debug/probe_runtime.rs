@@ -82,12 +82,12 @@ impl DebugProbeRuntime {
             DebugWireProtocol::Swd => WireProtocol::Swd,
             DebugWireProtocol::Jtag => WireProtocol::Jtag,
         };
-        probe
-            .select_protocol(wire_protocol)
-            .map_err(|error| DebugProbeOpenError::UnsupportedWireProtocol {
+        probe.select_protocol(wire_protocol).map_err(|error| {
+            DebugProbeOpenError::UnsupportedWireProtocol {
                 protocol: format!("{wire_protocol:?}"),
                 detail: error.to_string(),
-            })?;
+            }
+        })?;
 
         if let Some(speed_khz) = config.speed_khz {
             probe
