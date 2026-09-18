@@ -56,6 +56,7 @@ pub(crate) struct DebugTargetRuntime {
 
 impl DebugTargetRuntime {
     fn open(config: ResolvedDebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
+        let connection_config = config.connection_config();
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
@@ -104,7 +105,7 @@ impl DebugTargetRuntime {
         Ok(Arc::new(Self {
             command_tx,
             worker: Mutex::new(Some(handle)),
-            connection_config: config.connection_config(),
+            connection_config,
             descriptor,
             active_services: Mutex::new(HashSet::new()),
         }))
