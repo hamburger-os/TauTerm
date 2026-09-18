@@ -4,7 +4,7 @@ description: "TauTerm Windows com0com virtual-port architecture and maintenance 
 license: MIT
 metadata:
   author: tauterm
-  version: "3.2"
+  version: "3.3"
 ---
 
 # TauTerm com0com 虚拟串口维护参考
@@ -17,7 +17,7 @@ metadata:
 
 修改虚拟串口之前先确认以下规则全部成立：
 
-1. **Windows 生产路径优先通过 `TauTermService` 执行 com0com 特权操作。** 服务以 LocalSystem 运行，App 通过窄类型命名管道协议请求固定操作，绝不透传任意 setupc 参数。服务不可用时 GUI 进入 `direct-uac-on-demand`；普通启动不执行 `setupc list`/orphan cleanup，只有用户明确创建、安装或手动清理时才进入按需 UAC。
+1. **Windows 生产路径优先通过 `TauTermService` 执行 com0com 特权操作。** 服务以 LocalSystem 运行，App 通过窄类型命名管道协议请求固定操作，绝不透传任意 setupc 参数。Release 构建服务不可用时进入 `direct-uac-on-demand`；Debug 开发构建直接使用 `direct-uac-on-demand`，不先探测正式服务身份边界。普通启动不执行 `setupc list`/orphan cleanup，只有用户明确创建、安装或手动清理时才进入按需 UAC。
 2. **用户只看到 external endpoint。** `VirtualEndpoint.bridge_path` 是 TauTerm 内部桥接资源，`external_path` 才是用户和第三方串口工具应该打开的端口。
 3. **内部 bridge 必须从普通 Serial 端点发现中隐藏。** Windows 直连后端和 ServiceBackend 客户端都通过 `virtual_port::backend` 的内部端点注册表维护可见性。
 4. **前端契约只暴露 `external_path`。** 不把 `bridge_path`、CNCA/CNCB 或 bus 编号泄漏到 UI。状态栏示例：`VPort: COM21`。
@@ -28,6 +28,7 @@ metadata:
 9. **在线升级保留服务 ownership；正式卸载删除 TauTerm 自己的机器级状态。** NSIS hook 负责服务生命周期和 `%ProgramData%\TauTerm\service` 清理。
 10. **当前 endpoint ownership schema 唯一，不做旧 bus-only 兼容迁移。** 预稳定阶段遇到旧/损坏 schema，只做诊断备份并重新建立当前模型。
 11. **com0com 驱动是系统级共享资源，driver ownership 与 endpoint ownership 完全分离。** 只有安装前确认系统没有 com0com、且本次由 TauTerm 成功安装时，才写 `%ProgramData%\TauTerm\service\driver-owned.marker`。卸载时必须同时满足“driver-owned marker 存在”和“`setupc list` 已确认没有任何端口对”，才允许全局 `setupc uninstall`；否则保留共享驱动。
+12. **DataPlane pump 不做 external COM 阻塞 I/O。** 物理 → 虚拟 fan-out 只向每个 endpoint 的独立有界 egress 入队；一个已打开但停止读取的 external peer 只能把自己的 endpoint 标记为 backpressured，不能堵塞 DataPlane 或其它 endpoint。Windows 发生数据完整性缺口后必须观察到 close → reopen 才以 fresh stream 恢复，不补发缺口期间的历史数据。
 
 典型数据流：
 
@@ -57,10 +58,12 @@ com0com bus
 | Windows com0com endpoint ownership、分配、创建、销毁、恢复 | `src-tauri/src/virtual_port/manager.rs` |
 | App ↔ 特权服务客户端 | `src-tauri/src/virtual_port/service_backend.rs` |
 | Windows LocalSystem 服务 | `src-tauri/src/bin/tauterm-service.rs` |
-| Session 创建/桥接生命周期 | `src-tauri/src/commands.rs` |
+| Serial Session / VPort 生命周期编排 | `src-tauri/src/plugins/serial/mod.rs` |
+| VPort 数据桥接与 endpoint backpressure | `src-tauri/src/virtual_port/bridge.rs` |
 | 驱动状态/显式残留清理 Tauri 命令 | `src-tauri/src/commands/platform.rs` |
 | Serial 端点发现与展示描述 | `src-tauri/src/plugins/serial/mod.rs` |
-| 前端状态栏 | `src/components/Layout/StatusBar.tsx` |
+| 前端 VPort runtime 状态 | `src/plugins/serial/runtime-store.ts` |
+| 前端 Serial 状态栏 | `src/plugins/serial/SerialStatusItems.tsx` |
 | 前端驱动/orphan 状态 | `src/hooks/useCom0comStatus.ts` |
 | Windows 安装/更新/卸载与 driver ownership | `src-tauri/windows/hooks.nsh` |
 | 产品设计 | `docs/modules/SERIAL.md` |
@@ -392,6 +395,9 @@ NSIS 规则：
 | 创建 1 对虚拟端口 | bridge 隐藏，external 可见/可用 |
 | 创建多对 | bus/COM 不冲突，全部 endpoint ownership 明确 |
 | 第三方打开/关闭 external | 不产生 orphan，可重新打开 |
+| external 已打开但停止读取 | 仅该 endpoint 进入 backpressured；DataPlane、父 Serial 与其它 endpoint 继续运行 |
+| backpressured external 关闭后重新打开 | endpoint 以 fresh stream 恢复，不补发缺口期间历史数据 |
+| Debug 构建启动 | 直接进入 direct-uac-on-demand，不探测正式 TauTermService，不产生预期身份拒绝 WARN |
 | 父 Serial Session 断开 | 只清理该 Session 的端点 |
 | App 崩溃 | 服务检测管道断开并清理该 client |
 | Service 崩溃/掉电 | 重启依据 ProgramData endpoint ownership 恢复 |
