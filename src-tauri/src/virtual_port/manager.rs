@@ -4,8 +4,9 @@
 //! - `active_endpoints`：当前进程仍有 Session 持有的端口对；
 //! - `com0com_state.json`：TauTerm 创建且仍应负责回收的端口对（包含 active + orphan）。
 //!
-//! 因此 orphan 的定义严格为 `owned - active`。驱动中的其他 com0com bus 只用于
-//! 端口/bus 冲突检测，绝不能被当作 TauTerm 残留资源删除。
+//! 因此可回收 orphan 的定义是“owned、当前 backend 非 active、且没有其它仍存活
+//! TauTerm owner”。驱动中的其他 com0com bus 只用于冲突/身份核验，绝不能仅凭
+//! bus 编号被当作 TauTerm 残留资源删除。
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -735,19 +736,6 @@ impl VirtualPortManager {
             )
             .max()
             .map_or(0, |max| max.saturating_add(1));
-        while is_reserved_bus(bus) || driver.buses.contains(&bus) || owned_ids.contains(&bus) {
-            bus = bus.saturating_add(1);
-        }
-        bus
-    }
-
-    fn next_bus_after(&self, current: u32, driver: &DriverState) -> u32 {
-        let owned_ids = self
-            .load_owned_endpoints()
-            .into_iter()
-            .map(|endpoint| endpoint.resource_id)
-            .collect::<HashSet<_>>();
-        let mut bus = current.saturating_add(1);
         while is_reserved_bus(bus) || driver.buses.contains(&bus) || owned_ids.contains(&bus) {
             bus = bus.saturating_add(1);
         }
