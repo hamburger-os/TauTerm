@@ -1,14 +1,31 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginRuntimeStore } from "../../core/plugin-registry";
 
+export type SerialVirtualEndpointState = "ready" | "backpressured";
+
 export interface SerialVirtualEndpoint {
   external_path: string;
+  state: SerialVirtualEndpointState;
+  reason?: string;
+  queued_bytes?: number;
+  backlog_limit_bytes?: number;
+  stalled_for_ms?: number;
 }
 
 export interface SerialRuntimeSnapshot {
   endpoints: readonly SerialVirtualEndpoint[];
   error?: string;
   errorKind?: string;
+}
+
+interface SerialVirtualPortHealthEvent {
+  session_id: string;
+  external_path: string;
+  state: SerialVirtualEndpointState;
+  reason?: string;
+  queued_bytes?: number;
+  backlog_limit_bytes?: number;
+  stalled_for_ms?: number;
 }
 
 const EMPTY: SerialRuntimeSnapshot = Object.freeze({
@@ -31,6 +48,25 @@ function publish(sessionId: string, snapshot: SerialRuntimeSnapshot): void {
   listeners.forEach(listener => listener());
 }
 
+function applyEndpointHealth(event: SerialVirtualPortHealthEvent): void {
+  const snapshot = current(event.session_id);
+  const endpoints = snapshot.endpoints.map(endpoint =>
+    endpoint.external_path === event.external_path
+      ? {
+          external_path: endpoint.external_path,
+          state: event.state,
+          reason: event.state === "backpressured" ? event.reason : undefined,
+          queued_bytes: event.state === "backpressured" ? event.queued_bytes : undefined,
+          backlog_limit_bytes:
+            event.state === "backpressured" ? event.backlog_limit_bytes : undefined,
+          stalled_for_ms: event.state === "backpressured" ? event.stalled_for_ms : undefined,
+        }
+      : endpoint,
+  );
+  if (!endpoints.some(endpoint => endpoint.external_path === event.external_path)) return;
+  publish(event.session_id, { ...snapshot, endpoints });
+}
+
 function ensureListeners(): Promise<void> {
   if (listenerReady) return listenerReady;
   listenerReady = (async () => {
@@ -42,6 +78,10 @@ function ensureListeners(): Promise<void> {
         error: undefined,
         errorKind: undefined,
       }),
+    ));
+    registered.push(await listen<SerialVirtualPortHealthEvent>(
+      "virtual-port-health",
+      event => applyEndpointHealth(event.payload),
     ));
     registered.push(await listen<{ session_id: string; kind?: string; reason: string }>(
       "virtual-port-failed",
