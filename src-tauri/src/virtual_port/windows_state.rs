@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
+use windows_sys::core::PWSTR;
 use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
 use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
 use windows_sys::Win32::Security::{
@@ -17,17 +18,11 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
-use windows_sys::core::PWSTR;
 
 fn program_data_dir() -> PathBuf {
     unsafe {
         let mut raw: PWSTR = std::ptr::null_mut();
-        let result = SHGetKnownFolderPath(
-            &FOLDERID_ProgramData,
-            0,
-            std::ptr::null_mut(),
-            &mut raw,
-        );
+        let result = SHGetKnownFolderPath(&FOLDERID_ProgramData, 0, std::ptr::null_mut(), &mut raw);
         if result == 0 && !raw.is_null() {
             let mut len = 0usize;
             while *raw.add(len) != 0 {
