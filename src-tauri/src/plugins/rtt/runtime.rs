@@ -3,7 +3,7 @@ use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
 use crate::kernel::plugin_adapter::SessionService;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -15,7 +15,9 @@ const HISTORY_PER_CHANNEL_BYTES: usize = 256 * 1024;
 const HISTORY_PER_SESSION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -92,7 +94,12 @@ impl HistoryStore {
             })
     }
 
-    fn response(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
+    fn response(
+        &self,
+        generation: u64,
+        channel_index: u32,
+        after_sequence: Option<u64>,
+    ) -> RttHistoryResponse {
         let history = self.channels.get(&channel_index);
         let chunks = match (history, after_sequence) {
             (Some(history), Some(sequence)) => history
@@ -114,14 +121,10 @@ impl HistoryStore {
             (None, _) => Vec::new(),
         }
         .into_iter()
-        .map(|chunk| RttChunkDto {
-            sequence: chunk.sequence,
-            timestamp_ms: chunk.timestamp_ms,
-            channel_index: chunk.channel_index,
-            data_b64: BASE64.encode(&chunk.data),
-        })
+        .map(RttChunkDto::from_stored)
         .collect();
         RttHistoryResponse {
+            generation,
             chunks,
             oldest_sequence: history
                 .and_then(|history| history.chunks.front().map(|chunk| chunk.sequence)),
@@ -137,15 +140,29 @@ pub(super) struct RttShared {
     snapshot: Mutex<RttSnapshot>,
     history: Mutex<HistoryStore>,
     next_sequence: AtomicU64,
+    channel_offsets: Mutex<BTreeMap<u32, u64>>,
+    automation_channel: Mutex<Option<u32>>,
+    automation_subscribers: Mutex<Vec<mpsc::SyncSender<Vec<u8>>>>,
 }
 
 impl RttShared {
-    fn new() -> Self {
+    fn new(generation: u64) -> Self {
         Self {
-            snapshot: Mutex::new(RttSnapshot::default()),
+            snapshot: Mutex::new(RttSnapshot {
+                generation,
+                ..RttSnapshot::default()
+            }),
             history: Mutex::new(HistoryStore::default()),
             next_sequence: AtomicU64::new(1),
+            channel_offsets: Mutex::new(BTreeMap::new()),
+            automation_channel: Mutex::new(None),
+            automation_subscribers: Mutex::new(Vec::new()),
         }
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.snapshot()
+            .generation
     }
 
     pub(super) fn set_phase(&self, phase: RttPhase) {
@@ -159,6 +176,20 @@ impl RttShared {
         descriptor: super::model::RttBackendDescriptor,
         channels: Vec<super::model::RttChannelInfo>,
     ) {
+        if let Ok(mut selected) = self.automation_channel.lock() {
+            let still_writable = selected.is_some_and(|index| {
+                channels
+                    .iter()
+                    .any(|channel| channel.index == index && channel.down.is_some())
+            });
+            if !still_writable {
+                *selected = channels
+                    .iter()
+                    .find(|channel| channel.index == 0 && channel.down.is_some())
+                    .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
+                    .map(|channel| channel.index);
+            }
+        }
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.phase = RttPhase::Running;
             snapshot.backend = Some(descriptor);
@@ -169,10 +200,22 @@ impl RttShared {
 
     pub(super) fn record_rx(&self, channel_index: u32, data: Vec<u8>) -> StoredRttChunk {
         let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
+        let channel_offset = self
+            .channel_offsets
+            .lock()
+            .map(|mut offsets| {
+                let offset = offsets.entry(channel_index).or_insert(0);
+                let current = *offset;
+                *offset = offset.saturating_add(data.len() as u64);
+                current
+            })
+            .unwrap_or(0);
         let chunk = StoredRttChunk {
+            generation: self.generation(),
             sequence,
             timestamp_ms: now_ms(),
             channel_index,
+            channel_offset,
             data,
         };
         let loss = self
@@ -185,12 +228,42 @@ impl RttShared {
             snapshot.dropped_history_chunks = loss.0;
             snapshot.dropped_history_bytes = loss.1;
         }
+        self.publish_automation(&chunk);
         chunk
+    }
+
+    fn publish_automation(&self, chunk: &StoredRttChunk) {
+        let selected = self
+            .automation_channel
+            .lock()
+            .ok()
+            .and_then(|channel| *channel);
+        if selected != Some(chunk.channel_index) {
+            return;
+        }
+        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
+            subscribers.retain(|subscriber| match subscriber.try_send(chunk.data.clone()) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) | Err(mpsc::TrySendError::Disconnected(_)) => {
+                    false
+                }
+            });
+        }
     }
 
     pub(super) fn record_tx(&self, bytes: usize) {
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.tx_bytes = snapshot.tx_bytes.saturating_add(bytes as u64);
+        }
+    }
+
+    pub(super) fn record_presentation_drop(&self, bytes: usize) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.dropped_presentation_chunks =
+                snapshot.dropped_presentation_chunks.saturating_add(1);
+            snapshot.dropped_presentation_bytes = snapshot
+                .dropped_presentation_bytes
+                .saturating_add(bytes as u64);
         }
     }
 
@@ -209,16 +282,70 @@ impl RttShared {
     }
 
     fn history(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
+        let generation = self.generation();
         self.history
             .lock()
-            .map(|history| history.response(channel_index, after_sequence))
+            .map(|history| history.response(generation, channel_index, after_sequence))
             .unwrap_or_else(|_| RttHistoryResponse {
+                generation,
                 chunks: Vec::new(),
                 oldest_sequence: None,
                 newest_sequence: None,
                 dropped_chunks: 0,
                 dropped_bytes: 0,
             })
+    }
+
+    fn set_automation_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        let snapshot = self.snapshot();
+        let channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.index == channel_index)
+            .ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttChannelNotFound,
+                    format!("RTT Channel {channel_index} 不存在"),
+                )
+            })?;
+        if channel.down.is_none() {
+            return Err(RttError::new(
+                RttErrorCode::RttChannelNotFound,
+                format!("RTT Channel {channel_index} 没有 Down 方向"),
+            ));
+        }
+        *self
+            .automation_channel
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        Ok(())
+    }
+
+    fn automation_channel(&self) -> Result<u32, RttError> {
+        self.automation_channel
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttChannelNotFound,
+                    "当前 RTT 会话没有可写 Down Channel",
+                )
+            })
+    }
+
+    fn subscribe_automation(&self) -> Result<RttAutomationRx, SessionIoError> {
+        let (tx, rx) = mpsc::sync_channel(AUTOMATION_SUBSCRIPTION_CAPACITY);
+        self.automation_subscribers
+            .lock()
+            .map_err(|error| SessionIoError::Send(error.to_string()))?
+            .push(tx);
+        Ok(RttAutomationRx { receiver: rx })
+    }
+
+    fn close_automation(&self) {
+        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
+            subscribers.clear();
+        }
     }
 }
 
@@ -234,9 +361,10 @@ pub struct RttRuntime {
 
 impl RttRuntime {
     pub fn new(config: RttConfig) -> Self {
+        let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         Self {
             config,
-            shared: Arc::new(RttShared::new()),
+            shared: Arc::new(RttShared::new(generation)),
             command_tx: Mutex::new(None),
             worker: Mutex::new(None),
             shutting_down: Arc::new(AtomicBool::new(false)),
@@ -299,6 +427,10 @@ impl RttRuntime {
 
     pub fn history(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
         self.shared.history(channel_index, after_sequence)
+    }
+
+    pub fn set_automation_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        self.shared.set_automation_channel(channel_index)
     }
 
     pub fn write(&self, channel_index: u32, data: Vec<u8>) -> Result<usize, RttError> {
@@ -374,9 +506,56 @@ impl RttRuntime {
                 }
             }
         }
+        self.shared.close_automation();
         if !preserve_faulted {
             self.shared.set_phase(RttPhase::Idle);
         }
+    }
+}
+
+struct RttAutomationRx {
+    receiver: mpsc::Receiver<Vec<u8>>,
+}
+
+impl AutomationRx for RttAutomationRx {
+    fn try_recv(&mut self) -> Result<AutomationRxEvent, mpsc::TryRecvError> {
+        self.receiver.try_recv().map(AutomationRxEvent::Data)
+    }
+}
+
+impl AutomationIo for RttRuntime {
+    fn send(&self, data: &[u8]) -> Result<(), SessionIoError> {
+        let channel = self
+            .shared
+            .automation_channel()
+            .map_err(|error| SessionIoError::Send(error.to_string()))?;
+        self.write(channel, data.to_vec())
+            .map(|_| ())
+            .map_err(|error| SessionIoError::Send(error.to_string()))
+    }
+
+    fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        self.send(data)?;
+        Ok(data.to_vec())
+    }
+
+    fn send_to(&self, target: &str, data: &[u8]) -> Result<(), SessionIoError> {
+        let normalized = target.trim().strip_prefix("rtt:").unwrap_or(target.trim());
+        let channel = normalized
+            .parse::<u32>()
+            .map_err(|_| SessionIoError::Send(format!("无效 RTT Down Channel: {target}")))?;
+        self.write(channel, data.to_vec())
+            .map(|_| ())
+            .map_err(|error| SessionIoError::Send(error.to_string()))
+    }
+
+    fn send_to_text(&self, target: &str, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        self.send_to(target, data)?;
+        Ok(data.to_vec())
+    }
+
+    fn subscribe(&self) -> Result<Box<dyn AutomationRx>, SessionIoError> {
+        Ok(Box::new(self.shared.subscribe_automation()?))
     }
 }
 
@@ -397,18 +576,25 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
+    fn chunk(sequence: u64, bytes: usize) -> StoredRttChunk {
+        StoredRttChunk {
+            generation: 7,
+            sequence,
+            timestamp_ms: sequence,
+            channel_index: 0,
+            channel_offset: sequence.saturating_sub(1) * bytes as u64,
+            data: vec![0x55; bytes],
+        }
+    }
+
     #[test]
     fn history_is_bounded_and_reports_loss() {
         let mut history = HistoryStore::default();
         for sequence in 1..=300u64 {
-            history.push(StoredRttChunk {
-                sequence,
-                timestamp_ms: sequence,
-                channel_index: 0,
-                data: vec![0x55; 1024],
-            });
+            history.push(chunk(sequence, 1024));
         }
-        let response = history.response(0, None);
+        let response = history.response(7, 0, None);
+        assert_eq!(response.generation, 7);
         assert!(response.dropped_chunks > 0);
         assert!(response.dropped_bytes > 0);
         assert!(response.oldest_sequence.unwrap_or_default() > 1);
@@ -418,14 +604,9 @@ mod tests {
     fn initial_history_response_prefers_latest_chunks() {
         let mut history = HistoryStore::default();
         for sequence in 1..=600u64 {
-            history.push(StoredRttChunk {
-                sequence,
-                timestamp_ms: sequence,
-                channel_index: 0,
-                data: vec![0x11],
-            });
+            history.push(chunk(sequence, 1));
         }
-        let response = history.response(0, None);
+        let response = history.response(7, 0, None);
         assert_eq!(response.chunks.len(), MAX_HISTORY_RESPONSE_CHUNKS);
         assert_eq!(
             response.chunks.first().map(|chunk| chunk.sequence),
@@ -435,5 +616,16 @@ mod tests {
             response.chunks.last().map(|chunk| chunk.sequence),
             Some(600)
         );
+    }
+
+    #[test]
+    fn runtime_generation_changes_for_each_instance() {
+        let config = RttConfig::from_params(&serde_json::json!({
+            "backend": "jlink_existing"
+        }))
+        .unwrap();
+        let a = RttRuntime::new(config.clone());
+        let b = RttRuntime::new(config);
+        assert_ne!(a.snapshot().generation, b.snapshot().generation);
     }
 }
