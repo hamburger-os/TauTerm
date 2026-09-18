@@ -480,6 +480,7 @@ impl VirtualPortManager {
         Ok(())
     }
 
+    #[cfg(test)]
     fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) -> Result<(), String> {
         self.track_active_endpoint_with_owner(endpoint, self.owner_pid)
     }
