@@ -10,7 +10,8 @@ import {
   type RttViewMode,
 } from "./model";
 
-const CLIENT_HISTORY_BYTES = 512 * 1024;
+const CLIENT_HISTORY_BYTES_PER_CHANNEL = 512 * 1024;
+const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
 
 export interface RttRuntimeSnapshot {
   snapshot: RttSnapshot | null;
@@ -110,11 +111,40 @@ function base64ByteLength(value: string): number {
 function trimChunks(chunks: RttChunk[]): RttChunk[] {
   let total = chunks.reduce((sum, chunk) => sum + base64ByteLength(chunk.data_b64), 0);
   let start = 0;
-  while (total > CLIENT_HISTORY_BYTES && start < chunks.length) {
+  while (total > CLIENT_HISTORY_BYTES_PER_CHANNEL && start < chunks.length) {
     total -= base64ByteLength(chunks[start].data_b64);
     start += 1;
   }
   return start === 0 ? chunks : chunks.slice(start);
+}
+
+function trimBuffers(
+  buffers: Record<number, readonly RttChunk[]>,
+): Record<number, readonly RttChunk[]> {
+  const next: Record<number, readonly RttChunk[]> = { ...buffers };
+  let total = Object.values(next).reduce(
+    (sum, chunks) => sum + chunks.reduce((chunkSum, chunk) => chunkSum + base64ByteLength(chunk.data_b64), 0),
+    0,
+  );
+
+  while (total > CLIENT_HISTORY_BYTES_PER_SESSION) {
+    let oldestChannel: number | null = null;
+    let oldestSequence = Number.POSITIVE_INFINITY;
+    for (const [rawChannel, chunks] of Object.entries(next)) {
+      const first = chunks[0];
+      if (first && first.sequence < oldestSequence) {
+        oldestSequence = first.sequence;
+        oldestChannel = Number(rawChannel);
+      }
+    }
+    if (oldestChannel == null) break;
+    const chunks = next[oldestChannel] ?? [];
+    const first = chunks[0];
+    if (!first) break;
+    total -= base64ByteLength(first.data_b64);
+    next[oldestChannel] = chunks.slice(1);
+  }
+  return next;
 }
 
 function mergeHistory(currentChunks: readonly RttChunk[], history: readonly RttChunk[]): RttChunk[] {
@@ -146,7 +176,7 @@ function appendBatch(sessionId: string, generation: number, chunks: readonly Rtt
     if (appendable.length === 0) continue;
     nextBuffers[channelIndex] = trimChunks([...existing, ...appendable]);
   }
-  publish(sessionId, { ...prev, buffers: Object.freeze(nextBuffers) });
+  publish(sessionId, { ...prev, buffers: Object.freeze(trimBuffers(nextBuffers)) });
 }
 
 function ensureListeners(): Promise<void> {
