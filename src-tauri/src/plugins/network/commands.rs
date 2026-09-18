@@ -244,6 +244,7 @@ fn udp_send_impl(
             DataLogEntry {
                 session_id,
                 direction: DataDirection::TX,
+                stream: None,
                 data_mode,
                 encoding,
                 payload: out.clone(),
