@@ -175,13 +175,16 @@ pub(super) fn run(
             }
         }
 
-        service_one_write(
+        if let Some(error) = service_one_write(
             backend.as_mut(),
             &shared,
             &mut writes,
             log_tx.as_ref(),
             &session_id,
-        );
+        ) {
+            fatal_error = Some(error);
+            break;
+        }
 
         if !presentation.is_empty() && last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL {
             emit_presentation_batch(
@@ -230,14 +233,14 @@ fn service_one_write(
     writes: &mut VecDeque<PendingWrite>,
     log_tx: Option<&mpsc::SyncSender<LogEntry>>,
     session_id: &str,
-) {
+) -> Option<RttError> {
     let Some(mut pending) = writes.pop_front() else {
-        return;
+        return None;
     };
 
     if Instant::now() >= pending.deadline {
         let _ = pending.reply.send(Err(write_timeout(&pending)));
-        return;
+        return None;
     }
 
     let end = pending
@@ -271,9 +274,14 @@ fn service_one_write(
             }
         }
         Err(error) => {
-            let _ = pending.reply.send(Err(error));
+            let fatal = error.has_indeterminate_outcome();
+            let _ = pending.reply.send(Err(error.clone()));
+            if fatal {
+                return Some(error);
+            }
         }
     }
+    None
 }
 
 fn write_timeout(pending: &PendingWrite) -> RttError {
@@ -459,7 +467,9 @@ mod tests {
         }]);
 
         while !writes.is_empty() {
-            service_one_write(&mut backend, &shared, &mut writes, None, "test");
+            assert!(
+                service_one_write(&mut backend, &shared, &mut writes, None, "test").is_none()
+            );
         }
 
         assert_eq!(reply_rx.recv().unwrap().unwrap(), payload.len());
