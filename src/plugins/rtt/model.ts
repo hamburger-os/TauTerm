@@ -52,6 +52,8 @@ export interface RttSnapshot {
   tx_bytes: number;
   dropped_history_bytes: number;
   dropped_history_chunks: number;
+  dropped_automation_bytes: number;
+  dropped_automation_chunks: number;
   dropped_presentation_bytes: number;
   dropped_presentation_chunks: number;
   last_error?: RttErrorSnapshot | null;
