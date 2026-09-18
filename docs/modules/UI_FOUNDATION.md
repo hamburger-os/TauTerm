@@ -78,6 +78,7 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 ## 设计边界
 
 - 连接/子通道失败的协议专属错误格式化由插件 registration 贡献；公共 SessionContext 只负责调用 formatter 和维护通用连接状态，不解析 UAC、SSH、TFTP 等错误文本。
+- 所有声明 `connection` capability 的插件必须同时注册 `sessionPresentation.defaultName`，使新建配置页能在不依赖协议分支的情况下立即预览创建时默认名称；`resolveDefaultSessionName` 只能用于需要宿主/系统解析的进一步细化，不能成为唯一的默认名来源。
 - 协议模块声明内容与能力，不直接拥有整个应用导航。Session 创建/编辑也遵循同一边界：`ConnectDialog` 只承载 `connectForm`，默认参数、SessionOptions、校验、提交前准备和 endpoint 解析由 `PluginRegistration` contribution 所有；Session 类型身份只读取 `PluginManifest.name`，不得再把 `description` 当作卡片名称。共享 UI 可以消费稳定的跨插件 capability，但 capability 的配置适用性必须由插件判定，例如 `elevated_session` 的可用性由 `canCreateElevatedSession` 决定，Workspace 不读取 `shell_kind` 等协议私有参数。
 - Pane 的布局/显示身份与 Session 的业务身份必须分离：Pane 可以切换 Session，但 custom renderer 不得复用前一个 Session 的 React 本地状态；需要跨切换保留的状态必须由明确的 Session-scoped store 持有，而不是依赖组件实例偶然存活。
 - 会话配置更新、连接/重连事件只能刷新动态参数与运行态，不得重新生成已存在根会话的 `Session.name`；名称变化必须来自显式重命名或编辑名称字段。协议若需要不同的默认身份或第二行摘要，应扩展自己的 `sessionPresentation`，而不是在 `SessionSidebar` 中增加协议分支。

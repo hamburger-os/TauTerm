@@ -60,6 +60,10 @@ const trdpManifest = JSON.parse(await readFile(
   path.join(ROOT, "src", "plugin-manifests", "trdp.json"),
   "utf8",
 ));
+const pluginCatalog = await readFile(
+  path.join(ROOT, "src", "plugins", "catalog.ts"),
+  "utf8",
+);
 
 function sliceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -202,6 +206,11 @@ assert.doesNotMatch(
   /description:\s*plugin\.manifest\.description/,
   "Plugin description must not be used as the Session type identity",
 );
+assert.match(
+  await readFile(path.join(ROOT, "src", "core", "plugin-registry.ts"), "utf8"),
+  /sessionPresentation\?\.defaultName/,
+  "Connection plugins must register a creation-time default Session name before installation",
+);
 assert.equal(
   trdpManifest.name,
   "TRDP 调试助手",
@@ -307,16 +316,37 @@ assert.equal(
   "Child terminal identity must continue to use its runtime endpoint",
 );
 
-for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "network", "serial", "modbus"]) {
-  const extension = plugin === "modbus" || plugin === "trdp" || plugin === "network" ? "tsx" : "ts";
-  const source = await readFile(
-    path.join(ROOT, "src", "plugins", plugin, `index.${extension}`),
+const builtinPluginIds = [...pluginCatalog.matchAll(/from\s+["']\.\/([^"']+)["']/g)]
+  .map(match => match[1]);
+assert.ok(builtinPluginIds.length > 0, "Frontend built-in plugin catalog must not be empty");
+assert.equal(
+  new Set(builtinPluginIds).size,
+  builtinPluginIds.length,
+  "Frontend built-in plugin catalog imports must be unique",
+);
+
+for (const plugin of builtinPluginIds) {
+  const manifest = JSON.parse(await readFile(
+    path.join(ROOT, "src", "plugin-manifests", `${plugin}.json`),
     "utf8",
-  );
+  ));
+  if (!manifest.capabilities?.includes("connection")) continue;
+
+  let source;
+  try {
+    source = await readFile(path.join(ROOT, "src", "plugins", plugin, "index.tsx"), "utf8");
+  } catch {
+    source = await readFile(path.join(ROOT, "src", "plugins", plugin, "index.ts"), "utf8");
+  }
   assert.match(
     source,
     /sessionPresentation\s*:/,
     `${plugin} must own its Session presentation contribution`,
+  );
+  assert.match(
+    source,
+    /defaultName\s*:/,
+    `${plugin} must own a creation-time default Session name`,
   );
   assert.match(
     source,
