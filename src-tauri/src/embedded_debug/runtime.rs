@@ -3,6 +3,7 @@ use super::probe_runtime::{
     ResolvedDebugProbeConfig,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -28,8 +29,10 @@ pub(crate) enum DebugTargetRuntimeError {
     QueueFull,
     #[error("嵌入式调试目标 worker 已停止")]
     WorkerStopped,
-    #[error("等待嵌入式调试目标操作完成超时")]
+    #[error("嵌入式调试目标操作在调度前超时")]
     Timeout,
+    #[error("嵌入式调试目标操作执行中超时，结果状态未知")]
+    InFlightTimeout,
     #[error("调试目标服务 {service} 已被占用")]
     ServiceBusy { service: String },
     #[error("调试探针 {probe} 已连接到不同目标配置")]
@@ -244,6 +247,8 @@ impl DebugTargetRuntime {
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
         let deadline = Instant::now() + timeout;
+        let started = Arc::new(AtomicBool::new(false));
+        let operation_started = Arc::clone(&started);
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.scheduler.try_enqueue(
             service,
@@ -252,6 +257,7 @@ impl DebugTargetRuntime {
                     let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
                     return;
                 }
+                operation_started.store(true, Ordering::Release);
                 let _ = reply_tx.send(Ok(operation(probe)));
             }),
         )?;
@@ -259,6 +265,9 @@ impl DebugTargetRuntime {
         reply_rx
             .recv_timeout(timeout)
             .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout if started.load(Ordering::Acquire) => {
+                    DebugTargetRuntimeError::InFlightTimeout
+                }
                 mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
                 mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
             })?
