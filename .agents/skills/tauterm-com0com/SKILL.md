@@ -167,14 +167,14 @@ reclaimable = owned
 setupc --silent remove <bus>
 ```
 
-若端口仍被占用，可解绑 COM 名称后有限重试。成功后从 protected ledger 与内部 bridge registry 移除。
+删除前必须再次读取驱动状态，并确认当前 bus 的 CNCA/CNCB 仍精确映射到 ownership 中记录的 bridge/external COM；bus 已不存在时只清理 ledger，bus 存在但映射已经改变时必须视为 identity 已失效，**不得删除该 bus**。端口仍被占用时只做有限的原位 remove 重试并保留 ownership 进入 deferred cleanup，不能通过 `PortName=-` 破坏后续 identity 核验。成功后才从 protected ledger 与内部 bridge registry 移除。
 
 direct-UAC Session 正常断开不弹第二次 UAC。普通 GUI 只结束本地 active/hide 状态，protected ownership 继续保留；下一次明确 create/manual cleanup 时由 helper 在受控 UAC 事务中回收；create 路径先确保新 endpoint 成功，再清理旧 orphan，避免创建失败时 GUI 对旧 endpoint 的本地隐藏状态失真。因为 service 与 helper 共用 ledger，之后恢复正常的 TauTermService 也能识别这些 direct-UAC 记录；仍有 live owner PID 的记录必须跳过。
 
 ### 4.3 崩溃、旧 schema 与第三方资源
 
 - App/service 崩溃后，protected record 保留；只有 owner 已不再运行且当前 backend 不 active 时才成为可回收 orphan；
-- 驱动中不存在的 owned bus 只删除 ledger 记录，不反复 remove；
+- 驱动中不存在的 owned bus 只删除 ledger 记录，不反复 remove；同一 bus 若已被重新映射为其它 CNCA/CNCB→COM 身份，也只作 stale ownership 失效处理，禁止按旧 bus 号删除；
 - 当前 schema 不兼容旧 bus-only 状态。旧/损坏记录只允许特权进程备份并重置，GUI 不写；
 - `setupc list` 是冲突/存在性事实，不是删除授权。未知 bus 永远视为第三方/不可证明资源；
 - driver ownership 与 endpoint ownership 独立，不能用 endpoint ledger 授权全局 uninstall。
@@ -401,8 +401,6 @@ Windows 真实 com0com 驱动回归不能完全由跨平台单元测试替代。
 setupc.exe --silent list
 setupc.exe --silent busynames COM*
 setupc.exe --silent install <bus> PortName=COMxx PortName=COMyy,PlugInMode=yes
-setupc.exe --silent change CNCA<bus> PortName=-
-setupc.exe --silent change CNCB<bus> PortName=-
 setupc.exe --silent remove <bus>
 setupc.exe --silent uninstall
 ```
