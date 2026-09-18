@@ -115,10 +115,7 @@ mod service {
             CreateNamedPipeW(
                 name.as_ptr(),
                 PIPE_ACCESS_DUPLEX,
-                PIPE_TYPE_BYTE
-                    | PIPE_READMODE_BYTE
-                    | PIPE_WAIT
-                    | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 PIPE_UNLIMITED_INSTANCES,
                 64 * 1024,
                 64 * 1024,
@@ -365,9 +362,7 @@ mod service {
                 match vpm.ensure_endpoints_for_owner(&config, client_pid) {
                     Ok(pairs) => {
                         for pair in &pairs {
-                            endpoints.retain(|existing| {
-                                existing.resource_id != pair.resource_id
-                            });
+                            endpoints.retain(|existing| existing.resource_id != pair.resource_id);
                             endpoints.push(pair.clone());
                         }
                         match serde_json::to_value(&pairs) {
@@ -424,11 +419,7 @@ mod service {
         }
     }
 
-    fn handle_client(
-        pipe: HANDLE,
-        vpm: &Arc<Mutex<VirtualPortManager>>,
-        client_pid: u32,
-    ) {
+    fn handle_client(pipe: HANDLE, vpm: &Arc<Mutex<VirtualPortManager>>, client_pid: u32) {
         let mut client_id = None;
         let mut endpoints = Vec::new();
 
@@ -480,9 +471,7 @@ mod service {
                 }
             }
             Err(error) => {
-                log::warn!(
-                    "virtual-port manager lock poisoned during disconnect cleanup: {error}"
-                );
+                log::warn!("virtual-port manager lock poisoned during disconnect cleanup: {error}");
             }
         }
     }
@@ -597,7 +586,7 @@ mod service {
 
             let manager = Arc::clone(&vpm);
             let pipe_value = pipe as usize;
-            std::thread::spawn(move || {
+            let _ = std::thread::spawn(move || {
                 let pipe = pipe_value as HANDLE;
                 handle_client(pipe, &manager, client_pid);
                 unsafe {
