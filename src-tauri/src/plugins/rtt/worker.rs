@@ -421,7 +421,7 @@ mod tests {
             max_write: 2,
             written: Vec::new(),
         };
-        let shared = Arc::new(RttShared::new(1));
+        let shared = Arc::new(RttShared::new());
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         let payload = b"partial RTT write".to_vec();
         let mut writes = VecDeque::from([PendingWrite {
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn presentation_drop_is_not_counted_as_history_loss() {
-        let shared = RttShared::new(1);
+        let shared = RttShared::new();
         shared.record_presentation_drop(12);
         let snapshot = shared.snapshot();
         assert_eq!(snapshot.dropped_presentation_chunks, 1);
