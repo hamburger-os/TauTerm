@@ -91,11 +91,7 @@ impl<T: Clone + Send + 'static> ObservationSource<T> {
         }
     }
 
-    pub fn subscribe_filtered<F, D>(
-        &self,
-        filter: F,
-        on_drop: D,
-    ) -> ObservationSubscription<T>
+    pub fn subscribe_filtered<F, D>(&self, filter: F, on_drop: D) -> ObservationSubscription<T>
     where
         F: Fn(&T) -> bool + Send + Sync + 'static,
         D: Fn(&T) + Send + Sync + 'static,
