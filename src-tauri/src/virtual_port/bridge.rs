@@ -436,12 +436,10 @@ fn vport_subscription_capacity_messages(baud_rate: u32) -> usize {
     // a worst-case one-byte event rate over a finite scheduling-jitter window, then cap memory.
     let bytes_per_second = (u64::from(baud_rate) / 10).max(1);
     let messages = bytes_per_second.saturating_mul(VPORT_SUBSCRIPTION_WINDOW_MS) / 1_000;
-    usize::try_from(messages)
-        .unwrap_or(usize::MAX)
-        .clamp(
-            VPORT_SUBSCRIPTION_MIN_MESSAGES,
-            VPORT_SUBSCRIPTION_MAX_MESSAGES,
-        )
+    usize::try_from(messages).unwrap_or(usize::MAX).clamp(
+        VPORT_SUBSCRIPTION_MIN_MESSAGES,
+        VPORT_SUBSCRIPTION_MAX_MESSAGES,
+    )
 }
 
 fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
@@ -516,9 +514,7 @@ fn physical_subscription_pump(
                     .disconnect_reason()
                     .map(|reason| reason.to_string())
                     .unwrap_or_else(|| "channel closed without a recorded detach reason".into());
-                return Err(format!(
-                    "data-plane bridge subscription ended: {detail}"
-                ));
+                return Err(format!("data-plane bridge subscription ended: {detail}"));
             }
         }
     }
