@@ -411,9 +411,9 @@ pub fn run() {
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
             #[cfg(target_os = "windows")]
-            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(
+            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new_direct_uac(
                 std::env::temp_dir().join("TauTerm").join("missing-resources"),
-                std::env::temp_dir().join("TauTerm").join("virtual-port-state"),
+                virtual_port::elevated::direct_state_dir(),
             ))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
