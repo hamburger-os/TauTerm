@@ -7,7 +7,7 @@
 //! 因此 orphan 的定义严格为 `owned - active`。驱动中的其他 com0com bus 只用于
 //! 端口/bus 冲突检测，绝不能被当作 TauTerm 残留资源删除。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -35,9 +35,8 @@ const SETUPC_TIMEOUT_SECS: u64 = 30;
 const COM_PORT_SCAN_START: u32 = 20;
 const MAX_COM_PORT: u32 = 256;
 const CANDIDATE_MULTIPLIER: u32 = 2;
-const DESTROY_STAGE2_RETRY_COUNT: u32 = 3;
-const DESTROY_STAGE2_RETRY_DELAY_MS: u64 = 200;
-const DESTROY_UNBIND_WAIT_MS: u64 = 300;
+const DESTROY_RETRY_COUNT: u32 = 3;
+const DESTROY_RETRY_DELAY_MS: u64 = 200;
 
 // scripts/test-serial-session.py 专用预留区。产品分配端口/bus 必须避开。
 pub(crate) const RESERVED_PORT_BASE: u32 = 200;
@@ -73,10 +72,25 @@ enum ManagementMode {
     DirectUac,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DriverEndpointIdentity {
+    bridge_path: Option<String>,
+    external_path: Option<String>,
+}
+
+impl DriverEndpointIdentity {
+    fn matches(&self, endpoint: &VirtualEndpoint) -> bool {
+        self.bridge_path.as_deref() == Some(endpoint.bridge_path.as_str())
+            && self.external_path.as_deref() == Some(endpoint.external_path.as_str())
+    }
+}
+
 #[derive(Debug, Default)]
 struct DriverState {
     occupied_ports: HashSet<u32>,
     buses: HashSet<u32>,
+    actual_buses: HashSet<u32>,
+    endpoints_by_bus: HashMap<u32, DriverEndpointIdentity>,
     max_bus: Option<u32>,
     queried: bool,
 }
@@ -529,27 +543,42 @@ impl VirtualPortManager {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     let trimmed = line.trim();
-                    for prefix in ["CNCA", "CNCB"] {
-                        if let Some(rest) = trimmed.strip_prefix(prefix) {
-                            if let Some(token) = rest.split_whitespace().next() {
-                                if let Ok(bus) = token.parse::<u32>() {
-                                    if !is_reserved_bus(bus) {
-                                        state.buses.insert(bus);
-                                        state.max_bus = Some(
-                                            state.max_bus.map_or(bus, |current| current.max(bus)),
-                                        );
-                                    }
+                    let parsed = ["CNCA", "CNCB"].into_iter().find_map(|prefix| {
+                        let rest = trimmed.strip_prefix(prefix)?;
+                        let bus = rest.split_whitespace().next()?.parse::<u32>().ok()?;
+                        Some((prefix, bus))
+                    });
+
+                    if let Some((prefix, bus)) = parsed {
+                        if !is_reserved_bus(bus) {
+                            state.buses.insert(bus);
+                            state.actual_buses.insert(bus);
+                            state.max_bus =
+                                Some(state.max_bus.map_or(bus, |current| current.max(bus)));
+
+                            let port_name = trimmed
+                                .split("PortName=")
+                                .nth(1)
+                                .and_then(|value| value.split(',').next())
+                                .map(str::trim)
+                                .filter(|value| value.starts_with("COM"))
+                                .map(str::to_owned);
+
+                            let identity = state.endpoints_by_bus.entry(bus).or_default();
+                            if prefix == "CNCA" {
+                                identity.bridge_path = port_name.clone();
+                            } else {
+                                identity.external_path = port_name.clone();
+                            }
+
+                            if let Some(name) = port_name {
+                                if let Some(number) = name
+                                    .strip_prefix("COM")
+                                    .and_then(|number| number.parse::<u32>().ok())
+                                {
+                                    state.occupied_ports.insert(number);
                                 }
                             }
-                        }
-                    }
-                    if let Some(port_part) = line.split("PortName=").nth(1) {
-                        let name = port_part.split(',').next().unwrap_or("").trim();
-                        if let Some(number) = name
-                            .strip_prefix("COM")
-                            .and_then(|number| number.parse::<u32>().ok())
-                        {
-                            state.occupied_ports.insert(number);
                         }
                     }
                 }
@@ -567,53 +596,56 @@ impl VirtualPortManager {
     }
 
     fn resolve_installed_bus(&self, bridge_path: &str, external_path: &str) -> Option<u32> {
-        let output = run_setupc(&self.resource_dir, &["list"]).ok()?;
-        if !output.status.success() {
+        let driver = self.query_driver_state();
+        if !driver.queried {
             return None;
         }
-        let mut bridge_bus = None;
-        let mut external_bus = None;
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let trimmed = line.trim();
-            let port_name = trimmed
-                .split("PortName=")
-                .nth(1)
-                .and_then(|value| value.split(',').next())
-                .map(str::trim);
-            let parse_bus = |prefix: &str| {
-                trimmed
-                    .strip_prefix(prefix)
-                    .and_then(|rest| rest.split_whitespace().next())
-                    .and_then(|value| value.parse::<u32>().ok())
-            };
-            if port_name == Some(bridge_path) {
-                bridge_bus = parse_bus("CNCA");
-            }
-            if port_name == Some(external_path) {
-                external_bus = parse_bus("CNCB");
-            }
-        }
-        match (bridge_bus, external_bus) {
-            (Some(a), Some(b)) if a == b && !is_reserved_bus(a) => Some(a),
-            _ => None,
-        }
+        driver.endpoints_by_bus.iter().find_map(|(bus, identity)| {
+            (identity.bridge_path.as_deref() == Some(bridge_path)
+                && identity.external_path.as_deref() == Some(external_path))
+            .then_some(*bus)
+        })
     }
 
-    fn reconcile_orphan_state(&mut self) {
+    fn reconcile_owned_state(&mut self) {
         let driver = self.query_driver_state();
         if !driver.queried {
             return;
         }
-        for endpoint in self.orphan_endpoints() {
-            if !driver.buses.contains(&endpoint.resource_id) {
-                log::info!(
-                    "Forgetting already-removed virtual endpoint {} ↔ {} (bus {})",
+
+        let owned = self.load_owned_endpoints();
+        for endpoint in owned {
+            let exact = driver
+                .endpoints_by_bus
+                .get(&endpoint.resource_id)
+                .is_some_and(|identity| identity.matches(&endpoint));
+            if !exact {
+                log::warn!(
+                    "Forgetting stale virtual-port ownership {} ↔ {} (bus {}): driver identity is missing or changed",
                     endpoint.bridge_path,
                     endpoint.external_path,
                     endpoint.resource_id
                 );
                 self.forget_owned_endpoint(&endpoint);
             }
+        }
+    }
+
+    fn rollback_verified_endpoint(&mut self, endpoint: &VirtualEndpoint) {
+        if let Err(error) = self.destroy_endpoint_privileged(endpoint) {
+            log::warn!(
+                "Failed to roll back verified virtual endpoint {} ↔ {} (bus {}): {}",
+                endpoint.bridge_path,
+                endpoint.external_path,
+                endpoint.resource_id,
+                error
+            );
+        }
+    }
+
+    fn rollback_batch(&mut self, endpoints: &[VirtualEndpoint]) {
+        for endpoint in endpoints.iter().rev() {
+            self.rollback_verified_endpoint(endpoint);
         }
     }
 
@@ -732,6 +764,7 @@ impl VirtualPortManager {
         if self.mode != ManagementMode::Privileged {
             return Vec::new();
         }
+        self.reconcile_owned_state();
         let endpoints = self
             .load_owned_records()
             .into_iter()
@@ -839,16 +872,19 @@ impl VirtualPortManager {
         let _mutation = DriverMutationGuard::acquire()?;
 
         let count = config.count.clamp(1, 4);
-        let driver = self.query_driver_state();
+        self.reconcile_owned_state();
+        let initial_driver = self.query_driver_state();
+        if !initial_driver.queried {
+            return Err("cannot enumerate com0com driver state before endpoint allocation".into());
+        }
         let candidates = Self::find_available_port_pairs(
             count.saturating_mul(CANDIDATE_MULTIPLIER),
-            &driver.occupied_ports,
+            &initial_driver.occupied_ports,
         );
         if candidates.is_empty() {
             return Err("No available COM port pairs — all port numbers are in use".into());
         }
 
-        let mut bus = self.next_free_bus(&driver);
         let mut pairs = Vec::new();
         let mut skipped = Vec::new();
 
@@ -856,29 +892,48 @@ impl VirtualPortManager {
             if pairs.len() >= count as usize {
                 break;
             }
+
+            let before = self.query_driver_state();
+            if !before.queried {
+                self.rollback_batch(&pairs);
+                return Err("cannot refresh com0com driver state during endpoint allocation".into());
+            }
+            let bus = self.next_free_bus(&before);
             let endpoint = VirtualEndpoint {
                 bridge_path: format!("COM{bridge_number}"),
                 external_path: format!("COM{external_number}"),
                 resource_id: bus,
             };
+
             // DSR=ropen 是 bridge 的 peer-presence 信号。外部端未打开时 bridge 不向
             // com0com 写历史 backlog；外部端打开后才开始透明转发。
             let bridge_arg = format!("PortName={},dsr=ropen", endpoint.bridge_path);
             let external_arg = format!("PortName={},PlugInMode=yes", endpoint.external_path);
             let bus_arg = bus.to_string();
-            match run_setupc(
+            let install = run_setupc(
                 &self.resource_dir,
                 &["install", &bus_arg, &bridge_arg, &external_arg],
-            ) {
+            );
+
+            match install {
                 Ok(output) if output.status.success() => {
-                    let actual_bus = self
-                        .resolve_installed_bus(&endpoint.bridge_path, &endpoint.external_path)
-                        .ok_or_else(|| {
-                            format!(
-                                "setupc reported success but the requested mapping {} ↔ {} was not present",
-                                endpoint.bridge_path, endpoint.external_path
-                            )
-                        })?;
+                    let Some(actual_bus) =
+                        self.resolve_installed_bus(&endpoint.bridge_path, &endpoint.external_path)
+                    else {
+                        self.rollback_batch(&pairs);
+                        return Err(format!(
+                            "setupc reported success but no exact post-install mapping exists for {} ↔ {}; refusing to guess ownership",
+                            endpoint.bridge_path, endpoint.external_path
+                        ));
+                    };
+                    if before.actual_buses.contains(&actual_bus) {
+                        self.rollback_batch(&pairs);
+                        return Err(format!(
+                            "post-install mapping {} ↔ {} resolved to pre-existing bus {}; refusing to claim it",
+                            endpoint.bridge_path, endpoint.external_path, actual_bus
+                        ));
+                    }
+
                     let mut endpoint = endpoint;
                     endpoint.resource_id = actual_bus;
                     log::info!(
@@ -889,9 +944,24 @@ impl VirtualPortManager {
                     );
                     self.track_active_endpoint_with_owner(endpoint.clone(), owner_pid);
                     pairs.push(endpoint);
-                    bus = self.next_bus_after(actual_bus, &driver);
                 }
                 Ok(output) => {
+                    // A non-zero setupc can still have partially created a pair. Only clean it if
+                    // the authoritative post-state proves the exact requested COM mapping; never
+                    // remove a merely "new" bus because a third-party setupc process could race us.
+                    if let Some(actual_bus) =
+                        self.resolve_installed_bus(&endpoint.bridge_path, &endpoint.external_path)
+                    {
+                        if !before.actual_buses.contains(&actual_bus) {
+                            let partial = VirtualEndpoint {
+                                resource_id: actual_bus,
+                                ..endpoint.clone()
+                            };
+                            self.track_active_endpoint_with_owner(partial.clone(), owner_pid);
+                            self.rollback_verified_endpoint(&partial);
+                        }
+                    }
+
                     let detail = output_detail(&output);
                     let lower = detail.to_lowercase();
                     if lower.contains("in use")
@@ -902,12 +972,10 @@ impl VirtualPortManager {
                             "{} / {}",
                             endpoint.bridge_path, endpoint.external_path
                         ));
-                        bus = self.next_bus_after(bus, &driver);
                         continue;
                     }
-                    for created in pairs.clone() {
-                        let _ = self.destroy_endpoint(&created);
-                    }
+
+                    self.rollback_batch(&pairs);
                     return Err(format!(
                         "Failed to create port pair {}↔{} (exit {:?}): {}",
                         endpoint.bridge_path,
@@ -917,9 +985,7 @@ impl VirtualPortManager {
                     ));
                 }
                 Err(error) => {
-                    for created in pairs.clone() {
-                        let _ = self.destroy_endpoint(&created);
-                    }
+                    self.rollback_batch(&pairs);
                     return Err(error);
                 }
             }
@@ -932,11 +998,11 @@ impl VirtualPortManager {
             return Err("All candidate COM port pairs are occupied".into());
         }
         if pairs.len() < count as usize {
-            log::warn!(
-                "Requested {} virtual port pairs, created only {}",
-                count,
+            self.rollback_batch(&pairs);
+            return Err(format!(
+                "Requested {count} virtual port pairs but only {} could be created transactionally",
                 pairs.len()
-            );
+            ));
         }
         Ok(pairs)
     }
@@ -953,71 +1019,80 @@ impl VirtualPortManager {
 
     fn destroy_endpoint_privileged(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
         let _mutation = DriverMutationGuard::acquire()?;
-
         let bus = endpoint.resource_id.to_string();
+        let mut last_error = None;
 
-        match run_setupc(&self.resource_dir, &["remove", &bus]) {
-            Ok(output) if output.status.success() => {
-                self.forget_owned_endpoint(endpoint);
-                log::info!(
-                    "Virtual port pair destroyed: {} ↔ {}",
-                    endpoint.bridge_path,
-                    endpoint.external_path
-                );
-                return Ok(());
-            }
-            Err(error) => {
+        for attempt in 0..DESTROY_RETRY_COUNT {
+            let driver = self.query_driver_state();
+            if !driver.queried {
                 self.defer_cleanup(endpoint);
-                return Err(error);
+                return Err("cannot enumerate com0com state before endpoint removal".into());
             }
-            Ok(_) => {
-                let driver = self.query_driver_state();
-                if driver.queried && !driver.buses.contains(&endpoint.resource_id) {
+
+            match driver.endpoints_by_bus.get(&endpoint.resource_id) {
+                None => {
+                    self.forget_owned_endpoint(endpoint);
+                    return Ok(());
+                }
+                Some(identity) if identity.matches(endpoint) => {}
+                Some(identity) => {
+                    log::warn!(
+                        "Refusing to remove bus {} because its driver identity no longer matches ownership (expected {} ↔ {}, actual {:?} ↔ {:?})",
+                        endpoint.resource_id,
+                        endpoint.bridge_path,
+                        endpoint.external_path,
+                        identity.bridge_path,
+                        identity.external_path
+                    );
                     self.forget_owned_endpoint(endpoint);
                     return Ok(());
                 }
             }
-        }
 
-        let cnc_a = format!("CNCA{}", endpoint.resource_id);
-        let cnc_b = format!("CNCB{}", endpoint.resource_id);
-        let _ = run_setupc(&self.resource_dir, &["change", &cnc_a, "PortName=-"]);
-        let _ = run_setupc(&self.resource_dir, &["change", &cnc_b, "PortName=-"]);
-        std::thread::sleep(std::time::Duration::from_millis(DESTROY_UNBIND_WAIT_MS));
-
-        for attempt in 0..DESTROY_STAGE2_RETRY_COUNT {
             match run_setupc(&self.resource_dir, &["remove", &bus]) {
                 Ok(output) if output.status.success() => {
                     self.forget_owned_endpoint(endpoint);
                     log::info!(
-                        "Virtual port pair destroyed after unbind: {} ↔ {}",
+                        "Virtual port pair destroyed: {} ↔ {}",
                         endpoint.bridge_path,
                         endpoint.external_path
                     );
                     return Ok(());
                 }
-                Ok(_) | Err(_) if attempt + 1 < DESTROY_STAGE2_RETRY_COUNT => {
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        DESTROY_STAGE2_RETRY_DELAY_MS,
+                Ok(output) => {
+                    last_error = Some(format!(
+                        "setupc remove returned {:?}: {}",
+                        output.status.code(),
+                        output_detail(&output)
                     ));
                 }
-                Ok(_) | Err(_) => {}
+                Err(error) => {
+                    last_error = Some(error);
+                }
+            }
+
+            if attempt + 1 < DESTROY_RETRY_COUNT {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    DESTROY_RETRY_DELAY_MS,
+                ));
             }
         }
 
-        let driver = self.query_driver_state();
-        if driver.queried && !driver.buses.contains(&endpoint.resource_id) {
-            self.forget_owned_endpoint(endpoint);
-            Ok(())
-        } else {
-            self.defer_cleanup(endpoint);
-            let error = format!(
+        self.defer_cleanup(endpoint);
+        let error = last_error.unwrap_or_else(|| {
+            format!(
                 "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup",
                 endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
-            );
-            log::warn!("{error}");
-            Err(error)
-        }
+            )
+        });
+        log::warn!(
+            "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup: {}",
+            endpoint.bridge_path,
+            endpoint.external_path,
+            endpoint.resource_id,
+            error
+        );
+        Err(error)
     }
 
     pub fn cleanup_all(&mut self) {
@@ -1049,6 +1124,9 @@ impl VirtualPortManager {
     }
 
     pub fn cleanup_orphans(&mut self) -> Result<u32, String> {
+        if self.mode == ManagementMode::Privileged {
+            self.reconcile_owned_state();
+        }
         let orphans = self.orphan_endpoints();
         if orphans.is_empty() {
             return Ok(0);
@@ -1062,8 +1140,6 @@ impl VirtualPortManager {
             return Ok(cleaned.len() as u32);
         }
 
-        self.reconcile_orphan_state();
-        let orphans = self.orphan_endpoints();
         let total = orphans.len();
         let mut cleaned = 0u32;
         for endpoint in orphans {
