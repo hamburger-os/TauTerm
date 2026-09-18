@@ -674,6 +674,49 @@ mod tests {
         );
     }
 
+    fn backend_descriptor() -> super::super::model::RttBackendDescriptor {
+        super::super::model::RttBackendDescriptor {
+            kind: "test".to_string(),
+            display_name: "Test".to_string(),
+            target: None,
+            probe: None,
+            control_block_address: None,
+            capabilities: super::super::model::RttBackendCapabilities::default(),
+        }
+    }
+
+    #[test]
+    fn automation_source_and_send_target_are_independent_directions() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![
+                RttChannelInfo {
+                    index: 1,
+                    name: Some("up-only".to_string()),
+                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    down: None,
+                    metadata_complete: true,
+                },
+                RttChannelInfo {
+                    index: 2,
+                    name: Some("down-only".to_string()),
+                    up: None,
+                    down: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    metadata_complete: true,
+                },
+            ],
+        );
+
+        assert!(shared.set_automation_source_channel(1).is_ok());
+        assert!(shared.set_send_channel(2).is_ok());
+        assert!(shared.set_automation_source_channel(2).is_err());
+        assert!(shared.set_send_channel(1).is_err());
+        assert_eq!(shared.send_channel().unwrap(), 2);
+    }
+
     #[test]
     fn runtime_generation_changes_for_each_instance() {
         let config = RttConfig::from_params(&serde_json::json!({
