@@ -22,9 +22,13 @@ SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fin
 
 ### Windows 特权操作
 
-主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景使用明确的按需 UAC 回退。Debug 开发构建直接选择 `direct-uac-on-demand`，不先探测只接受正式安装二进制身份的 TauTermService，因此预期的开发态身份拒绝不会制造 service pipe WARN。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
+主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；服务不可用或 Debug 开发场景使用明确的 `direct-uac-on-demand`。该回退不是 shell/batch 透传：普通 GUI 通过随机本地命名管道启动**当前 TauTerm 可执行文件本身**的窄类型 one-shot helper，helper 与 GUI 双向核对 pipe 对端 PID，只接受固定的 install/create/cleanup 请求，并在特权侧自行派生可信 resource/ownership 路径。Local Shell 的管理员 child 是另一条独立的一次性提权路径，不等于给主应用提权。
 
-虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。Release 构建无法连接服务时进入 `direct-uac-on-demand` 并记录真实服务故障；Debug 构建从启动时就处于该后端。两种直连路径在普通启动阶段都只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
+Windows 虚拟串口的 endpoint ownership 统一存放在受保护的机器级目录 `%ProgramData%\TauTerm\virtual-port`。该目录的 DACL 禁止普通 Authenticated Users 写入，只允许读取；SYSTEM/Administrators 才能修改。TauTermService 与 direct-UAC helper 共用这一本 ledger，普通 GUI 只能读取，因而用户态状态文件不能被篡改成“删除第三方 bus”的特权授权。ledger 同时记录 owner PID；另一个仍在运行的 TauTerm 实例拥有的 endpoint 不能被服务/helper 当作 orphan 回收。
+
+Release 构建无法连接服务时进入 `direct-uac-on-demand` 并记录真实服务故障；Debug 构建从启动时就处于该后端。普通启动阶段只读取 protected ownership 与 SCM 驱动状态，不运行 `setupc list`、不主动执行特权 cleanup，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入特权流程。所有产品 `setupc` 调用必须使用 `--silent`，并由特权上下文在全局 mutation lock 内完成状态枚举、bus/COM 分配、install 和安装后实际映射核验，禁止普通 GUI 预分配 bus，也禁止接受 com0com 的交互式“换一个 CNCA/CNCB 标识符”作为成功结果。
+
+App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
 ### Native helper 与动态库
 
