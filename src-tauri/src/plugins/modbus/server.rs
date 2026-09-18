@@ -94,7 +94,9 @@ impl ModbusServer {
             .ok_or("serial runtime unavailable")?
             .handle
             .clone();
-        let events = handle.subscribe().map_err(|e| e.to_string())?;
+        let events = handle
+            .subscribe("modbus-server-serial")
+            .map_err(|e| e.to_string())?;
         let running = self.running.clone();
         let config = self.config.clone();
         let model = self.model.clone();
@@ -513,7 +515,7 @@ fn run_tcp_peer(
 ) {
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
     let handle = runtime.handle.clone();
-    let events = match handle.subscribe() {
+    let events = match handle.subscribe("modbus-server-tcp-peer") {
         Ok(receiver) => receiver,
         Err(_) => {
             runtime.join();
