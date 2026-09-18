@@ -92,13 +92,13 @@ fn apply_readonly_user_acl(path: &Path) -> Result<(), String> {
             descriptor,
         )
     };
+    let apply_error = (applied == 0).then(|| unsafe { GetLastError() });
     unsafe {
-        LocalFree(descriptor);
+        let _ = LocalFree(descriptor);
     }
-    if applied == 0 {
+    if let Some(error) = apply_error {
         return Err(format!(
-            "failed to protect virtual-port ownership directory (Win32 {})",
-            unsafe { GetLastError() }
+            "failed to protect virtual-port ownership directory (Win32 {error})"
         ));
     }
     Ok(())
