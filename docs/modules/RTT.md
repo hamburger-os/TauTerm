@@ -105,7 +105,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 2. **Session Data Log**：用户显式开启时进入公共 LogEngine，记录为 `[RX][RTT:n]` / `[TX][RTT:n]`；
 3. **presentation batch**：短周期批量发送 WebView。
 
-历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。presentation queue 过载只累计 presentation loss，不把 UI 丢弃错误描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
+历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
 未来 SystemView/defmt 等 decoder 必须订阅 canonical RTT frame 或其等价 raw source，不允许创建第二个 RTT reader；目标端 RTT overflow、host acquisition loss、recording loss、presentation loss 也必须保持不同语义。
 
