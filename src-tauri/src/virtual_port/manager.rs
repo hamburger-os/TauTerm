@@ -388,7 +388,11 @@ impl VirtualPortManager {
         }
     }
 
-    fn remember_owned_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
+    fn remember_owned_endpoints_with_owner(
+        &mut self,
+        endpoints: &[VirtualEndpoint],
+        owner_pid: Option<u32>,
+    ) {
         if endpoints.is_empty() {
             return;
         }
@@ -398,20 +402,32 @@ impl VirtualPortManager {
             owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
             owned.push(OwnedEndpointRecord {
                 endpoint: endpoint.clone(),
-                owner_pid: self.owner_pid,
+                owner_pid,
             });
         }
         self.persist_owned_records(&owned);
     }
 
-    fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) {
+    fn remember_owned_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
+        self.remember_owned_endpoints_with_owner(endpoints, self.owner_pid);
+    }
+
+    fn track_active_endpoint_with_owner(
+        &mut self,
+        endpoint: VirtualEndpoint,
+        owner_pid: Option<u32>,
+    ) {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
         self.active_endpoints.insert(endpoint.clone());
         register_internal_endpoint_path(&endpoint.bridge_path);
         if self.mode == ManagementMode::Privileged {
-            self.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+            self.remember_owned_endpoints_with_owner(std::slice::from_ref(&endpoint), owner_pid);
         }
+    }
+
+    fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) {
+        self.track_active_endpoint_with_owner(endpoint, self.owner_pid);
     }
 
     fn adopt_active_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
@@ -701,10 +717,40 @@ impl VirtualPortManager {
                         return Err(VirtualPortError::DriverMissing);
                     }
                 }
-                self.create_endpoints_privileged(config)
+                self.create_endpoints_privileged(config, self.owner_pid)
                     .map_err(VirtualPortError::from_backend)
             }
         }
+    }
+
+    /// Privileged service entry point that attributes newly created endpoints to the
+    /// authenticated GUI process rather than to the service process itself. This lets a restarted
+    /// service distinguish a live TauTerm client from a true orphan.
+    pub fn ensure_endpoints_for_owner(
+        &mut self,
+        config: &VirtualPortConfig,
+        owner_pid: u32,
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
+        if self.mode != ManagementMode::Privileged {
+            return Err(VirtualPortError::Backend(
+                "owner-aware endpoint creation requires a privileged backend".into(),
+            ));
+        }
+        if !config.enabled || config.count == 0 {
+            return Ok(Vec::new());
+        }
+        if !self.are_files_present() {
+            return Err(VirtualPortError::FilesMissing);
+        }
+        if !self.detect_driver() {
+            self.install_driver_privileged()
+                .map_err(VirtualPortError::from_backend)?;
+            if !self.detect_driver() {
+                return Err(VirtualPortError::DriverMissing);
+            }
+        }
+        self.create_endpoints_privileged(config, Some(owner_pid))
+            .map_err(VirtualPortError::from_backend)
     }
 
     /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身或 TauTerm ownership。
@@ -758,6 +804,7 @@ impl VirtualPortManager {
     fn create_endpoints_privileged(
         &mut self,
         config: &VirtualPortConfig,
+        owner_pid: Option<u32>,
     ) -> Result<Vec<VirtualEndpoint>, String> {
         if !config.enabled || config.count == 0 {
             return Ok(Vec::new());
@@ -816,7 +863,7 @@ impl VirtualPortManager {
                         endpoint.external_path,
                         endpoint.resource_id
                     );
-                    self.track_active_endpoint(endpoint.clone());
+                    self.track_active_endpoint_with_owner(endpoint.clone(), owner_pid);
                     pairs.push(endpoint);
                     bus = self.next_bus_after(actual_bus, &driver);
                 }
