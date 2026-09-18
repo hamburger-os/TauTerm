@@ -243,7 +243,8 @@ export async function refreshRttRuntime(sessionId: string): Promise<void> {
 export async function ensureRttHistory(sessionId: string, channelIndex: number): Promise<void> {
   await ensureListeners();
   const loaded = loadedChannels.get(sessionId) ?? new Set<number>();
-  if (loaded.has(channelIndex)) return;
+  const buffered = current(sessionId).buffers[channelIndex] ?? [];
+  if (loaded.has(channelIndex) && buffered.length > 0) return;
   loaded.add(channelIndex);
   loadedChannels.set(sessionId, loaded);
 
