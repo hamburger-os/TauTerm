@@ -45,7 +45,7 @@ RTT service lease + RTT state
 
 `RttRuntime` 通过 `SessionService` 挂到 Container Session，并由 RTT 插件自己的 `SessionRuntimeRegistry<RttRuntime>` 建立弱索引。SessionStore 仍是用户可见连接生命周期的唯一权威所有者；RTT Runtime 只持有插件私有资源与状态。
 
-`EmbeddedDebugManager` 是进程内的物理探针所有权 registry。进入 registry 前，Auto/显式 selector 都先解析为 canonical selector；registry 以 canonical physical probe identity 为槽位，同一探针只有一个活动的 `DebugTargetRuntime`。相同 target/wire/speed 配置复用该 runtime；同一物理探针若请求不同目标配置则显式返回冲突，而不是尝试第二次打开 USB probe。每个 `DebugTargetRuntime` 都由单独 worker 线程唯一拥有 probe-rs `Session`，RTT worker 只通过有界调度队列提交短操作，`Core` 仍只在该 worker 中短生命周期借用。RTT 取得独占的 `rtt` service lease，防止同一物理目标出现第二个 RTT reader；未来变量采样等不同 service 可以复用同一 target worker，而不复制 probe handle。
+`EmbeddedDebugManager` 是进程内的物理探针所有权 registry。进入 registry 前，Auto/显式 selector 都先解析为 canonical selector；registry 以 canonical physical probe identity 为槽位，同一探针只有一个活动的 `DebugTargetRuntime`。相同 target/wire/speed 配置复用该 runtime；同一物理探针若请求不同目标配置则显式返回冲突，而不是尝试第二次打开 USB probe。每个 `DebugTargetRuntime` 都由单独 worker 线程唯一拥有 probe-rs `Session`，RTT worker 只通过有界调度队列提交短操作，`Core` 仍只在该 worker 中短生命周期借用。RTT 取得独占的 `rtt` service lease，防止同一物理目标出现第二个 RTT reader；未来变量采样等不同 service 可以复用同一 target worker，而不复制 probe handle。共享 target scheduler 为每个 service 建立独立有界队列，并按 service round-robin 取短操作；单个高频 observation service 不能占满整个 target queue 或持续饿死其它 service。
 
 ## Backend
 
@@ -100,7 +100,7 @@ RTT 数据离开 backend 的当刻就形成 canonical frame，包含：
 
 sequence/offset 不在 WebView presentation 阶段补造，因此不同 Channel 的原始到达顺序和每 Channel 偏移不会因批处理而丢失。
 
-worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native backend 的一次 target-worker Up poll 同样限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免 RTT 在共享 probe scheduler 上形成一个无界长操作。每次循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
+worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native 与 Existing J-Link backend 的一次 Up poll 都限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免任一 backend 形成无界长操作。共享 DebugTarget scheduler 再按 service 独立队列 round-robin 调度。Queue full、排队 deadline 与“操作已 dispatch 但等待结果超时”分别保留为 scheduler pressure / operation timeout / outcome unknown，不伪装成 Probe 物理断开；只有实际 probe/core I/O 失效才触发 fatal disconnect。每次 RTT 循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
 
 ## 历史、日志与丢失语义
 
@@ -112,11 +112,11 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
-未来 SystemView/defmt 等 decoder 必须订阅 canonical RTT frame 或其等价 raw source，不允许创建第二个 RTT reader；目标端 RTT overflow、host acquisition loss、recording loss、presentation loss 也必须保持不同语义。
+canonical RTT frame 在采集时同时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。未来 SystemView/defmt 等 decoder 必须订阅这一 raw source，不允许创建第二个 RTT reader；不同 subscriber 使用独立有界队列，慢 decoder 只影响自己的 delivery。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、recording loss、presentation loss 也必须保持不同语义。
 
 ## 前端运行态与后台生命周期
 
-RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、Send target 与 view mode 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。前端缓存同时执行 per-channel 与 per-session 总预算，Log 视图只挂载有界的近期 chunk，避免多 Channel 长时运行把 WebView 内存和 DOM 数量按 Channel 数线性放大。
+RTT 的 snapshot、generation、Channel buffer、当前观察 Channel与 view mode 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中；Automation source 与 Send target 则由 Rust Runtime snapshot 作为唯一权威状态，前端只镜像后端确认后的选择，不能自行维护第二份发送目标真值。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。前端缓存同时执行 per-channel 与 per-session 总预算，Log 视图只挂载有界的近期 chunk，避免多 Channel 长时运行把 WebView 内存和 DOM 数量按 Channel 数线性放大。
 
 同一 Saved Session 重连会创建新的 generation；新 generation 到达时清空旧 presentation cache 并重新同步 source/target，禁止旧事件污染新 runtime。
 
