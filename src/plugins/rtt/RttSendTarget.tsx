@@ -6,7 +6,7 @@ import {
 } from "./runtime-store";
 import styles from "../../components/SendBar/TargetBar.module.css";
 
-export default function RttSendTarget({ sessionId }: { sessionId: string }) {
+export default function RttSendTarget({ sessionId, disabled = false }: { sessionId: string; disabled?: boolean }) {
   const { t } = useTranslation();
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
   const writable = (runtime.snapshot?.channels ?? []).filter(channel => channel.down);
@@ -28,6 +28,7 @@ export default function RttSendTarget({ sessionId }: { sessionId: string }) {
           void selectRttSendChannel(sessionId, Number(event.target.value));
         }}
         title={t("rtt.sendTarget")}
+        disabled={disabled}
       >
         {writable.map(channel => (
           <option key={channel.index} value={channel.index}>
