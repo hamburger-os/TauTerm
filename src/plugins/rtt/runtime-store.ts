@@ -261,6 +261,7 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
 
 export async function selectRttChannel(sessionId: string, channelIndex: number): Promise<void> {
   const prev = current(sessionId);
+  const expectedGeneration = prev.snapshot?.generation ?? null;
   const channel = prev.snapshot?.channels.find(item => item.index === channelIndex);
   if (!channel?.up) {
     if (prev.selectedChannel !== channelIndex) {
@@ -272,6 +273,10 @@ export async function selectRttChannel(sessionId: string, channelIndex: number):
   try {
     await invoke("rtt_set_automation_source_channel", { sessionId, channelIndex });
     const latest = current(sessionId);
+    if (latest.snapshot?.generation !== expectedGeneration) {
+      await refreshRttRuntime(sessionId);
+      return;
+    }
     publish(sessionId, { ...latest, selectedChannel: channelIndex, error: null });
     await refreshRttRuntime(sessionId);
   } catch (cause) {
