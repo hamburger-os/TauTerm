@@ -15,7 +15,7 @@ pub trait RttBackend {
     fn shutdown(&mut self) {}
 }
 
-pub fn open_backend(
+pub(super) fn open_backend(
     config: &RttConfig,
     embedded_debug: &EmbeddedDebugManager,
 ) -> Result<Box<dyn RttBackend>, RttError> {
