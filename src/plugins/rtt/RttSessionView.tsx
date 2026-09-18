@@ -177,7 +177,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               type="button"
               className={`${styles.channelButton} ${selectedChannel === item.index ? styles.channelActive : ""}`}
               onClick={() => {
-                selectRttChannel(sessionId, item.index);
+                void selectRttChannel(sessionId, item.index);
                 void ensureRttHistory(sessionId, item.index);
               }}
             >
