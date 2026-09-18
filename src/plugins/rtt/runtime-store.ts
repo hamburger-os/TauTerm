@@ -122,6 +122,7 @@ function trimBuffers(
   buffers: Record<number, readonly RttChunk[]>,
 ): Record<number, readonly RttChunk[]> {
   const next: Record<number, readonly RttChunk[]> = { ...buffers };
+  const starts = new Map<number, number>();
   let total = Object.values(next).reduce(
     (sum, chunks) => sum + chunks.reduce((chunkSum, chunk) => chunkSum + base64ByteLength(chunk.data_b64), 0),
     0,
@@ -131,18 +132,25 @@ function trimBuffers(
     let oldestChannel: number | null = null;
     let oldestSequence = Number.POSITIVE_INFINITY;
     for (const [rawChannel, chunks] of Object.entries(next)) {
-      const first = chunks[0];
+      const channel = Number(rawChannel);
+      const first = chunks[starts.get(channel) ?? 0];
       if (first && first.sequence < oldestSequence) {
         oldestSequence = first.sequence;
-        oldestChannel = Number(rawChannel);
+        oldestChannel = channel;
       }
     }
     if (oldestChannel == null) break;
+
     const chunks = next[oldestChannel] ?? [];
-    const first = chunks[0];
+    const start = starts.get(oldestChannel) ?? 0;
+    const first = chunks[start];
     if (!first) break;
     total -= base64ByteLength(first.data_b64);
-    next[oldestChannel] = chunks.slice(1);
+    starts.set(oldestChannel, start + 1);
+  }
+
+  for (const [channel, start] of starts) {
+    if (start > 0) next[channel] = (next[channel] ?? []).slice(start);
   }
   return next;
 }
