@@ -144,15 +144,21 @@ impl LogWriter {
             DataDirection::TX => "[TX]",
             DataDirection::RX => "[RX]",
         };
+        let stream = entry
+            .data_mode
+            .strip_prefix("stream:")
+            .map(|value| format!("[{value}]"))
+            .unwrap_or_default();
+        let prefix = format!("{ts} {dir}{stream}");
 
         match self.data_mode.as_str() {
             "text" => {
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{ts} {dir} {text}\n")
+                format!("{prefix} {text}\n")
             }
             "hex" => {
-                let mut result = format!("{ts} {dir}\n");
+                let mut result = format!("{prefix}\n");
                 for (index, chunk) in entry.payload.chunks(16).enumerate() {
                     result.push_str(&format!("{:08X}  ", index * 16));
                     let hex_line = chunk
@@ -199,12 +205,12 @@ impl LogWriter {
                     .map(|byte| format!("{byte:02X}"))
                     .collect::<Vec<_>>()
                     .join(" ");
-                format!("{ts} {dir} {text}  |  {hex}\n")
+                format!("{prefix} {text}  |  {hex}\n")
             }
             _ => {
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{ts} {dir} {text}\n")
+                format!("{prefix} {text}\n")
             }
         }
     }
