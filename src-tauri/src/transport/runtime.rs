@@ -188,7 +188,7 @@ impl DataPlaneHandle {
     ) -> Result<DataPlaneSubscription, TransportError> {
         if capacity_messages == 0 {
             return Err(TransportError::new(
-                TransportErrorKind::InvalidInput,
+                TransportErrorKind::InvalidConfiguration,
                 "subscribe",
                 "subscription capacity must be greater than zero",
             ));
