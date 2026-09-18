@@ -406,13 +406,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transferProtocol,
         sendBarEnabled,
       });
-      const pluginName = plugin?.manifest.name || pluginId.toUpperCase();
       const requestedName = name?.trim();
-      const presentationName = plugin?.sessionPresentation?.defaultName?.(normalizedParams, endpoint)?.trim();
-      const resolvedName = plugin?.resolveDefaultSessionName
-        ? (await plugin.resolveDefaultSessionName(normalizedParams, endpoint)).trim()
-        : "";
-      const effectiveName = requestedName || resolvedName || presentationName || `${pluginName} @ ${endpoint}`;
+      const generatedName = await pluginRegistry.resolveSessionDefaultName(
+        pluginId,
+        normalizedParams,
+        endpoint,
+      );
+      const effectiveName = requestedName || generatedName;
       const sessionId = await invoke<string>("save_session_config", {
         request: {
           endpoint,
