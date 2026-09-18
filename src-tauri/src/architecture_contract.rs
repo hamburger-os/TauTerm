@@ -464,12 +464,16 @@ fn virtual_port_backend_hides_platform_elevation_mechanics() {
     }
 
     let manager = read_source("virtual_port/manager.rs");
-    for forbidden in ["cmd.exe", ".cmd", "ShellExecuteExW"] {
+    for forbidden in ["cmd.exe", ".cmd", "ShellExecuteExW", "PortName=-"] {
         assert!(
             !manager.contains(forbidden),
-            "VirtualPortManager must not rebuild the old shell/batch elevation path: {forbidden}"
+            "VirtualPortManager must not rebuild unsafe legacy virtual-port mechanics: {forbidden}"
         );
     }
+    assert!(
+        manager.contains("endpoints_by_bus") && manager.contains("identity.matches(endpoint)"),
+        "virtual-port deletion must remain gated by exact driver identity"
+    );
 
     #[cfg(windows)]
     {
