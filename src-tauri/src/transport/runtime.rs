@@ -1411,7 +1411,9 @@ mod tests {
             subscribers: vec![RuntimeSubscriber {
                 id: 42,
                 consumer: "slow-test".into(),
+                capacity_messages: 1,
                 sender: subscriber_tx,
+                disconnect_reason: Arc::new(Mutex::new(None)),
             }],
             startup_buffer: VecDeque::new(),
             startup_buffer_bytes: 0,
@@ -1425,8 +1427,15 @@ mod tests {
 
         publish_shared_data(&mut state, vec![1]);
         assert_eq!(state.subscribers.len(), 1);
+        let reason = state.subscribers[0].disconnect_reason.clone();
         publish_shared_data(&mut state, vec![2]);
         assert!(state.subscribers.is_empty());
+        assert_eq!(
+            reason.lock().unwrap().clone(),
+            Some(DataPlaneSubscriptionEnd::BacklogExceeded {
+                capacity_messages: 1
+            })
+        );
         match subscriber_rx.try_recv().unwrap() {
             DataPlaneEvent::Data(data) => assert_eq!(data, vec![1]),
             DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),
