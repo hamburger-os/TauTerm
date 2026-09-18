@@ -209,7 +209,7 @@ export interface PluginRegistration {
   runtimeStore?: PluginRuntimeStore;
   sendData?: (context: PluginSendContext) => Promise<void>;
   sessionTree?: PluginSessionTreeContribution;
-  sendTarget?: ComponentType<{ sessionId: string }>;
+  sendTarget?: ComponentType<{ sessionId: string; disabled?: boolean }>;
   sendTargetVisible?: (params: Record<string, unknown>) => boolean;
   terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
   appOverlay?: ComponentType;

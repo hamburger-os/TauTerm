@@ -14,6 +14,7 @@ use crate::kernel::session_store::{ContainerSessionCreateOptions, ContainerSessi
 use crate::plugin_application::{
     unchanged_session_config, ConnectSessionRequest, SessionConfigHandler, SessionConnectFuture,
 };
+use crate::session::AutomationIo;
 use crate::AppState;
 use error::RttError;
 use runtime::RttRuntime;
@@ -59,8 +60,12 @@ fn validate_session_config(params: &Value) -> Result<(), String> {
 }
 
 fn default_session_name(params: &Value, _endpoint: &str) -> Result<String, String> {
-    validate_session_config(params)?;
-    Ok("RTT 调试助手".to_string())
+    let config = config::RttConfig::from_params(params).map_err(|error| error.to_string())?;
+    Ok(match config.backend {
+        config::RttBackendKind::ProbeRs => "RTT @ Debug Probe",
+        config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing",
+    }
+    .to_string())
 }
 
 pub(crate) fn session_config_handler() -> SessionConfigHandler {
@@ -96,9 +101,13 @@ async fn connect_session(
         ..
     } = request;
     let config = config::RttConfig::from_params(&params).map_err(|error| error.to_string())?;
+    let backend = config.backend;
     let plugin = state.plugin::<RttPlugin>(PLUGIN_ID);
     let runtime = Arc::new(RttRuntime::new(config));
-    let session_name = name.unwrap_or_else(|| "RTT 调试助手".to_string());
+    let session_name = name.unwrap_or_else(|| match backend {
+        config::RttBackendKind::ProbeRs => "RTT @ Debug Probe".to_string(),
+        config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing".to_string(),
+    });
 
     let new_session_id = {
         let mut store = state
@@ -113,7 +122,7 @@ async fn connect_session(
                 params: params.clone(),
                 transfer_enabled: false,
                 transfer_protocol: None,
-                send_bar_enabled: false,
+                send_bar_enabled: true,
                 id_override: session_id,
             },
             ContainerSessionRuntime {
@@ -121,6 +130,7 @@ async fn connect_session(
                 file_transfer: None,
                 channel_factory: None,
                 io: None,
+                automation_io: Some(runtime.clone() as Arc<dyn AutomationIo>),
                 attachment: Some(Arc::new(RuntimeAttach {
                     runtime: runtime.clone(),
                     runtimes: plugin.runtimes.clone(),
@@ -164,7 +174,7 @@ async fn connect_session(
             "connected_at": connected_at,
             "transfer_enabled": false,
             "transfer_protocol": Value::Null,
-            "send_bar_enabled": false,
+            "send_bar_enabled": true,
         }),
     );
     Ok(new_session_id)

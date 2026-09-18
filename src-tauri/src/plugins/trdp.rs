@@ -771,6 +771,7 @@ async fn connect_session(
                 file_transfer: None,
                 channel_factory: None,
                 io: None,
+                automation_io: None,
                 attachment: Some(Arc::new(RuntimeAttach {
                     runtime: runtime.clone(),
                     runtimes: plugin.runtimes.clone(),

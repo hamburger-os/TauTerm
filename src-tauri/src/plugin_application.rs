@@ -147,6 +147,7 @@ pub(crate) fn create_on_data_callback(
             DataLogEntry {
                 session_id,
                 direction: DataDirection::RX,
+                stream: None,
                 data_mode: data_mode.clone(),
                 encoding: encoding.clone(),
                 payload: data_for_log,

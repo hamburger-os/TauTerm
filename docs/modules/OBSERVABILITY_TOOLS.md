@@ -15,7 +15,7 @@
 
 高频接收数据先在 Rust 侧按短时间窗口和大小阈值合并，再以 Base64 事件发送前端，降低大量小包造成的 IPC/JSON/渲染开销。关闭时必须 flush 已缓存数据。
 
-DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数据块以保护 UI，但每次丢弃都会累计计数，并按 1/2/4/8… 次节流发送 `session-display-overflow`；同一节流规则也用于后端 overflow warning，避免在过载时用日志本身制造新的队列压力。这个降级语义不能复制到未来 Recorder/Evidence Path。
+DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数据块以保护 UI，但每次丢弃都会累计计数，并按 1/2/4/8… 次节流发送 `session-display-overflow`；同一节流规则也用于后端 overflow warning，避免在过载时用日志本身制造新的队列压力。这个降级语义不能复制到 Recorder/Evidence Path。RTT 等多路观测数据同样必须把 acquisition/history loss、Session Log loss 与 WebView presentation loss 分开计数，不能用“界面丢帧”冒充目标或采集链路丢失。
 
 ### 日志
 
@@ -55,6 +55,8 @@ Retention 不是只在应用启动时运行一次。消费者启动时先执行�
 System Log 文件自身无法打开/写入时，消费者不得再调用同一个 `log` bridge 递归记录该失败；只使用 stderr 诊断并累计 loss counter。System Log 持久化前还必须经过最终防御性 sanitizer：至少覆盖常见 password/passphrase/token/API key/authorization/cookie/private-key 形式，并把 CR/LF 转义为单条物理记录，避免任意前端/远端错误字符串伪造额外日志行。真正的凭据仍要求调用方在格式化日志前就移除，sanitizer 不能成为传输 Secret 的理由。
 
 Session Data Log 与 System Log 的安全边界不同：Session Data Log 的用途就是在用户明确启动后记录真实线路 TX/RX，所以不能为了“脱敏”任意改变 payload。它必须依靠显式启动、独立生命周期、文件边界和未来 Recorder/Evidence Path 的更强合同来保护。
+
+多路 Session 的日志条目可以携带显式 logical stream identity，例如 RTT 使用 `RTT:<channel>`。LogWriter 将其渲染为方向旁的独立标签，而不是把 Channel 编码进 `data_mode` 或 payload。普通单流 Session 的 stream 为 `None`。logical stream 只标识来源，不改变用户选择的 text/hex/dual Session Log 渲染模式。
 
 启动 Session Log 与清除日志的 ACK 等待必须运行在 blocking worker，而不是占用同步 Tauri 命令分发路径；日志控制命令使用有界队列的 fail-fast 入队语义，队列过载时向 UI 明确返回错误。
 

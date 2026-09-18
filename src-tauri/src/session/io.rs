@@ -1,7 +1,9 @@
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use crate::kernel::charset::transcode_utf8_to_encoding;
-use crate::transport::{DataPlaneHandle, DataPlaneSubscription, ExclusiveIo, TransportError};
+use crate::transport::{
+    DataPlaneEvent, DataPlaneHandle, DataPlaneSubscription, ExclusiveIo, TransportError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionIoError {
@@ -9,6 +11,8 @@ pub enum SessionIoError {
     NoPrimaryDataPlane,
     #[error("当前会话不支持按目标地址发送")]
     TargetedSendUnsupported,
+    #[error("当前会话不提供自动化接收流")]
+    AutomationReceiveUnsupported,
     // The frontend owns the user-facing "发送失败" context. Keep the transport detail raw here
     // so IPC errors do not render as "发送失败: 发送失败: ...".
     #[error("{0}")]
@@ -19,6 +23,42 @@ impl From<TransportError> for SessionIoError {
     fn from(error: TransportError) -> Self {
         Self::Send(error.to_string())
     }
+}
+
+/// One automation receive event. The automation layer deliberately carries only bytes/lifecycle;
+/// protocol-specific source identities remain owned by the plugin that selects the active target.
+pub enum AutomationRxEvent {
+    Data(Vec<u8>),
+    Closed,
+}
+
+/// Receive side consumed by the per-session automation engine.
+///
+/// Ordinary byte streams adapt a canonical DataPlane subscription. Container/multiplexed plugins
+/// may provide their own bounded subscription without pretending to own a primary DataPlane.
+pub trait AutomationRx: Send {
+    fn try_recv(&mut self) -> Result<AutomationRxEvent, mpsc::TryRecvError>;
+}
+
+/// Minimal protocol-neutral I/O capability used by SendBar automation.
+///
+/// This is intentionally smaller than SessionIo: no terminal resize, exclusive lease, transport
+/// counters or protocol semantics. Plugins with a multiplexed transport can therefore participate
+/// in Basic/Command/Auto Reply/Script without being flattened into a fake byte-stream session.
+pub trait AutomationIo: Send + Sync {
+    fn send(&self, data: &[u8]) -> Result<(), SessionIoError>;
+    fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError>;
+
+    fn send_to(&self, _target: &str, _data: &[u8]) -> Result<(), SessionIoError> {
+        Err(SessionIoError::TargetedSendUnsupported)
+    }
+
+    fn send_to_text(&self, target: &str, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        self.send_to(target, data)?;
+        Ok(data.to_vec())
+    }
+
+    fn subscribe(&self, consumer: &str) -> Result<Box<dyn AutomationRx>, SessionIoError>;
 }
 
 /// Optional capability for datagram/multi-peer sessions. Ordinary streams do not implement it.
@@ -169,6 +209,43 @@ impl SessionIo {
         self.primary
             .as_ref()
             .is_some_and(DataPlaneHandle::is_exclusive)
+    }
+}
+
+struct DataPlaneAutomationRx {
+    subscription: DataPlaneSubscription,
+}
+
+impl AutomationRx for DataPlaneAutomationRx {
+    fn try_recv(&mut self) -> Result<AutomationRxEvent, mpsc::TryRecvError> {
+        match self.subscription.try_recv()? {
+            DataPlaneEvent::Data(data) => Ok(AutomationRxEvent::Data(data)),
+            DataPlaneEvent::Closed(_) => Ok(AutomationRxEvent::Closed),
+        }
+    }
+}
+
+impl AutomationIo for SessionIo {
+    fn send(&self, data: &[u8]) -> Result<(), SessionIoError> {
+        SessionIo::send(self, data)
+    }
+
+    fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        SessionIo::send_text(self, data)
+    }
+
+    fn send_to(&self, target: &str, data: &[u8]) -> Result<(), SessionIoError> {
+        SessionIo::send_to(self, target, data)
+    }
+
+    fn send_to_text(&self, target: &str, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        SessionIo::send_to_text(self, target, data)
+    }
+
+    fn subscribe(&self, consumer: &str) -> Result<Box<dyn AutomationRx>, SessionIoError> {
+        Ok(Box::new(DataPlaneAutomationRx {
+            subscription: SessionIo::subscribe(self, consumer)?,
+        }))
     }
 }
 

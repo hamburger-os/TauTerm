@@ -7,7 +7,7 @@ import { base64ToBytes, type RttChunk } from "./model";
 import styles from "./RttSessionView.module.css";
 
 interface Props {
-  chunks: RttChunk[];
+  chunks: readonly RttChunk[];
   connected: boolean;
   onData: (data: Uint8Array) => void;
 }
@@ -20,10 +20,7 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
   const { theme } = useTheme();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
   const lastSequenceRef = useRef(0);
-  const previousConnectedRef = useRef(connected);
-  const skipChunksOnceRef = useRef(false);
   const chunksRef = useRef(chunks);
   const onDataRef = useRef(onData);
   const connectedRef = useRef(connected);
@@ -53,7 +50,7 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
     terminal.loadAddon(fit);
     terminal.open(host);
     terminalRef.current = terminal;
-    fitRef.current = fit;
+
     const input = terminal.onData(data => {
       if (connectedRef.current) onDataRef.current(new TextEncoder().encode(data));
     });
@@ -61,6 +58,7 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
       terminal.write(base64ToBytes(chunk.data_b64));
       lastSequenceRef.current = Math.max(lastSequenceRef.current, chunk.sequence);
     }
+
     const fitTerminal = () => {
       if (host.clientWidth > 0 && host.clientHeight > 0) {
         try { fit.fit(); } catch { /* hidden pane */ }
@@ -74,20 +72,9 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
       input.dispose();
       terminal.dispose();
       terminalRef.current = null;
-      fitRef.current = null;
       lastSequenceRef.current = 0;
     };
   }, []);
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (connected && !previousConnectedRef.current && terminal) {
-      terminal.reset();
-      lastSequenceRef.current = 0;
-      skipChunksOnceRef.current = true;
-    }
-    previousConnectedRef.current = connected;
-  }, [connected]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -103,10 +90,6 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    if (skipChunksOnceRef.current) {
-      skipChunksOnceRef.current = false;
-      return;
-    }
     for (const chunk of chunks) {
       if (chunk.sequence <= lastSequenceRef.current) continue;
       terminal.write(base64ToBytes(chunk.data_b64));

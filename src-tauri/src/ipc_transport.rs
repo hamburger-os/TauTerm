@@ -64,6 +64,7 @@ pub async fn write_data(
                 DataLogEntry {
                     session_id,
                     direction: DataDirection::TX,
+                    stream: None,
                     data_mode,
                     encoding,
                     payload: data_out.clone(),

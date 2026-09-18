@@ -1,19 +1,27 @@
 use super::backend::{open_backend, RttBackend};
 use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
-use super::model::{RttChannelInfo, RttPhase, RttReadChunk};
+use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
+use crate::embedded_debug::observation::now_ms;
+use crate::kernel::log_engine::{
+    session_log_is_active, try_send_session_log, DataDirection, DataLogEntry, LogEntry,
+};
 use crate::AppState;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use chrono::{Local, TimeZone};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
-const PRESENTATION_FLUSH_BYTES: usize = 8 * 1024;
+const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
+const PRESENTATION_QUEUE_MAX_BYTES: usize = 256 * 1024;
+const MAX_COMMANDS_PER_TICK: usize = 8;
+const MAX_PENDING_WRITES: usize = 32;
+const WRITE_QUANTUM_BYTES: usize = 4 * 1024;
 
 pub(super) enum WorkerCommand {
     Write {
@@ -36,6 +44,14 @@ pub(super) struct WorkerContext {
     pub shared: Arc<RttShared>,
     pub shutting_down: Arc<AtomicBool>,
     pub worker_exited: Arc<AtomicBool>,
+}
+
+struct PendingWrite {
+    channel_index: u32,
+    data: Vec<u8>,
+    offset: usize,
+    deadline: Instant,
+    reply: mpsc::SyncSender<Result<usize, RttError>>,
 }
 
 pub(super) fn run(
@@ -70,27 +86,44 @@ pub(super) fn run(
         return;
     }
 
-    let mut pending: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-    let mut pending_bytes = 0usize;
+    let log_tx = app
+        .state::<AppState>()
+        .log_engine
+        .lock()
+        .ok()
+        .map(|engine| engine.sender());
+    let mut presentation = VecDeque::<StoredRttChunk>::new();
+    let mut presentation_bytes = 0usize;
+    let mut writes = VecDeque::<PendingWrite>::new();
     let mut last_flush = Instant::now();
+    let mut last_snapshot = Instant::now();
     let mut fatal_error: Option<RttError> = None;
+    let mut shutdown_reply: Option<mpsc::SyncSender<()>> = None;
 
     'worker: loop {
-        while let Ok(command) = command_rx.try_recv() {
-            match command {
-                WorkerCommand::Write {
+        for _ in 0..MAX_COMMANDS_PER_TICK {
+            match command_rx.try_recv() {
+                Ok(WorkerCommand::Write {
                     channel_index,
                     data,
                     reply,
-                } => {
-                    let result =
-                        write_all(backend.as_mut(), channel_index, &data, config.write_timeout);
-                    if let Ok(bytes) = result.as_ref() {
-                        shared.record_tx(*bytes);
+                }) => {
+                    if writes.len() >= MAX_PENDING_WRITES {
+                        let _ = reply.send(Err(RttError::new(
+                            RttErrorCode::RttWriteQueueFull,
+                            "RTT 写入队列繁忙，请降低发送速率",
+                        )));
+                    } else {
+                        writes.push_back(PendingWrite {
+                            channel_index,
+                            data,
+                            offset: 0,
+                            deadline: Instant::now() + config.write_timeout,
+                            reply,
+                        });
                     }
-                    let _ = reply.send(result);
                 }
-                WorkerCommand::RefreshChannels { reply } => {
+                Ok(WorkerCommand::RefreshChannels { reply }) => {
                     let result = backend.refresh_channels();
                     if let Ok(channels) = result.as_ref() {
                         shared.set_running(backend.descriptor(), channels.clone());
@@ -98,12 +131,12 @@ pub(super) fn run(
                     }
                     let _ = reply.send(result);
                 }
-                WorkerCommand::Shutdown { reply } => {
-                    let _ =
-                        flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
-                    let _ = reply.send(());
+                Ok(WorkerCommand::Shutdown { reply }) => {
+                    shutdown_reply = Some(reply);
                     break 'worker;
                 }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break 'worker,
             }
         }
 
@@ -112,25 +145,66 @@ pub(super) fn run(
             fatal_error = Some(error);
             break;
         }
-        for chunk in reads {
-            pending_bytes = pending_bytes.saturating_add(chunk.data.len());
-            pending
-                .entry(chunk.channel_index)
-                .or_default()
-                .extend_from_slice(&chunk.data);
+        for read in reads {
+            let chunk = shared.record_rx(read.channel_index, read.data);
+            if let Some(sender) = log_tx.as_ref() {
+                log_rtt_data(
+                    sender,
+                    &session_id,
+                    DataDirection::RX,
+                    chunk.channel_index,
+                    &chunk.data,
+                    chunk.timestamp_ms,
+                );
+            }
+            presentation_bytes = presentation_bytes.saturating_add(chunk.data.len());
+            presentation.push_back(chunk);
+            while presentation_bytes > PRESENTATION_QUEUE_MAX_BYTES {
+                let Some(dropped) = presentation.pop_front() else {
+                    break;
+                };
+                presentation_bytes = presentation_bytes.saturating_sub(dropped.data.len());
+                shared.record_presentation_drop(dropped.data.len());
+            }
         }
-        if pending_bytes >= PRESENTATION_FLUSH_BYTES
-            || (!pending.is_empty() && last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL)
-        {
-            let _ = flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
+
+        service_one_write(
+            backend.as_mut(),
+            &shared,
+            &mut writes,
+            log_tx.as_ref(),
+            &session_id,
+        );
+
+        if !presentation.is_empty() && last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL {
+            emit_presentation_batch(
+                &app,
+                &session_id,
+                &mut presentation,
+                &mut presentation_bytes,
+            );
             last_flush = Instant::now();
         }
+        if last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
+            let _ = emit_snapshot(&app, &session_id, &shared);
+            last_snapshot = Instant::now();
+        }
+
         std::thread::sleep(config.poll_interval);
     }
 
-    let _ = flush_pending(&app, &session_id, &shared, &mut pending, &mut pending_bytes);
+    emit_presentation_batch(
+        &app,
+        &session_id,
+        &mut presentation,
+        &mut presentation_bytes,
+    );
+    cancel_pending_writes(&mut writes);
     backend.shutdown();
     worker_exited.store(true, Ordering::Release);
+    if let Some(reply) = shutdown_reply {
+        let _ = reply.send(());
+    }
 
     if let Some(error) = fatal_error {
         shared.set_error(error.clone());
@@ -141,60 +215,133 @@ pub(super) fn run(
     }
 }
 
-fn write_all(
+fn service_one_write(
     backend: &mut dyn RttBackend,
-    channel_index: u32,
-    data: &[u8],
-    timeout: Duration,
-) -> Result<usize, RttError> {
-    let deadline = Instant::now() + timeout;
-    let mut written = 0usize;
-    while written < data.len() {
-        let count = backend.write(channel_index, &data[written..])?;
-        written = written.saturating_add(count);
-        if written == data.len() {
-            return Ok(written);
-        }
-        if Instant::now() >= deadline {
-            return Err(RttError::new(
-                RttErrorCode::RttWriteTimeout,
-                format!(
-                    "RTT Down Channel {channel_index} 写入超时（{written}/{} bytes）",
-                    data.len()
-                ),
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(1));
+    shared: &Arc<RttShared>,
+    writes: &mut VecDeque<PendingWrite>,
+    log_tx: Option<&mpsc::SyncSender<LogEntry>>,
+    session_id: &str,
+) {
+    let Some(mut pending) = writes.pop_front() else {
+        return;
+    };
+
+    if Instant::now() >= pending.deadline {
+        let _ = pending.reply.send(Err(write_timeout(&pending)));
+        return;
     }
-    Ok(written)
+
+    let end = pending
+        .offset
+        .saturating_add(WRITE_QUANTUM_BYTES)
+        .min(pending.data.len());
+    match backend.write(pending.channel_index, &pending.data[pending.offset..end]) {
+        Ok(count) => {
+            let count = count.min(end.saturating_sub(pending.offset));
+            if count > 0 {
+                if let Some(sender) = log_tx {
+                    log_rtt_data(
+                        sender,
+                        session_id,
+                        DataDirection::TX,
+                        pending.channel_index,
+                        &pending.data[pending.offset..pending.offset + count],
+                        now_ms(),
+                    );
+                }
+            }
+            pending.offset = pending.offset.saturating_add(count);
+            shared.record_tx(count);
+            if pending.offset >= pending.data.len() {
+                let total = pending.data.len();
+                let _ = pending.reply.send(Ok(total));
+            } else if Instant::now() >= pending.deadline {
+                let _ = pending.reply.send(Err(write_timeout(&pending)));
+            } else {
+                writes.push_back(pending);
+            }
+        }
+        Err(error) => {
+            let _ = pending.reply.send(Err(error));
+        }
+    }
 }
 
-fn flush_pending(
+fn write_timeout(pending: &PendingWrite) -> RttError {
+    RttError::new(
+        RttErrorCode::RttWriteTimeout,
+        format!(
+            "RTT Down Channel {} 写入超时（{}/{} bytes）",
+            pending.channel_index,
+            pending.offset,
+            pending.data.len()
+        ),
+    )
+}
+
+fn cancel_pending_writes(writes: &mut VecDeque<PendingWrite>) {
+    for pending in writes.drain(..) {
+        let _ = pending.reply.send(Err(RttError::new(
+            RttErrorCode::Cancelled,
+            "RTT 会话正在关闭，未完成的写入已取消",
+        )));
+    }
+}
+
+fn log_rtt_data(
+    sender: &mpsc::SyncSender<LogEntry>,
+    session_id: &str,
+    direction: DataDirection,
+    channel_index: u32,
+    payload: &[u8],
+    timestamp_ms: u64,
+) {
+    if !session_log_is_active(session_id) {
+        return;
+    }
+    let timestamp = Local
+        .timestamp_millis_opt(timestamp_ms as i64)
+        .single()
+        .unwrap_or_else(Local::now);
+    try_send_session_log(
+        sender,
+        DataLogEntry {
+            session_id: session_id.to_string(),
+            direction,
+            stream: Some(format!("RTT:{channel_index}")),
+            // The active Session Log writer owns the user's text/hex/dual rendering mode.
+            data_mode: "raw".to_string(),
+            encoding: "utf-8".to_string(),
+            payload: payload.to_vec(),
+            timestamp,
+        },
+    );
+}
+
+fn emit_presentation_batch(
     app: &AppHandle,
     session_id: &str,
-    shared: &Arc<RttShared>,
-    pending: &mut BTreeMap<u32, Vec<u8>>,
-    pending_bytes: &mut usize,
-) -> Result<(), ()> {
-    for (channel_index, data) in std::mem::take(pending) {
-        if data.is_empty() {
-            continue;
-        }
-        let chunk = shared.record_rx(channel_index, data);
-        let _ = app.emit(
-            "rtt-event",
-            json!({
-                "kind": "chunk",
-                "session_id": session_id,
-                "channel_index": chunk.channel_index,
-                "sequence": chunk.sequence,
-                "timestamp_ms": chunk.timestamp_ms,
-                "data_b64": BASE64.encode(&chunk.data),
-            }),
-        );
+    presentation: &mut VecDeque<StoredRttChunk>,
+    presentation_bytes: &mut usize,
+) {
+    if presentation.is_empty() {
+        return;
     }
-    *pending_bytes = 0;
-    Ok(())
+    let chunks = presentation
+        .drain(..)
+        .map(|chunk| RttChunkDto::from_stored(&chunk))
+        .collect::<Vec<_>>();
+    *presentation_bytes = 0;
+    let generation = chunks.first().map_or(0, |chunk| chunk.generation);
+    let _ = app.emit(
+        "rtt-event",
+        json!({
+            "kind": "batch",
+            "session_id": session_id,
+            "generation": generation,
+            "chunks": chunks,
+        }),
+    );
 }
 
 fn emit_snapshot(app: &AppHandle, session_id: &str, shared: &Arc<RttShared>) -> Result<(), ()> {
@@ -203,6 +350,7 @@ fn emit_snapshot(app: &AppHandle, session_id: &str, shared: &Arc<RttShared>) -> 
         json!({
             "kind": "snapshot",
             "session_id": session_id,
+            "generation": shared.generation(),
             "snapshot": shared.snapshot(),
         }),
     )
@@ -235,7 +383,7 @@ fn notify_unexpected_disconnect(app: AppHandle, session_id: String, error: RttEr
 mod tests {
     use super::*;
     use crate::plugins::rtt::model::{
-        RttBackendCapabilities, RttBackendDescriptor, RttChannelInfo,
+        RttBackendCapabilities, RttBackendDescriptor, RttChannelInfo, RttSnapshot,
     };
 
     struct PartialWriteBackend {
@@ -276,15 +424,40 @@ mod tests {
     }
 
     #[test]
-    fn write_all_handles_partial_backend_writes() {
+    fn write_scheduler_handles_partial_backend_writes_without_busy_loop() {
         let mut backend = PartialWriteBackend {
             channels: Vec::new(),
             max_write: 2,
             written: Vec::new(),
         };
-        let payload = b"partial RTT write";
-        let written = write_all(&mut backend, 0, payload, Duration::from_secs(1)).unwrap();
-        assert_eq!(written, payload.len());
+        let shared = Arc::new(RttShared::new());
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        let payload = b"partial RTT write".to_vec();
+        let mut writes = VecDeque::from([PendingWrite {
+            channel_index: 0,
+            data: payload.clone(),
+            offset: 0,
+            deadline: Instant::now() + Duration::from_secs(1),
+            reply: reply_tx,
+        }]);
+
+        while !writes.is_empty() {
+            service_one_write(&mut backend, &shared, &mut writes, None, "test");
+        }
+
+        assert_eq!(reply_rx.recv().unwrap().unwrap(), payload.len());
         assert_eq!(backend.written, payload);
+        let snapshot: RttSnapshot = shared.snapshot();
+        assert_eq!(snapshot.tx_bytes, payload.len() as u64);
+    }
+
+    #[test]
+    fn presentation_drop_is_not_counted_as_history_loss() {
+        let shared = RttShared::new();
+        shared.record_presentation_drop(12);
+        let snapshot = shared.snapshot();
+        assert_eq!(snapshot.dropped_presentation_chunks, 1);
+        assert_eq!(snapshot.dropped_presentation_bytes, 12);
+        assert_eq!(snapshot.dropped_history_chunks, 0);
     }
 }

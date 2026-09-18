@@ -1,7 +1,9 @@
 import { StatusBarBadge } from "../../components/Layout/StatusBarPrimitives";
 import { definePlugin, type PluginManifest } from "../../core/plugin-registry";
+import { usePluginRuntime } from "../../core/usePluginRuntime";
 import manifestJson from "../../plugin-manifests/rtt.json";
 import RttConnectForm from "./RttConnectForm";
+import RttSendTarget from "./RttSendTarget";
 import RttSessionView from "./RttSessionView";
 import {
   defaultRttParams,
@@ -9,6 +11,11 @@ import {
   rttDefaultSessionName,
   rttSubtitle,
 } from "./model";
+import {
+  rttRuntimeStore,
+  sendRttData,
+  type RttRuntimeSnapshot,
+} from "./runtime-store";
 import { rttLocales } from "./locales";
 
 function validConfig(params: Record<string, unknown>): boolean {
@@ -28,19 +35,34 @@ function validConfig(params: Record<string, unknown>): boolean {
   return true;
 }
 
+function RttStatus({ sessionId }: { sessionId: string }) {
+  const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
+  const backend = runtime.snapshot?.backend?.display_name ?? "RTT";
+  const channel = runtime.selectedSendChannel;
+  return (
+    <StatusBarBadge>
+      {backend}{channel != null ? ` · Ch ${channel}` : ""}
+    </StatusBarBadge>
+  );
+}
+
 export const rttPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: RttConnectForm,
   defaultConnectionParams: defaultRttParams,
   normalizeConnectionParams: normalizeRttParams,
   isConnectionConfigValid: validConfig,
-  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: false }),
+  defaultSessionOptions: () => ({ transferEnabled: false, sendBarEnabled: true }),
   resolveEndpoint: () => "rtt",
   sessionPresentation: {
     defaultName: params => rttDefaultSessionName(params),
     subtitle: params => rttSubtitle(params),
   },
   locales: rttLocales,
+  runtimeStore: rttRuntimeStore,
+  sendData: sendRttData,
+  sendTarget: RttSendTarget,
+  sendTargetVisible: () => true,
   customView: RttSessionView,
   formatSessionError: error => {
     if (error && typeof error === "object" && "message" in error) {
@@ -54,12 +76,8 @@ export const rttPlugin = definePlugin({
     {
       id: "rtt-backend",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.state === "connected",
-      render: ({ activeTab }) => (
-        <StatusBarBadge>
-          RTT · {activeTab?.params?.backend === "jlink_existing" ? "J-LINK" : "PROBE"}
-        </StatusBarBadge>
-      ),
+      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      render: ({ sessionId }) => <RttStatus sessionId={sessionId} />,
     },
   ],
 });

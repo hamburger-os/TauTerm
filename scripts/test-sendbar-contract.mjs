@@ -175,6 +175,26 @@ const networkPlugin = source("src/plugins/network/index.tsx");
 assert.ok(networkPlugin.includes("sendTarget: NetworkSendTarget"));
 assert.ok(networkPlugin.includes("sendTargetVisible: params => isNetworkSendTargetVisible(params)"));
 
+const rttPlugin = source("src/plugins/rtt/index.tsx");
+const rttTarget = source("src/plugins/rtt/RttSendTarget.tsx");
+const rttRuntime = source("src/plugins/rtt/runtime-store.ts");
+assert.ok(rttPlugin.includes("sendTarget: RttSendTarget"));
+assert.ok(rttPlugin.includes("sendData: sendRttData"));
+assert.ok(rttPlugin.includes("sendBarEnabled: true"));
+assert.ok(rttTarget.includes("selectRttSendChannel"));
+assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
+assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
+assert.ok(
+  rttRuntime.includes("selectedChannel") && rttRuntime.includes("selectedSendChannel"),
+  "RTT observation source and SendBar target must remain independent",
+);
+
+const sessionContext = source("src/context/SessionContext.tsx");
+const sendTargetCatch = sessionContext.match(
+  /const sendToTarget = useCallback\([\s\S]*?catch \(error\) \{([\s\S]*?)\n    \}/,
+)?.[1] ?? "";
+assert.ok(sendTargetCatch.includes("throw error"), "SendBar write failures must propagate to execution owners");
+
 const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeAutoReplyConfig"));
@@ -192,6 +212,12 @@ assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
+assert.ok(
+  sendBar.includes("<SendTarget sessionId={containerId} disabled={executionMode !== null} />"),
+  "plugin target controls must lock with the current SendBar execution snapshot",
+);
+assert.ok(networkTarget.includes("disabled={disabled}"));
+assert.ok(rttTarget.includes("disabled={disabled}"));
 
 assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
 assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");

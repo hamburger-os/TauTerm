@@ -3,6 +3,10 @@ use serde_json::Value;
 use std::ops::Range;
 use std::time::Duration;
 
+const ATTACH_TIMEOUT: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RttBackendKind {
     ProbeRs,
@@ -17,7 +21,8 @@ pub enum RttWireProtocol {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RttLocator {
-    AutoRam,
+    /// Prefer an RTT symbol from the optional firmware artifact, then fall back to target RAM.
+    Auto,
     Exact(u64),
     Ranges(Vec<Range<u64>>),
 }
@@ -30,9 +35,13 @@ pub struct RttConfig {
     pub wire_protocol: RttWireProtocol,
     pub speed_khz: Option<u32>,
     pub core_index: usize,
+    pub firmware_path: Option<String>,
     pub locator: RttLocator,
+    /// Runtime policy, intentionally not a user-tunable persisted field.
     pub attach_timeout: Duration,
+    /// Runtime scheduling policy, intentionally not a user-tunable persisted field.
     pub poll_interval: Duration,
+    /// Runtime backpressure policy, intentionally not a user-tunable persisted field.
     pub write_timeout: Duration,
     pub jlink_port: u16,
     pub jlink_channels: Vec<u32>,
@@ -75,32 +84,12 @@ impl RttConfig {
             }
         };
         let speed_khz = match object.get("speed_khz").and_then(Value::as_u64) {
-            None | Some(0) => None,
-            Some(value) if value <= 50_000 => Some(value as u32),
+            None => None,
+            Some(value) if (1..=50_000).contains(&value) => Some(value as u32),
             Some(_) => return Err(RttError::invalid_config("调试接口速度必须在 1..50000 kHz")),
         };
         let core_index = bounded_u64(object.get("core_index"), 0, 0, 31, "CPU Core")? as usize;
-        let attach_timeout = Duration::from_millis(bounded_u64(
-            object.get("attach_timeout_ms"),
-            5_000,
-            100,
-            30_000,
-            "RTT Attach 超时",
-        )?);
-        let poll_interval = Duration::from_millis(bounded_u64(
-            object.get("poll_interval_ms"),
-            5,
-            2,
-            100,
-            "RTT 轮询间隔",
-        )?);
-        let write_timeout = Duration::from_millis(bounded_u64(
-            object.get("write_timeout_ms"),
-            500,
-            50,
-            5_000,
-            "RTT 写入超时",
-        )?);
+        let firmware_path = nonempty_string(object.get("firmware_path"));
         let locator = parse_locator(object)?;
         let jlink_port = bounded_u64(
             object.get("jlink_port"),
@@ -118,10 +107,11 @@ impl RttConfig {
             wire_protocol,
             speed_khz,
             core_index,
+            firmware_path,
             locator,
-            attach_timeout,
-            poll_interval,
-            write_timeout,
+            attach_timeout: ATTACH_TIMEOUT,
+            poll_interval: POLL_INTERVAL,
+            write_timeout: WRITE_TIMEOUT,
             jlink_port,
             jlink_channels,
         })
@@ -176,7 +166,7 @@ fn parse_locator(object: &serde_json::Map<String, Value>) -> Result<RttLocator, 
         .and_then(Value::as_str)
         .unwrap_or("auto")
     {
-        "auto" => Ok(RttLocator::AutoRam),
+        "auto" => Ok(RttLocator::Auto),
         "exact" => {
             let raw = object
                 .get("control_block_address")
@@ -274,11 +264,13 @@ mod tests {
             "target": "STM32F407VG",
             "locator_mode": "exact",
             "control_block_address": "0x2000_0100",
-            "wire_protocol": "swd"
+            "wire_protocol": "swd",
+            "firmware_path": "firmware.elf"
         }))
         .unwrap();
         assert_eq!(config.backend, RttBackendKind::ProbeRs);
         assert_eq!(config.locator, RttLocator::Exact(0x2000_0100));
+        assert_eq!(config.firmware_path.as_deref(), Some("firmware.elf"));
     }
 
     #[test]
@@ -290,6 +282,28 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(config.locator, RttLocator::Ranges(ref values) if values.len() == 2));
+    }
+
+    #[test]
+    fn zero_speed_is_not_a_legacy_auto_sentinel() {
+        let error = RttConfig::from_params(&json!({
+            "target": "nRF52840_xxAA",
+            "speed_khz": 0
+        }))
+        .unwrap_err();
+        assert!(error.message.contains("1..50000"));
+    }
+
+    #[test]
+    fn runtime_scheduling_policy_is_not_read_from_saved_params() {
+        let config = RttConfig::from_params(&json!({
+            "target": "nRF52840_xxAA",
+            "poll_interval_ms": 100,
+            "write_timeout_ms": 5000
+        }))
+        .unwrap();
+        assert_eq!(config.poll_interval, POLL_INTERVAL);
+        assert_eq!(config.write_timeout, WRITE_TIMEOUT);
     }
 
     #[test]

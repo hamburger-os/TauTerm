@@ -10,6 +10,6 @@ pub mod runtime;
 pub mod state;
 
 pub use error::SessionError;
-pub use io::SessionIo;
+pub use io::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIo, SessionIoError};
 pub use runtime::SessionDataPlane;
 pub use state::DisconnectInfo;

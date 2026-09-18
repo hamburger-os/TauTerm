@@ -560,6 +560,7 @@ fn register_tcp_peer(
         let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
             session_id,
             direction: DataDirection::RX,
+            stream: None,
             data_mode: data_mode_log.clone(),
             encoding: encoding_log.clone(),
             payload,
@@ -707,6 +708,7 @@ fn emit_udp_datagram(
             .try_send(LogEntry::SessionData(DataLogEntry {
                 session_id: session_id.to_string(),
                 direction: DataDirection::RX,
+                stream: None,
                 data_mode: data_mode.to_string(),
                 encoding: encoding.to_string(),
                 payload: datagram.to_vec(),

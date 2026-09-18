@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
@@ -48,6 +49,18 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
     } finally {
       setLoading(false);
     }
+  }
+
+  async function chooseFirmware() {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{
+        name: t("rtt.firmwareArtifact"),
+        extensions: ["elf", "axf", "out"],
+      }],
+    });
+    if (typeof selected === "string") patch({ firmware_path: selected });
   }
 
   useEffect(() => {
@@ -137,6 +150,30 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
           </div>
 
           <div className={styles.field}>
+            <label>{t("rtt.firmwareArtifact")}</label>
+            <div className={styles.inlineField}>
+              <input
+                className={`liquid-glass-input ${styles.control} ${styles.pathControl}`}
+                value={str(normalized, "firmware_path")}
+                disabled={disabled}
+                placeholder={t("rtt.firmwarePlaceholder")}
+                onChange={event => patch({ firmware_path: event.target.value })}
+              />
+              <button
+                type="button"
+                className={`liquid-glass-button ${styles.iconButton}`}
+                disabled={disabled}
+                onClick={() => void chooseFirmware()}
+                aria-label={t("rtt.browseFirmware")}
+                title={t("rtt.browseFirmware")}
+              >
+                <Icon name="folder" size="md" />
+              </button>
+            </div>
+            <small>{t("rtt.firmwareHint")}</small>
+          </div>
+
+          <div className={styles.field}>
             <label>{t("rtt.locator")}</label>
             <select
               className={`liquid-glass-input liquid-glass-select ${styles.control}`}
@@ -162,6 +199,7 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
               />
             </div>
           )}
+
           {locator === "ranges" && (
             <div className={styles.field}>
               <label>{t("rtt.ranges")}</label>
@@ -175,6 +213,39 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
               <small>{t("rtt.rangesHint")}</small>
             </div>
           )}
+
+          <details className={styles.advanced}>
+            <summary>{t("rtt.advanced")}</summary>
+            <div className={styles.grid2}>
+              <div className={styles.field}>
+                <label>{t("rtt.speed")}</label>
+                <input
+                  className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
+                  type="number"
+                  min={1}
+                  max={50000}
+                  value={optionalPositiveNumber(normalized, "speed_khz")}
+                  disabled={disabled}
+                  onChange={event => patch({
+                    speed_khz: event.target.value === "" ? null : Number(event.target.value),
+                  })}
+                />
+                <small>{t("rtt.speedAuto")}</small>
+              </div>
+              <div className={styles.field}>
+                <label>{t("rtt.core")}</label>
+                <input
+                  className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
+                  type="number"
+                  min={0}
+                  max={31}
+                  value={num(normalized, "core_index", 0)}
+                  disabled={disabled}
+                  onChange={event => patch({ core_index: Number(event.target.value) })}
+                />
+              </div>
+            </div>
+          </details>
         </>
       ) : (
         <>
@@ -205,79 +276,6 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
           <small className={styles.hint}>{t("rtt.jlinkHint")}</small>
         </>
       )}
-
-      <details className={styles.advanced}>
-        <summary>{t("rtt.advanced")}</summary>
-        {backend === "probe_rs" && (
-          <div className={styles.grid2}>
-            <div className={styles.field}>
-              <label>{t("rtt.speed")}</label>
-              <input
-                className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-                type="number"
-                min={1}
-                max={50000}
-                value={optionalPositiveNumber(normalized, "speed_khz")}
-                disabled={disabled}
-                onChange={event => patch({
-                  speed_khz: event.target.value === "" ? null : Number(event.target.value),
-                })}
-              />
-              <small>{t("rtt.speedAuto")}</small>
-            </div>
-            <div className={styles.field}>
-              <label>{t("rtt.core")}</label>
-              <input
-                className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-                type="number"
-                min={0}
-                max={31}
-                value={num(normalized, "core_index", 0)}
-                disabled={disabled}
-                onChange={event => patch({ core_index: Number(event.target.value) })}
-              />
-            </div>
-          </div>
-        )}
-        <div className={styles.grid3}>
-          <div className={styles.field}>
-            <label>{t("rtt.attachTimeout")}</label>
-            <input
-              className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-              type="number"
-              min={100}
-              max={30000}
-              value={num(normalized, "attach_timeout_ms", 5000)}
-              disabled={disabled}
-              onChange={event => patch({ attach_timeout_ms: Number(event.target.value) })}
-            />
-          </div>
-          <div className={styles.field}>
-            <label>{t("rtt.pollInterval")}</label>
-            <input
-              className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-              type="number"
-              min={2}
-              max={100}
-              value={num(normalized, "poll_interval_ms", 5)}
-              disabled={disabled}
-              onChange={event => patch({ poll_interval_ms: Number(event.target.value) })}
-            />
-          </div>
-          <div className={styles.field}>
-            <label>{t("rtt.writeTimeout")}</label>
-            <input
-              className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-              type="number"
-              min={50}
-              max={5000}
-              value={num(normalized, "write_timeout_ms", 500)}
-              disabled={disabled}
-              onChange={event => patch({ write_timeout_ms: Number(event.target.value) })}
-            />
-          </div>
-        </div>
-      </details>
     </div>
   );
 }

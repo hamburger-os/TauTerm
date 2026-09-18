@@ -86,3 +86,25 @@ pub async fn rtt_refresh_channels(
         .map_err(|error| RttCommandError::from(RttError::backend(error.to_string())))?
         .map_err(RttCommandError::from)
 }
+
+#[tauri::command]
+pub fn rtt_set_automation_source_channel(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .set_automation_source_channel(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub fn rtt_set_send_channel(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .set_send_channel(channel_index)
+        .map_err(RttCommandError::from)
+}

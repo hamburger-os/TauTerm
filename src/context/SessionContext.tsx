@@ -506,6 +506,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await writeData(sessionId, data);
     } catch (error) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
+      throw error;
     }
   }, [writeData]);
 
@@ -752,6 +753,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
+      throw error;
     }
   }, [writeData]);
 

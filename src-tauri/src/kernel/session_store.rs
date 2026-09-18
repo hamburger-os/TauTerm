@@ -9,7 +9,7 @@ use crate::kernel::plugin_adapter::{
     ProtocolConnection, SessionAttach, SessionChannelFactory, SessionService,
 };
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
-use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
+use crate::session::{AutomationIo, DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transfer::scheduler::TransferScheduler;
 use crate::transport::DataPlaneRuntime;
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,9 @@ pub struct ActiveSessionHandle {
     pub name: String,
     pub data_plane: Option<SessionDataPlane>,
     pub io: Option<Arc<SessionIo>>,
+    /// Protocol-neutral SendBar/script capability. For ordinary streams this is the same SessionIo;
+    /// multiplexed container plugins may provide an independent implementation.
+    pub automation_io: Option<Arc<dyn AutomationIo>>,
     pub state: SessionState,
     pub plugin_id: String,
     pub endpoint: String,
@@ -250,6 +253,7 @@ pub struct ContainerSessionRuntime {
     pub file_transfer: Option<Arc<dyn FileTransfer>>,
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     pub io: Option<Arc<SessionIo>>,
+    pub automation_io: Option<Arc<dyn AutomationIo>>,
     pub attachment: Option<Arc<dyn SessionAttach>>,
     pub teardown_delay: Duration,
 }
@@ -358,7 +362,8 @@ impl SessionStore {
             id: id.clone(),
             name: tab_name.clone(),
             data_plane: Some(data_plane),
-            io: Some(io),
+            io: Some(io.clone()),
+            automation_io: Some(io as Arc<dyn AutomationIo>),
             state: SessionState::Connected,
             plugin_id,
             endpoint,
@@ -420,6 +425,7 @@ impl SessionStore {
             file_transfer,
             channel_factory,
             io,
+            automation_io,
             attachment,
             teardown_delay,
         } = runtime;
@@ -479,6 +485,7 @@ impl SessionStore {
             name: session_name.clone(),
             data_plane: None,
             io,
+            automation_io,
             state: SessionState::Connected,
             plugin_id,
             endpoint,
@@ -797,7 +804,10 @@ impl SessionStore {
         ids
     }
 
-    /// 启动脚本引擎（首次启动创建线程，后续发送新脚本）
+    /// 启动脚本引擎（首次启动创建线程，后续发送新脚本）。
+    ///
+    /// 脚本只依赖 AutomationIo。普通流式 Session 由 SessionIo 适配；RTT 等容器
+    /// Session 可以提供自己的多路复用自动化能力，而不需要伪造根 DataPlane。
     pub fn start_script(
         &mut self,
         session_id: &str,
@@ -805,21 +815,21 @@ impl SessionStore {
         app_handle: tauri::AppHandle,
     ) -> Result<(), String> {
         if let Some(handle) = self.sessions.get_mut(session_id) {
-            let io = handle.io.clone().ok_or("通信能力不可用")?;
+            let automation = handle
+                .automation_io
+                .clone()
+                .ok_or("当前会话不提供自动化 I/O 能力")?;
             if let Some(tx) = &handle.script_tx {
                 return tx
                     .send(ScriptCmd::LoadScript(code.to_string()))
                     .map_err(|e| format!("发送脚本失败: {}", e));
             }
-            let subscription = io
-                .primary()
-                .map(|_| io.subscribe(format!("script:{session_id}")))
-                .transpose()
-                .map_err(|e| e.to_string())?;
+            let consumer = format!("script:{session_id}");
+            let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
             let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
             let shutdown = Arc::new(AtomicBool::new(false));
             let thread = spawn_script_thread(
-                io,
+                automation,
                 subscription,
                 app_handle,
                 rx,
@@ -833,6 +843,7 @@ impl SessionStore {
             handle.script_shutdown = Some(shutdown);
             return Ok(());
         }
+
         let not_found = self.session_not_found(session_id);
         let (parent_id, sub_idx) = self
             .find_sub_connection_index(session_id)
@@ -844,15 +855,14 @@ impl SessionStore {
                 .send(ScriptCmd::LoadScript(code.to_string()))
                 .map_err(|e| format!("发送脚本失败: {}", e));
         }
-        let io = sub.io.clone();
-        let subscription = io
-            .subscribe(format!("script:{session_id}"))
-            .map_err(|e| e.to_string())?;
+        let automation: Arc<dyn AutomationIo> = sub.io.clone();
+        let consumer = format!("script:{session_id}");
+        let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
         let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread = spawn_script_thread(
-            io,
-            Some(subscription),
+            automation,
+            subscription,
             app_handle,
             rx,
             session_id.to_string(),
@@ -987,7 +997,8 @@ impl SessionStore {
             );
         }
         handle.data_plane = Some(data_plane);
-        handle.io = Some(io);
+        handle.io = Some(io.clone());
+        handle.automation_io = Some(io as Arc<dyn AutomationIo>);
         handle.state = SessionState::Connected;
         handle.connected_at = connected_at;
         handle.stats_cancel_flag = Some(stats_flag);

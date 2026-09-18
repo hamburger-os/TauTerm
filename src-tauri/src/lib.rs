@@ -19,6 +19,7 @@
 mod architecture_contract;
 mod commands;
 mod diagnostics;
+mod embedded_debug;
 mod ipc_transport;
 mod kernel;
 #[cfg(test)]

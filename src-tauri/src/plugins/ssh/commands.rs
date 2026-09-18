@@ -102,6 +102,7 @@ async fn connect_session(
                 file_transfer,
                 channel_factory,
                 io: None,
+                automation_io: None,
                 attachment,
                 teardown_delay,
             },

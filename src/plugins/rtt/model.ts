@@ -1,7 +1,7 @@
 export type RttBackendKind = "probe_rs" | "jlink_existing";
 export type RttWireProtocol = "swd" | "jtag";
 export type RttLocatorMode = "auto" | "exact" | "ranges";
-export type RttViewMode = "terminal" | "text" | "hex";
+export type RttViewMode = "terminal" | "log" | "hex";
 
 export interface RttProbeInfo {
   selector: string;
@@ -34,7 +34,7 @@ export interface RttBackendDescriptor {
   display_name: string;
   target?: string | null;
   probe?: string | null;
-  control_block_address?: number | null;
+  control_block_address?: string | null;
   capabilities: RttBackendCapabilities;
 }
 
@@ -44,6 +44,7 @@ export interface RttErrorSnapshot {
 }
 
 export interface RttSnapshot {
+  generation: number;
   phase: "idle" | "opening_backend" | "running" | "faulted" | "stopping";
   backend?: RttBackendDescriptor | null;
   channels: RttChannelInfo[];
@@ -51,17 +52,24 @@ export interface RttSnapshot {
   tx_bytes: number;
   dropped_history_bytes: number;
   dropped_history_chunks: number;
+  dropped_automation_bytes: number;
+  dropped_automation_chunks: number;
+  dropped_presentation_bytes: number;
+  dropped_presentation_chunks: number;
   last_error?: RttErrorSnapshot | null;
 }
 
 export interface RttChunk {
+  generation: number;
   sequence: number;
   timestamp_ms: number;
   channel_index: number;
+  channel_offset: number;
   data_b64: string;
 }
 
 export interface RttHistoryResponse {
+  generation: number;
   chunks: RttChunk[];
   oldest_sequence?: number | null;
   newest_sequence?: number | null;
@@ -70,8 +78,8 @@ export interface RttHistoryResponse {
 }
 
 export type RttEvent =
-  | ({ kind: "chunk"; session_id: string } & RttChunk)
-  | { kind: "snapshot"; session_id: string; snapshot: RttSnapshot };
+  | { kind: "batch"; session_id: string; generation: number; chunks: RttChunk[] }
+  | { kind: "snapshot"; session_id: string; generation: number; snapshot: RttSnapshot };
 
 export function defaultRttParams(): Record<string, unknown> {
   return {
@@ -82,12 +90,10 @@ export function defaultRttParams(): Record<string, unknown> {
     wire_protocol: "swd",
     speed_khz: null,
     core_index: 0,
+    firmware_path: "",
     locator_mode: "auto",
     control_block_address: "",
     scan_ranges: "",
-    attach_timeout_ms: 5000,
-    poll_interval_ms: 5,
-    write_timeout_ms: 500,
     jlink_port: 19021,
     jlink_channels: "0",
   };
@@ -99,6 +105,7 @@ export function normalizeRttParams(params: Record<string, unknown>): Record<stri
   return {
     ...normalized,
     probe_name: typeof normalized.probe_name === "string" ? normalized.probe_name.trim() : "",
+    firmware_path: typeof normalized.firmware_path === "string" ? normalized.firmware_path.trim() : "",
     speed_khz: typeof speed === "number" && Number.isFinite(speed) && speed > 0 ? speed : null,
   };
 }

@@ -144,15 +144,21 @@ impl LogWriter {
             DataDirection::TX => "[TX]",
             DataDirection::RX => "[RX]",
         };
+        let stream = entry
+            .stream
+            .as_deref()
+            .map(|value| format!("[{value}]"))
+            .unwrap_or_default();
+        let prefix = format!("{ts} {dir}{stream}");
 
         match self.data_mode.as_str() {
             "text" => {
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{ts} {dir} {text}\n")
+                format!("{prefix} {text}\n")
             }
             "hex" => {
-                let mut result = format!("{ts} {dir}\n");
+                let mut result = format!("{prefix}\n");
                 for (index, chunk) in entry.payload.chunks(16).enumerate() {
                     result.push_str(&format!("{:08X}  ", index * 16));
                     let hex_line = chunk
@@ -199,12 +205,12 @@ impl LogWriter {
                     .map(|byte| format!("{byte:02X}"))
                     .collect::<Vec<_>>()
                     .join(" ");
-                format!("{ts} {dir} {text}  |  {hex}\n")
+                format!("{prefix} {text}  |  {hex}\n")
             }
             _ => {
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{ts} {dir} {text}\n")
+                format!("{prefix} {text}\n")
             }
         }
     }
@@ -290,6 +296,7 @@ mod tests {
         DataLogEntry {
             session_id: "session-123".to_string(),
             direction: DataDirection::RX,
+            stream: None,
             data_mode: "text".to_string(),
             encoding: "utf-8".to_string(),
             payload: payload.to_vec(),
@@ -325,6 +332,28 @@ mod tests {
         assert!(content.contains("Segment Created:"));
         assert!(content.contains("Segment: 1"));
         assert!(content.contains("rotated"));
+    }
+
+    #[test]
+    fn multiplexed_stream_label_is_rendered_without_changing_log_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = LogWriter::new(
+            temp.path(),
+            1024 * 1024,
+            1024,
+            "session-123",
+            "RTT test",
+            "rtt",
+            "text",
+        )
+        .unwrap();
+        let mut item = entry(b"hello");
+        item.stream = Some("RTT:3".to_string());
+        writer.write_entry(&item).unwrap();
+        writer.flush().unwrap();
+
+        let content = std::fs::read_to_string(writer.current_path()).unwrap();
+        assert!(content.contains("[RX][RTT:3] hello"));
     }
 
     #[test]

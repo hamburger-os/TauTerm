@@ -1,8 +1,8 @@
 //! 脚本引擎模块
 //!
 //! 基于 mlua (Lua 5.4) 的嵌入式脚本运行时，每个会话独立的 Lua VM。
-//! 发送通过 `SessionIo` 能力完成；接收直接订阅 canonical DataPlane，避免维护第二套
-//! callback fan-out。容器型协议仍可显式发送 `ScriptCmd::FeedData` 汇聚子连接数据。
+//! 发送与接收只依赖协议无关的 AutomationIo/AutomationRx 能力；普通流式 Session 由
+//! SessionIo/DataPlane 适配，RTT 等多流容器可提供自己的有界自动化流而无需伪造主 DataPlane。
 
 pub mod codegen;
 pub mod lua_api;
@@ -13,8 +13,7 @@ use std::sync::{mpsc, Arc};
 
 use tauri::Emitter;
 
-use crate::session::SessionIo;
-use crate::transport::{DataPlaneEvent, DataPlaneSubscription};
+use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent};
 
 use self::lua_api::inject_lua_api;
 use self::sandbox::create_sandboxed_lua;
@@ -65,7 +64,7 @@ struct ScriptEngine {
 
 impl ScriptEngine {
     fn new(
-        io: Arc<SessionIo>,
+        io: Arc<dyn AutomationIo>,
         app_handle: tauri::AppHandle,
         session_id: &str,
         shutdown: Arc<AtomicBool>,
@@ -147,29 +146,29 @@ impl From<mlua::Error> for ScriptEngineError {
     }
 }
 
-fn drain_data_plane(
+fn drain_automation(
     engine: &ScriptEngine,
-    subscription: &mut Option<DataPlaneSubscription>,
+    subscription: &mut Option<Box<dyn AutomationRx>>,
 ) -> bool {
-    let Some(subscription) = subscription.as_ref() else {
+    let Some(subscription) = subscription.as_mut() else {
         return true;
     };
     loop {
         match subscription.try_recv() {
-            Ok(DataPlaneEvent::Data(data)) => engine.feed_data(&data),
-            Ok(DataPlaneEvent::Closed(_)) => return false,
+            Ok(AutomationRxEvent::Data(data)) => engine.feed_data(&data),
+            Ok(AutomationRxEvent::Closed) => return false,
             Err(mpsc::TryRecvError::Empty) => return true,
             Err(mpsc::TryRecvError::Disconnected) => return false,
         }
     }
 }
 
-/// Start one per-session Lua VM. `subscription` is the canonical receive stream for ordinary
-/// byte-stream sessions. Container protocols can pass `None` and feed explicit child data through
-/// `ScriptCmd::FeedData` without reintroducing a callback registry.
+/// Start one per-session Lua VM. Ordinary sessions adapt their canonical DataPlane subscription;
+/// multiplexed/container plugins can provide a protocol-owned bounded AutomationRx. FeedData remains
+/// available for background child aggregation that is intentionally external to a root target.
 pub fn spawn_script_thread(
-    io: Arc<SessionIo>,
-    mut subscription: Option<DataPlaneSubscription>,
+    io: Arc<dyn AutomationIo>,
+    mut subscription: Option<Box<dyn AutomationRx>>,
     app_handle: tauri::AppHandle,
     rx: mpsc::Receiver<ScriptCmd>,
     session_id: String,
@@ -193,9 +192,9 @@ pub fn spawn_script_thread(
 
         log::info!("ScriptEngine 线程已启动");
         loop {
-            if !drain_data_plane(&engine, &mut subscription) {
+            if !drain_automation(&engine, &mut subscription) {
                 engine.stop();
-                log::info!("ScriptEngine 数据面已关闭");
+                log::info!("ScriptEngine 自动化数据源已关闭");
                 break;
             }
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
