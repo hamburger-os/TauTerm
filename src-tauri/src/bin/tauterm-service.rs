@@ -212,7 +212,9 @@ mod service {
             return;
         }
 
+        let process_value = process as usize;
         let _ = std::thread::spawn(move || {
+            let process = process_value as HANDLE;
             let wait = unsafe { WaitForSingleObject(process, INFINITE) };
             unsafe { CloseHandle(process) };
             if wait != WAIT_OBJECT_0 {
