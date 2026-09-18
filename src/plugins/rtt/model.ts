@@ -58,6 +58,7 @@ export interface RttSnapshot {
   dropped_automation_chunks: number;
   dropped_presentation_bytes: number;
   dropped_presentation_chunks: number;
+  runtime_pressure_events: number;
   last_error?: RttErrorSnapshot | null;
 }
 
