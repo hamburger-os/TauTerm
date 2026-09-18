@@ -116,7 +116,10 @@ impl TargetScheduler {
             state.shutdown_reply = Some(reply);
             self.ready.notify_all();
         } else {
-            let _ = reply.send(());
+            // A poisoned scheduler cannot safely acknowledge shutdown. Dropping the reply keeps
+            // DebugTargetRuntime::drop on the bounded detach path instead of joining a worker
+            // whose scheduler state could no longer be closed.
+            drop(reply);
         }
     }
 
@@ -232,7 +235,7 @@ impl DebugTargetRuntime {
 
     /// Execute one short operation on the single owner of the probe-rs Session.
     ///
-    /// A command that waited in the shared queue until its caller deadline is discarded before
+    /// A command that waited in its service queue until the caller deadline is discarded before
     /// touching the target. This prevents a timed-out write/read request from producing a late
     /// target-side effect after another service temporarily occupied the worker.
     fn execute<T, E, F>(
