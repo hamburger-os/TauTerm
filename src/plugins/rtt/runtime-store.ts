@@ -62,7 +62,9 @@ function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   const generationChanged = prev.snapshot == null || prev.snapshot.generation !== snapshot.generation;
   if (generationChanged) loadedChannels.delete(sessionId);
 
-  const selectedChannel = chooseViewChannel(snapshot, prev.selectedChannel);
+  const selectedChannel = generationChanged
+    ? (snapshot.automation_source_channel ?? chooseViewChannel(snapshot, null))
+    : chooseViewChannel(snapshot, prev.selectedChannel);
   publish(sessionId, {
     snapshot,
     selectedChannel,
@@ -260,19 +262,24 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
   }
 }
 
-export function selectRttChannel(sessionId: string, channelIndex: number): void {
+export async function selectRttChannel(sessionId: string, channelIndex: number): Promise<void> {
   const prev = current(sessionId);
-  if (prev.selectedChannel !== channelIndex) {
-    publish(sessionId, { ...prev, selectedChannel: channelIndex });
+  const channel = prev.snapshot?.channels.find(item => item.index === channelIndex);
+  if (!channel?.up) {
+    if (prev.selectedChannel !== channelIndex) {
+      publish(sessionId, { ...prev, selectedChannel: channelIndex });
+    }
+    return;
   }
-  const channel = current(sessionId).snapshot?.channels.find(item => item.index === channelIndex);
-  if (channel?.up) {
-    void invoke("rtt_set_automation_source_channel", { sessionId, channelIndex })
-      .then(() => refreshRttRuntime(sessionId))
-      .catch(error => {
-        const latest = current(sessionId);
-        publish(sessionId, { ...latest, error: String(error) });
-      });
+
+  try {
+    await invoke("rtt_set_automation_source_channel", { sessionId, channelIndex });
+    const latest = current(sessionId);
+    publish(sessionId, { ...latest, selectedChannel: channelIndex, error: null });
+    await refreshRttRuntime(sessionId);
+  } catch (cause) {
+    const latest = current(sessionId);
+    publish(sessionId, { ...latest, error: String(cause) });
   }
 }
 
