@@ -472,6 +472,11 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
         "one physical probe must reject a second incompatible target configuration"
     );
     assert!(
+        runtime.contains("TargetSlotState::Opening")
+            && runtime.contains("worker_exited: Arc<AtomicBool>"),
+        "probe ownership must remain reserved while a timed-out startup worker is still exiting"
+    );
+    assert!(
         runtime.contains("SERVICE_QUEUE_CAPACITY")
             && runtime.contains("service_order: VecDeque<String>")
             && runtime.contains("state.service_order.push_back"),
