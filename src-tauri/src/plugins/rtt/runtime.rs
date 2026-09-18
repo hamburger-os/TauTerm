@@ -344,10 +344,6 @@ impl RttShared {
             .unwrap_or_default()
     }
 
-    pub(crate) fn subscribe_raw_observations(&self) -> mpsc::Receiver<StoredRttChunk> {
-        self.raw_source.subscribe()
-    }
-
     fn history(&self, channel_index: u32, after_sequence: Option<u64>) -> RttHistoryResponse {
         let generation = self.generation();
         self.history
@@ -833,7 +829,7 @@ mod tests {
     #[test]
     fn canonical_rtt_observations_are_published_once_from_acquisition() {
         let shared = RttShared::new();
-        let observations = shared.subscribe_raw_observations();
+        let observations = shared.raw_source.subscribe();
         let chunk = shared.record_rx(3, b"trace".to_vec());
 
         let observed = observations.recv_timeout(Duration::from_millis(50)).unwrap();
