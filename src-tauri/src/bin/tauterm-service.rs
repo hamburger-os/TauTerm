@@ -367,7 +367,7 @@ mod service {
             "cleanup_orphans" => match vpm.cleanup_orphans() {
                 Ok(cleaned) => Some(serde_json::json!({ "cleaned": cleaned })),
                 Err(error) => return Response::err(id, error),
-            }
+            },
             other => return Response::err(id, format!("unknown op: {}", other)),
         };
         Response {
