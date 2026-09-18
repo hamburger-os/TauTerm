@@ -34,7 +34,7 @@ export interface RttBackendDescriptor {
   display_name: string;
   target?: string | null;
   probe?: string | null;
-  control_block_address?: number | null;
+  control_block_address?: string | null;
   capabilities: RttBackendCapabilities;
 }
 
