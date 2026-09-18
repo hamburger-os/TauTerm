@@ -146,10 +146,7 @@ pub(crate) fn resolve_probe_config(
         let probes = lister.list_all();
         match probes.as_slice() {
             [] => return Err(DebugProbeOpenError::NotFound),
-            [info] => (
-                DebugProbeSelector::from(info).to_string(),
-                info.to_string(),
-            ),
+            [info] => (DebugProbeSelector::from(info).to_string(), info.to_string()),
             _ => return Err(DebugProbeOpenError::Ambiguous),
         }
     };
