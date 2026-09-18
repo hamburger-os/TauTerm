@@ -723,6 +723,30 @@ impl VirtualPortManager {
         }
     }
 
+    /// Re-adopt protected endpoints for a verified live GUI after TauTermService restarts.
+    ///
+    /// This is intentionally read-only with respect to the ownership ledger: the records already
+    /// carry the authenticated GUI PID. Re-adoption only rebuilds the service's in-memory active
+    /// set and client map so a later remove/cleanup request targets the same proven resources.
+    pub fn adopt_owned_endpoints_for_owner(&mut self, owner_pid: u32) -> Vec<VirtualEndpoint> {
+        if self.mode != ManagementMode::Privileged {
+            return Vec::new();
+        }
+        let endpoints = self
+            .load_owned_records()
+            .into_iter()
+            .filter(|record| record.owner_pid == Some(owner_pid))
+            .map(|record| record.endpoint)
+            .collect::<Vec<_>>();
+        for endpoint in &endpoints {
+            self.active_endpoints
+                .retain(|active| active.resource_id != endpoint.resource_id);
+            self.active_endpoints.insert(endpoint.clone());
+            register_internal_endpoint_path(&endpoint.bridge_path);
+        }
+        endpoints
+    }
+
     /// Privileged service entry point that attributes newly created endpoints to the
     /// authenticated GUI process rather than to the service process itself. This lets a restarted
     /// service distinguish a live TauTerm client from a true orphan.
