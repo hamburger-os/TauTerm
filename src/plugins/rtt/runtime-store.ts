@@ -260,7 +260,7 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
     }
     const nextBuffers: Record<number, readonly RttChunk[]> = { ...prev.buffers };
     nextBuffers[channelIndex] = mergeHistory(nextBuffers[channelIndex] ?? [], history.chunks);
-    publish(sessionId, { ...prev, buffers: Object.freeze(nextBuffers) });
+    publish(sessionId, { ...prev, buffers: Object.freeze(trimBuffers(nextBuffers)) });
   } catch (cause) {
     loaded.delete(channelIndex);
     const prev = current(sessionId);
