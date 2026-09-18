@@ -132,7 +132,10 @@ function ensureListeners(): Promise<void> {
     registered.push(await listen("virtual-port-driver-ready", () => {
       let changed = false;
       for (const [sessionId, snapshot] of sessions) {
-        if (!snapshot.error) continue;
+        const driverError = snapshot.errorKind === "files_missing"
+          || snapshot.errorKind === "permission"
+          || snapshot.errorKind === "driver_missing";
+        if (!snapshot.error || !driverError) continue;
         sessions.set(sessionId, { ...snapshot, error: undefined, errorKind: undefined });
         changed = true;
       }
