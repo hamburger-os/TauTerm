@@ -636,6 +636,10 @@ impl VirtualPortManager {
             }
             Err(error) => log::warn!("setupc list failed: {error}"),
         }
+        state
+    }
+
+    fn augment_busy_com_names(&self, state: &mut DriverState) {
         match run_setupc(&self.resource_dir, &["busynames", "COM?*"]) {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -658,8 +662,6 @@ impl VirtualPortManager {
             }
             Err(error) => log::warn!("setupc busynames failed: {error}"),
         }
-
-        state
     }
 
     fn resolve_installed_bus(&self, bridge_path: &str, external_path: &str) -> Option<u32> {
@@ -940,10 +942,11 @@ impl VirtualPortManager {
 
         let count = config.count.clamp(1, 4);
         self.reconcile_owned_state();
-        let initial_driver = self.query_driver_state();
+        let mut initial_driver = self.query_driver_state();
         if !initial_driver.queried {
             return Err("cannot enumerate com0com driver state before endpoint allocation".into());
         }
+        self.augment_busy_com_names(&mut initial_driver);
         let candidates = Self::find_available_port_pairs(
             count.saturating_mul(CANDIDATE_MULTIPLIER),
             &initial_driver.occupied_ports,
