@@ -2,13 +2,14 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
+use crate::embedded_debug::observation::ObservationSequencer;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tauri::AppHandle;
 
 const HISTORY_PER_CHANNEL_BYTES: usize = 256 * 1024;
@@ -17,7 +18,6 @@ const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
-static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -139,7 +139,7 @@ impl HistoryStore {
 pub(super) struct RttShared {
     snapshot: Mutex<RttSnapshot>,
     history: Mutex<HistoryStore>,
-    next_sequence: AtomicU64,
+    sequencer: ObservationSequencer,
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
@@ -147,14 +147,16 @@ pub(super) struct RttShared {
 }
 
 impl RttShared {
-    pub(super) fn new(generation: u64) -> Self {
+    pub(super) fn new() -> Self {
+        let sequencer = ObservationSequencer::new();
+        let generation = sequencer.generation();
         Self {
             snapshot: Mutex::new(RttSnapshot {
                 generation,
                 ..RttSnapshot::default()
             }),
             history: Mutex::new(HistoryStore::default()),
-            next_sequence: AtomicU64::new(1),
+            sequencer,
             channel_offsets: Mutex::new(BTreeMap::new()),
             automation_source_channel: Mutex::new(None),
             send_channel: Mutex::new(None),
@@ -215,7 +217,7 @@ impl RttShared {
     }
 
     pub(super) fn record_rx(&self, channel_index: u32, data: Vec<u8>) -> StoredRttChunk {
-        let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
+        let stamp = self.sequencer.stamp();
         let channel_offset = self
             .channel_offsets
             .lock()
@@ -227,9 +229,9 @@ impl RttShared {
             })
             .unwrap_or(0);
         let chunk = StoredRttChunk {
-            generation: self.generation(),
-            sequence,
-            timestamp_ms: now_ms(),
+            generation: stamp.generation,
+            sequence: stamp.sequence,
+            timestamp_ms: stamp.timestamp_ms,
             channel_index,
             channel_offset,
             data,
@@ -401,10 +403,9 @@ pub struct RttRuntime {
 
 impl RttRuntime {
     pub fn new(config: RttConfig) -> Self {
-        let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         Self {
             config,
-            shared: Arc::new(RttShared::new(generation)),
+            shared: Arc::new(RttShared::new()),
             command_tx: Mutex::new(None),
             worker: Mutex::new(None),
             shutting_down: Arc::new(AtomicBool::new(false)),
@@ -608,13 +609,6 @@ impl SessionService for RttRuntime {
     fn shutdown(&self) {
         self.shutdown_inner(true);
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 #[cfg(test)]
