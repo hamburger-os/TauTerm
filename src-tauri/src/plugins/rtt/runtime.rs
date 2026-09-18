@@ -146,7 +146,7 @@ pub(super) struct RttShared {
 }
 
 impl RttShared {
-    fn new(generation: u64) -> Self {
+    pub(super) fn new(generation: u64) -> Self {
         Self {
             snapshot: Mutex::new(RttSnapshot {
                 generation,
