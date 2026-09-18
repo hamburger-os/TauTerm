@@ -306,7 +306,7 @@ pub fn run() {
                             log::info!(
                                 "虚拟串口管理后端: development-direct-uac（debug build）"
                             );
-                            let state_dir = virtual_port::elevated::direct_state_dir();
+                            let state_dir = virtual_port::windows_state::ownership_state_dir();
                             *vpm = Box::new(VirtualPortManager::new_direct_uac(vpm_dir, state_dir));
                         }
 
@@ -335,7 +335,7 @@ pub fn run() {
                                     );
                                     // Release/portable fallback remains explicit-action UAC only:
                                     // ordinary startup never enumerates or cleans setupc resources.
-                                    let state_dir = virtual_port::elevated::direct_state_dir();
+                                    let state_dir = virtual_port::windows_state::ownership_state_dir();
                                     *vpm = Box::new(VirtualPortManager::new_direct_uac(vpm_dir, state_dir));
                                 }
                             }
@@ -413,7 +413,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new_direct_uac(
                 std::env::temp_dir().join("TauTerm").join("missing-resources"),
-                virtual_port::elevated::direct_state_dir(),
+                virtual_port::windows_state::ownership_state_dir(),
             ))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
