@@ -202,6 +202,11 @@ assert.doesNotMatch(
   /description:\s*plugin\.manifest\.description/,
   "Plugin description must not be used as the Session type identity",
 );
+assert.match(
+  await readFile(path.join(ROOT, "src", "core", "plugin-registry.ts"), "utf8"),
+  /sessionPresentation\?\.defaultName/,
+  "Connection plugins must register a creation-time default Session name before installation",
+);
 assert.equal(
   trdpManifest.name,
   "TRDP 调试助手",
@@ -307,8 +312,8 @@ assert.equal(
   "Child terminal identity must continue to use its runtime endpoint",
 );
 
-for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "network", "serial", "modbus"]) {
-  const extension = plugin === "modbus" || plugin === "trdp" || plugin === "network" ? "tsx" : "ts";
+for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "network", "serial", "modbus", "rtt"]) {
+  const extension = ["modbus", "trdp", "network", "rtt"].includes(plugin) ? "tsx" : "ts";
   const source = await readFile(
     path.join(ROOT, "src", "plugins", plugin, `index.${extension}`),
     "utf8",
@@ -317,6 +322,11 @@ for (const plugin of ["ssh", "tftp", "telnet", "iperf", "local-shell", "trdp", "
     source,
     /sessionPresentation\s*:/,
     `${plugin} must own its Session presentation contribution`,
+  );
+  assert.match(
+    source,
+    /defaultName\s*:/,
+    `${plugin} must own a creation-time default Session name`,
   );
   assert.match(
     source,
