@@ -167,6 +167,31 @@ assert.match(
   /label:\s*plugin\.manifest\.name/,
   "New Session cards and configuration headers must share the canonical plugin name",
 );
+assert.match(
+  connectDialog,
+  /sessionPresentation[\s\S]*?defaultName/,
+  "The empty New Session name field must preview the plugin-owned generated Session name",
+);
+assert.match(
+  connectDialog,
+  /pluginRegistry\.resolveSessionDefaultName/,
+  "Async generated Session names must reuse the canonical PluginRegistry resolver",
+);
+assert.match(
+  connectDialog,
+  /placeholder=\{sessionNamePlaceholder\}/,
+  "The New Session name field must render the generated-name preview instead of the plugin type label",
+);
+assert.doesNotMatch(
+  connectDialog,
+  /placeholder=\{selectedPlugin\?\.manifest\.name/,
+  "PluginManifest.name is the Session type label, not the generated Session-name preview",
+);
+assert.match(
+  sessionContext,
+  /pluginRegistry\.resolveSessionDefaultName/,
+  "Saved Session creation and the New Session preview must share one generated-name resolver",
+);
 assert.doesNotMatch(
   connectDialog,
   /description:\s*plugin\.manifest\.description/,
