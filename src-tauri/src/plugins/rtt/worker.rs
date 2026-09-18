@@ -234,9 +234,7 @@ fn service_one_write(
     log_tx: Option<&mpsc::SyncSender<LogEntry>>,
     session_id: &str,
 ) -> Option<RttError> {
-    let Some(mut pending) = writes.pop_front() else {
-        return None;
-    };
+    let mut pending = writes.pop_front()?;
 
     if Instant::now() >= pending.deadline {
         let _ = pending.reply.send(Err(write_timeout(&pending)));
