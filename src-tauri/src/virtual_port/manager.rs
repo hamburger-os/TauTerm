@@ -422,17 +422,18 @@ impl VirtualPortManager {
             schema_version: OWNERSHIP_SCHEMA_VERSION,
             owned_endpoints: owned,
         };
-        let json = serde_json::to_string(&state)
-            .map_err(|error| format!("failed to serialize virtual-port ownership state: {error}"))?;
+        let json = serde_json::to_string(&state).map_err(|error| {
+            format!("failed to serialize virtual-port ownership state: {error}")
+        })?;
 
-        let mut file = atomic_write_file::AtomicWriteFile::open(&path)
-            .map_err(|error| {
-                format!("failed to open virtual-port ownership state for atomic write: {error}")
-            })?;
+        let mut file = atomic_write_file::AtomicWriteFile::open(&path).map_err(|error| {
+            format!("failed to open virtual-port ownership state for atomic write: {error}")
+        })?;
         file.write_all(json.as_bytes())
             .map_err(|error| format!("failed to write virtual-port ownership state: {error}"))?;
-        file.commit()
-            .map_err(|error| format!("failed to atomically commit virtual-port ownership state: {error}"))
+        file.commit().map_err(|error| {
+            format!("failed to atomically commit virtual-port ownership state: {error}")
+        })
     }
 
     fn remember_owned_endpoints_with_owner(
@@ -458,10 +459,7 @@ impl VirtualPortManager {
         Ok(())
     }
 
-    fn remember_owned_endpoints(
-        &mut self,
-        endpoints: &[VirtualEndpoint],
-    ) -> Result<(), String> {
+    fn remember_owned_endpoints(&mut self, endpoints: &[VirtualEndpoint]) -> Result<(), String> {
         self.remember_owned_endpoints_with_owner(endpoints, self.owner_pid)
     }
 
@@ -471,10 +469,7 @@ impl VirtualPortManager {
         owner_pid: Option<u32>,
     ) -> Result<(), String> {
         if self.mode == ManagementMode::Privileged {
-            self.remember_owned_endpoints_with_owner(
-                std::slice::from_ref(&endpoint),
-                owner_pid,
-            )?;
+            self.remember_owned_endpoints_with_owner(std::slice::from_ref(&endpoint), owner_pid)?;
         } else {
             register_internal_endpoint_path(&endpoint.bridge_path);
         }
@@ -939,7 +934,9 @@ impl VirtualPortManager {
             let before = self.query_driver_state();
             if !before.queried {
                 self.rollback_batch(&pairs);
-                return Err("cannot refresh com0com driver state during endpoint allocation".into());
+                return Err(
+                    "cannot refresh com0com driver state during endpoint allocation".into(),
+                );
             }
             let bus = self.next_free_bus(&before);
             let endpoint = VirtualEndpoint {
@@ -1133,9 +1130,7 @@ impl VirtualPortManager {
             }
 
             if attempt + 1 < DESTROY_RETRY_COUNT {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    DESTROY_RETRY_DELAY_MS,
-                ));
+                std::thread::sleep(std::time::Duration::from_millis(DESTROY_RETRY_DELAY_MS));
             }
         }
 
