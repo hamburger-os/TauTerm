@@ -101,6 +101,57 @@ fn normalize_windows_path(path: &Path) -> PathBuf {
     }
 }
 
+fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let setupc = resource_dir.join("setupc.exe");
+    if !setupc.exists() {
+        return Err(format!("setupc.exe not found: {:?}", setupc));
+    }
+
+    let mut command = Command::new(&setupc);
+    command
+        .current_dir(resource_dir)
+        .arg("--silent")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW);
+
+    let child = command
+        .spawn()
+        .map_err(|error| format!("Failed to spawn setupc.exe: {error}"))?;
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_secs(SETUPC_TIMEOUT_SECS)) {
+        Ok(result) => result.map_err(|error| format!("setupc.exe execution failed: {error}")),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            log::warn!(
+                "setupc.exe (PID {}) timed out after {}s; terminating it",
+                pid,
+                SETUPC_TIMEOUT_SECS
+            );
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            Err("setupc.exe execution timed out".into())
+        }
+        Err(_) => Err("setupc.exe process exited abnormally".into()),
+    }
+}
+
+fn output_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.trim().is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        stderr.trim().to_string()
+    }
+}
+
 fn wide(value: &str) -> Vec<u16> {
     std::ffi::OsStr::new(value)
         .encode_wide()
@@ -944,7 +995,6 @@ impl VirtualPortManager {
         }
         Ok(cleaned)
     }
-
 }
 
 impl VirtualPortBackend for VirtualPortManager {
@@ -960,28 +1010,11 @@ impl VirtualPortBackend for VirtualPortManager {
         VirtualPortManager::install_driver(self)
     }
 
-    fn install_driver_elevated(&mut self) -> Result<(), String> {
-        VirtualPortManager::install_driver_elevated(self)
-    }
-
     fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
     ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
         VirtualPortManager::ensure_endpoints(self, config)
-    }
-    fn create_endpoints(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        VirtualPortManager::create_endpoints(self, config)
-    }
-
-    fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        VirtualPortManager::create_endpoints_elevated(self, config)
     }
 
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
@@ -992,12 +1025,8 @@ impl VirtualPortBackend for VirtualPortManager {
         VirtualPortManager::cleanup_all(self)
     }
 
-    fn cleanup_orphans(&mut self) -> u32 {
+    fn cleanup_orphans(&mut self) -> Result<u32, String> {
         VirtualPortManager::cleanup_orphans(self)
-    }
-
-    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
-        VirtualPortManager::cleanup_endpoints_elevated(self)
     }
 
     fn pending_orphan_count(&self) -> u32 {
@@ -1015,7 +1044,10 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        (VirtualPortManager::new(root.clone(), root.clone()), root)
+        (
+            VirtualPortManager::new_direct_uac(root.clone(), root.clone()),
+            root,
+        )
     }
 
     fn sample_endpoint(bus: u32) -> VirtualEndpoint {
@@ -1039,36 +1071,66 @@ mod tests {
     }
 
     #[test]
-    fn remembered_endpoint_is_orphan_until_activated() {
+    fn current_schema_records_owner_pid() {
         let (mut manager, root) = test_manager();
-        let endpoint = sample_endpoint(5);
-        manager.remember_owned_endpoints(std::slice::from_ref(&endpoint));
-        assert_eq!(manager.pending_orphan_count(), 1);
+        let endpoint = sample_endpoint(2);
         manager.track_active_endpoint(endpoint.clone());
-        assert_eq!(manager.pending_orphan_count(), 0);
+        let raw = std::fs::read_to_string(manager.state_path()).unwrap();
+        let state: PersistedState = serde_json::from_str(&raw).unwrap();
+        assert_eq!(state.schema_version, OWNERSHIP_SCHEMA_VERSION);
+        assert_eq!(state.owned_endpoints.len(), 1);
+        assert_eq!(state.owned_endpoints[0].owner_pid, Some(std::process::id()));
         manager.forget_owned_endpoint(&endpoint);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn persisted_owned_endpoint_becomes_orphan_after_restart() {
-        let (mut manager, root) = test_manager();
-        let endpoint = sample_endpoint(2);
-        manager.track_active_endpoint(endpoint.clone());
-        assert_eq!(manager.pending_orphan_count(), 0);
-        drop(manager);
+    fn obsolete_bus_only_state_is_reset_instead_of_trusted() {
+        let (manager, root) = test_manager();
+        std::fs::write(
+            manager.state_path(),
+            r#"{"owned_endpoints":[{"bridge_path":"COM20","external_path":"COM21","resource_id":0}]}"#,
+        )
+        .unwrap();
+        assert!(manager.load_owned_records().is_empty());
+        let raw = std::fs::read_to_string(manager.state_path()).unwrap();
+        let state: PersistedState = serde_json::from_str(&raw).unwrap();
+        assert_eq!(state.schema_version, OWNERSHIP_SCHEMA_VERSION);
+        assert!(state.owned_endpoints.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
 
-        let mut restarted = VirtualPortManager::new(root.clone(), root.clone());
-        assert_eq!(restarted.pending_orphan_count(), 1);
-        restarted.forget_owned_endpoint(&endpoint);
+    #[test]
+    fn foreign_live_owner_is_not_reclaimable() {
+        let root = std::env::temp_dir().join(format!(
+            "tauterm-vport-owner-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut writer = VirtualPortManager::new_privileged_for_owner(
+            root.clone(),
+            root.clone(),
+            std::process::id(),
+        );
+        let endpoint = sample_endpoint(3);
+        writer.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+        drop(writer);
+
+        let reader = VirtualPortManager::build(
+            root.clone(),
+            root.clone(),
+            ManagementMode::Privileged,
+            Some(std::process::id().saturating_add(1)),
+        );
+        assert!(!reader.is_reclaimable_owned_endpoint(&endpoint));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn forgetting_one_endpoint_preserves_other_ownership() {
         let (mut manager, root) = test_manager();
-        let first = sample_endpoint(3);
-        let second = sample_endpoint(4);
+        let first = sample_endpoint(4);
+        let second = sample_endpoint(5);
         manager.track_active_endpoint(first.clone());
         manager.track_active_endpoint(second.clone());
         manager.defer_cleanup(&first);
@@ -1082,39 +1144,11 @@ mod tests {
     }
 
     #[test]
-    fn stateless_manager_never_claims_driver_wide_orphans() {
-        let root = std::env::temp_dir().join("tauterm-vport-stateless-test");
-        let manager = VirtualPortManager::new_stateless(root);
-        assert_eq!(manager.pending_orphan_count(), 0);
-    }
-
-    #[test]
-    fn elevated_create_batch_is_peer_aware_and_rolls_back_every_new_pair() {
-        let orphans = vec![sample_endpoint(6)];
-        let pairs = vec![sample_endpoint(10), sample_endpoint(11)];
-        let batch = build_elevated_create_batch("C:\\TauTerm", "setupc.exe", &orphans, &pairs);
-
-        assert!(batch.contains("dsr=ropen"));
-        assert!(batch.contains("if errorlevel 1 goto rollback"));
-        assert!(batch.contains("goto success\r\n:rollback\r\n"));
-        assert!(batch.contains(":success\r\nexit /b 0"));
-        for endpoint in &pairs {
-            let remove = format!("\"setupc.exe\" remove {}", endpoint.resource_id);
-            assert_eq!(batch.matches(&remove).count(), 2);
-        }
-    }
-
-    #[test]
-    fn elevated_cleanup_checks_presence_inside_the_privileged_batch() {
-        let mut batch = String::new();
-        append_remove_batch(&mut batch, "setupc.exe", 7);
-        let list = batch.find("setupc.exe\" list >").unwrap();
-        let fail_closed = batch.find("if errorlevel 1 (").unwrap();
-        let presence = batch.find("findstr /B /C:\"CNCA7 \"").unwrap();
-        assert!(list < fail_closed && fail_closed < presence);
-        assert!(batch.contains("del /q \"%TAUTERM_VPORT_LIST%\" >nul 2>&1"));
-        assert!(batch.contains("exit /b 1"));
-        assert!(batch.contains("%TEMP%\\tauterm-vport-list-"));
-        assert!(batch.contains(":remove_done_7"));
+    fn reserved_region_is_never_allocated() {
+        let occupied = (20..199).collect::<HashSet<_>>();
+        let pairs = VirtualPortManager::find_available_port_pairs(2, &occupied);
+        assert!(pairs.iter().all(|(a, b)| {
+            !is_reserved_port(*a) && !is_reserved_port(*b)
+        }));
     }
 }
