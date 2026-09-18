@@ -189,7 +189,7 @@ impl RttShared {
             .automation_source_channel
             .lock()
             .ok()
-            .map(|mut selected| {
+            .and_then(|mut selected| {
                 let still_readable = selected.is_some_and(|index| {
                     channels
                         .iter()
@@ -203,13 +203,12 @@ impl RttShared {
                         .map(|channel| channel.index);
                 }
                 *selected
-            })
-            .flatten();
+            });
         let send_channel = self
             .send_channel
             .lock()
             .ok()
-            .map(|mut selected| {
+            .and_then(|mut selected| {
                 let still_writable = selected.is_some_and(|index| {
                     channels
                         .iter()
@@ -223,8 +222,7 @@ impl RttShared {
                         .map(|channel| channel.index);
                 }
                 *selected
-            })
-            .flatten();
+            });
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.phase = RttPhase::Running;
             snapshot.backend = Some(descriptor);
@@ -319,6 +317,12 @@ impl RttShared {
             snapshot.dropped_presentation_bytes = snapshot
                 .dropped_presentation_bytes
                 .saturating_add(bytes as u64);
+        }
+    }
+
+    pub(super) fn record_runtime_pressure(&self) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.runtime_pressure_events = snapshot.runtime_pressure_events.saturating_add(1);
         }
     }
 
