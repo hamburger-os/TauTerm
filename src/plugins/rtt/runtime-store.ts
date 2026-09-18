@@ -261,9 +261,14 @@ export function setRttViewMode(sessionId: string, channelIndex: number, mode: Rt
 }
 
 export async function selectRttSendChannel(sessionId: string, channelIndex: number): Promise<void> {
-  await invoke("rtt_set_send_channel", { sessionId, channelIndex });
-  const prev = current(sessionId);
-  publish(sessionId, { ...prev, selectedSendChannel: channelIndex });
+  try {
+    await invoke("rtt_set_send_channel", { sessionId, channelIndex });
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, selectedSendChannel: channelIndex, error: null });
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
+  }
 }
 
 async function ensureSendChannel(sessionId: string): Promise<number> {
