@@ -81,16 +81,38 @@
 }
 
 .advanced {
-  border-top: 1px solid var(--content-divider);
-  padding-top: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  overflow: hidden;
 }
 
-.advanced > summary {
+.advancedSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   cursor: pointer;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  margin-bottom: var(--spacing-md);
   user-select: none;
+  list-style: none;
+  padding: 7px 10px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.advancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedChevron {
+  flex: 0 0 auto;
+  transition: transform var(--transition-fast);
+}
+
+.advanced[open] .advancedChevron {
+  transform: rotate(90deg);
+}
+
+.advancedBody {
+  padding: 4px 10px 10px;
 }
 
 .error {
