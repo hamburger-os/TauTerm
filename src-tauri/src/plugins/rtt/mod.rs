@@ -166,7 +166,7 @@ async fn connect_session(
             "connected_at": connected_at,
             "transfer_enabled": false,
             "transfer_protocol": Value::Null,
-            "send_bar_enabled": false,
+            "send_bar_enabled": true,
         }),
     );
     Ok(new_session_id)
