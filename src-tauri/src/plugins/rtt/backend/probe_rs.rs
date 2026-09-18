@@ -11,8 +11,7 @@ use crate::plugins::rtt::model::{
     RttProbeInfo, RttReadChunk,
 };
 use probe_rs::rtt::{
-    find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt,
-    ScanRegion,
+    find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -59,12 +58,15 @@ impl ProbeRsRttBackend {
         .map_err(map_probe_open_error)?;
 
         let region = resolve_scan_region(config)?;
-        let mut core = probe.session_mut().core(config.core_index).map_err(|error| {
-            RttError::new(
-                RttErrorCode::CoreNotFound,
-                format!("无法打开 CPU Core {}: {error}", config.core_index),
-            )
-        })?;
+        let mut core = probe
+            .session_mut()
+            .core(config.core_index)
+            .map_err(|error| {
+                RttError::new(
+                    RttErrorCode::CoreNotFound,
+                    format!("无法打开 CPU Core {}: {error}", config.core_index),
+                )
+            })?;
         let mut rtt = try_attach_to_rtt(&mut core, config.attach_timeout, &region)
             .map_err(map_rtt_attach_error)?;
         drop(core);
@@ -167,12 +169,16 @@ impl RttBackend for ProbeRsRttBackend {
     }
 
     fn poll(&mut self, output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
-        let mut core = self.probe.session_mut().core(self.core_index).map_err(|error| {
-            RttError::new(
-                RttErrorCode::ProbeDisconnected,
-                format!("RTT 轮询时无法访问 CPU Core: {error}"),
-            )
-        })?;
+        let mut core = self
+            .probe
+            .session_mut()
+            .core(self.core_index)
+            .map_err(|error| {
+                RttError::new(
+                    RttErrorCode::ProbeDisconnected,
+                    format!("RTT 轮询时无法访问 CPU Core: {error}"),
+                )
+            })?;
         let mut buffer = [0u8; 4 * 1024];
         for channel in self.rtt.up_channels().iter_mut() {
             for _ in 0..4 {
@@ -195,12 +201,16 @@ impl RttBackend for ProbeRsRttBackend {
     }
 
     fn write(&mut self, channel_index: u32, data: &[u8]) -> Result<usize, RttError> {
-        let mut core = self.probe.session_mut().core(self.core_index).map_err(|error| {
-            RttError::new(
-                RttErrorCode::ProbeDisconnected,
-                format!("RTT 写入时无法访问 CPU Core: {error}"),
-            )
-        })?;
+        let mut core = self
+            .probe
+            .session_mut()
+            .core(self.core_index)
+            .map_err(|error| {
+                RttError::new(
+                    RttErrorCode::ProbeDisconnected,
+                    format!("RTT 写入时无法访问 CPU Core: {error}"),
+                )
+            })?;
         let channel = self
             .rtt
             .down_channel(channel_index as usize)
@@ -214,12 +224,16 @@ impl RttBackend for ProbeRsRttBackend {
     }
 
     fn refresh_channels(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
-        let mut core = self.probe.session_mut().core(self.core_index).map_err(|error| {
-            RttError::new(
-                RttErrorCode::ProbeDisconnected,
-                format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
-            )
-        })?;
+        let mut core = self
+            .probe
+            .session_mut()
+            .core(self.core_index)
+            .map_err(|error| {
+                RttError::new(
+                    RttErrorCode::ProbeDisconnected,
+                    format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
+                )
+            })?;
         let mut refreshed = try_attach_to_rtt(&mut core, self.refresh_timeout, &self.region)
             .map_err(map_rtt_attach_error)?;
         drop(core);
@@ -240,8 +254,9 @@ fn map_probe_open_error(error: DebugProbeOpenError) -> RttError {
             RttErrorCode::UnsupportedWireProtocol
         }
         DebugProbeOpenError::InvalidSelector(_) => RttErrorCode::InvalidConfig,
-        DebugProbeOpenError::ConfigureSpeed { .. }
-        | DebugProbeOpenError::TargetAttach { .. } => RttErrorCode::TargetAttachFailed,
+        DebugProbeOpenError::ConfigureSpeed { .. } | DebugProbeOpenError::TargetAttach { .. } => {
+            RttErrorCode::TargetAttachFailed
+        }
     };
     RttError::new(code, error.to_string())
 }
