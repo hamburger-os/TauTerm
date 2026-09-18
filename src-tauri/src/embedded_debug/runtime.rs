@@ -237,10 +237,13 @@ impl DebugTargetRuntime {
                 let _ = handle.join();
                 return Err(DebugTargetRuntimeError::Open(error));
             }
-            Err(_) => {
+            Err(mpsc::RecvTimeoutError::Timeout) => {
                 // The worker still owns config/probe open. A late startup observes the dropped
                 // startup receiver and exits without accepting target work.
                 return Err(DebugTargetRuntimeError::StartupTimeout);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(DebugTargetRuntimeError::WorkerStopped);
             }
         };
 
