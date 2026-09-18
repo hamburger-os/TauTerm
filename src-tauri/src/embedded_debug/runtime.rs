@@ -221,14 +221,15 @@ impl Drop for DebugServiceLease {
     }
 }
 
-/// Process-local registry for physical debug targets.
-///
-/// Entries are weak: the registry does not keep probes open after the last service disconnects.
-/// A target is keyed by the connection properties that determine probe/target ownership. Different
-/// observation services can share the same target worker while an individual service kind (for
-/// example RTT acquisition) is protected by a service lease.
 type TargetSlot = Arc<Mutex<Weak<DebugTargetRuntime>>>;
 
+/// Process-local registry for physical debug probes.
+///
+/// Auto and explicit selectors are canonicalized before lookup. Each canonical physical probe has
+/// one slot and therefore at most one active probe-rs Session. Services may share that target
+/// runtime only when target/wire/speed settings match; each service kind (for example RTT
+/// acquisition) is additionally protected by its own service lease. Slots hold weak runtimes, so
+/// the registry never keeps a probe open after the last service disconnects.
 pub(crate) struct EmbeddedDebugManager {
     targets: Mutex<HashMap<String, TargetSlot>>,
 }
