@@ -485,8 +485,12 @@ fn virtual_port_backend_hides_platform_elevation_mechanics() {
         assert!(!elevated.contains("state_dir: PathBuf"));
 
         let state = read_source("virtual_port/windows_state.rs");
-        assert!(state.contains(r#".join("ProgramData")"#) || state.contains("PROGRAMDATA"));
+        assert!(
+            state.contains("FOLDERID_ProgramData"),
+            "virtual-port ownership must resolve ProgramData from the Windows known-folder API"
+        );
         assert!(state.contains("Authenticated Users"));
         assert!(state.contains("PROTECTED_DACL_SECURITY_INFORMATION"));
+        assert!(state.contains("OWNER_SECURITY_INFORMATION"));
     }
 }
