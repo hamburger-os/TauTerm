@@ -118,21 +118,23 @@ impl<T: Clone + Send + 'static> ObservationSource<T> {
     pub fn publish(&self, value: &T) -> ObservationPublishReport {
         let mut report = ObservationPublishReport::default();
         if let Ok(mut subscribers) = self.subscribers.lock() {
-            subscribers.retain(|subscriber| match subscriber.sender.try_send(value.clone()) {
-                Ok(()) => {
-                    report.delivered += 1;
-                    true
-                }
-                Err(mpsc::TrySendError::Full(_)) => {
-                    subscriber.dropped.fetch_add(1, Ordering::Relaxed);
-                    report.dropped += 1;
-                    true
-                }
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    report.disconnected += 1;
-                    false
-                }
-            });
+            subscribers.retain(
+                |subscriber| match subscriber.sender.try_send(value.clone()) {
+                    Ok(()) => {
+                        report.delivered += 1;
+                        true
+                    }
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        subscriber.dropped.fetch_add(1, Ordering::Relaxed);
+                        report.dropped += 1;
+                        true
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                        report.disconnected += 1;
+                        false
+                    }
+                },
+            );
         }
         report
     }
