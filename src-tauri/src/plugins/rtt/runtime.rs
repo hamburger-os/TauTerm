@@ -258,17 +258,35 @@ impl RttShared {
         if selected != Some(chunk.channel_index) {
             return;
         }
+        let mut dropped = false;
         if let Ok(mut subscribers) = self.automation_subscribers.lock() {
             subscribers.retain(|subscriber| match subscriber.try_send(chunk.data.clone()) {
-                Ok(()) | Err(mpsc::TrySendError::Full(_)) => true,
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    dropped = true;
+                    true
+                }
                 Err(mpsc::TrySendError::Disconnected(_)) => false,
             });
+        }
+        if dropped {
+            self.record_automation_drop(chunk.data.len());
         }
     }
 
     pub(super) fn record_tx(&self, bytes: usize) {
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.tx_bytes = snapshot.tx_bytes.saturating_add(bytes as u64);
+        }
+    }
+
+    fn record_automation_drop(&self, bytes: usize) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.dropped_automation_chunks =
+                snapshot.dropped_automation_chunks.saturating_add(1);
+            snapshot.dropped_automation_bytes = snapshot
+                .dropped_automation_bytes
+                .saturating_add(bytes as u64);
         }
     }
 
