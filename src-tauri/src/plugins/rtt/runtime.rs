@@ -141,7 +141,8 @@ pub(super) struct RttShared {
     history: Mutex<HistoryStore>,
     next_sequence: AtomicU64,
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
-    automation_channel: Mutex<Option<u32>>,
+    automation_source_channel: Mutex<Option<u32>>,
+    send_channel: Mutex<Option<u32>>,
     automation_subscribers: Mutex<Vec<mpsc::SyncSender<Vec<u8>>>>,
 }
 
@@ -155,7 +156,8 @@ impl RttShared {
             history: Mutex::new(HistoryStore::default()),
             next_sequence: AtomicU64::new(1),
             channel_offsets: Mutex::new(BTreeMap::new()),
-            automation_channel: Mutex::new(None),
+            automation_source_channel: Mutex::new(None),
+            send_channel: Mutex::new(None),
             automation_subscribers: Mutex::new(Vec::new()),
         }
     }
@@ -176,7 +178,21 @@ impl RttShared {
         descriptor: super::model::RttBackendDescriptor,
         channels: Vec<super::model::RttChannelInfo>,
     ) {
-        if let Ok(mut selected) = self.automation_channel.lock() {
+        if let Ok(mut selected) = self.automation_source_channel.lock() {
+            let still_readable = selected.is_some_and(|index| {
+                channels
+                    .iter()
+                    .any(|channel| channel.index == index && channel.up.is_some())
+            });
+            if !still_readable {
+                *selected = channels
+                    .iter()
+                    .find(|channel| channel.index == 0 && channel.up.is_some())
+                    .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                    .map(|channel| channel.index);
+            }
+        }
+        if let Ok(mut selected) = self.send_channel.lock() {
             let still_writable = selected.is_some_and(|index| {
                 channels
                     .iter()
@@ -234,7 +250,7 @@ impl RttShared {
 
     fn publish_automation(&self, chunk: &StoredRttChunk) {
         let selected = self
-            .automation_channel
+            .automation_source_channel
             .lock()
             .ok()
             .and_then(|channel| *channel);
@@ -243,10 +259,8 @@ impl RttShared {
         }
         if let Ok(mut subscribers) = self.automation_subscribers.lock() {
             subscribers.retain(|subscriber| match subscriber.try_send(chunk.data.clone()) {
-                Ok(()) => true,
-                Err(mpsc::TrySendError::Full(_)) | Err(mpsc::TrySendError::Disconnected(_)) => {
-                    false
-                }
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => true,
+                Err(mpsc::TrySendError::Disconnected(_)) => false,
             });
         }
     }
@@ -296,7 +310,11 @@ impl RttShared {
             })
     }
 
-    fn set_automation_channel(&self, channel_index: u32) -> Result<(), RttError> {
+    fn validate_channel_direction(
+        &self,
+        channel_index: u32,
+        require_up: bool,
+    ) -> Result<(), RttError> {
         let snapshot = self.snapshot();
         let channel = snapshot
             .channels
@@ -308,21 +326,43 @@ impl RttShared {
                     format!("RTT Channel {channel_index} 不存在"),
                 )
             })?;
-        if channel.down.is_none() {
+        let available = if require_up {
+            channel.up.is_some()
+        } else {
+            channel.down.is_some()
+        };
+        if !available {
             return Err(RttError::new(
                 RttErrorCode::RttChannelNotFound,
-                format!("RTT Channel {channel_index} 没有 Down 方向"),
+                format!(
+                    "RTT Channel {channel_index} 没有 {} 方向",
+                    if require_up { "Up" } else { "Down" }
+                ),
             ));
         }
+        Ok(())
+    }
+
+    fn set_automation_source_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        self.validate_channel_direction(channel_index, true)?;
         *self
-            .automation_channel
+            .automation_source_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
         Ok(())
     }
 
-    fn automation_channel(&self) -> Result<u32, RttError> {
-        self.automation_channel
+    fn set_send_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        self.validate_channel_direction(channel_index, false)?;
+        *self
+            .send_channel
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        Ok(())
+    }
+
+    fn send_channel(&self) -> Result<u32, RttError> {
+        self.send_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))?
             .ok_or_else(|| {
@@ -429,8 +469,12 @@ impl RttRuntime {
         self.shared.history(channel_index, after_sequence)
     }
 
-    pub fn set_automation_channel(&self, channel_index: u32) -> Result<(), RttError> {
-        self.shared.set_automation_channel(channel_index)
+    pub fn set_automation_source_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        self.shared.set_automation_source_channel(channel_index)
+    }
+
+    pub fn set_send_channel(&self, channel_index: u32) -> Result<(), RttError> {
+        self.shared.set_send_channel(channel_index)
     }
 
     pub fn write(&self, channel_index: u32, data: Vec<u8>) -> Result<usize, RttError> {
@@ -528,7 +572,7 @@ impl AutomationIo for RttRuntime {
     fn send(&self, data: &[u8]) -> Result<(), SessionIoError> {
         let channel = self
             .shared
-            .automation_channel()
+            .send_channel()
             .map_err(|error| SessionIoError::Send(error.to_string()))?;
         self.write(channel, data.to_vec())
             .map(|_| ())
