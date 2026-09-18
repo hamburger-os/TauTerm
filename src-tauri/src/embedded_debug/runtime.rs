@@ -1,4 +1,6 @@
-use super::probe_runtime::{DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime, DebugWireProtocol};
+use super::probe_runtime::{
+    DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime, DebugWireProtocol,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread::JoinHandle;
@@ -150,12 +152,10 @@ impl DebugTargetRuntime {
                 mpsc::TrySendError::Disconnected(_) => DebugTargetRuntimeError::WorkerStopped,
             })?;
 
-        reply_rx
-            .recv_timeout(timeout)
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
-                mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
-            })
+        reply_rx.recv_timeout(timeout).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
+            mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
+        })
     }
 
     pub(crate) fn acquire_service(
