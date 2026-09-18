@@ -2,7 +2,7 @@ use super::probe_runtime::{
     resolve_probe_config, DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime,
     ResolvedDebugProbeConfig,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -37,9 +37,27 @@ pub(crate) enum DebugTargetRuntimeError {
 
 type TargetOperation = Box<dyn FnOnce(&mut DebugProbeRuntime) + Send + 'static>;
 
+struct ScheduledTargetOperation {
+    service: String,
+    operation: TargetOperation,
+}
+
 enum TargetCommand {
-    Execute(TargetOperation),
+    Execute(ScheduledTargetOperation),
     Shutdown(mpsc::SyncSender<()>),
+}
+
+fn take_next_operation(
+    pending: &mut VecDeque<ScheduledTargetOperation>,
+    last_service: Option<&str>,
+) -> Option<ScheduledTargetOperation> {
+    if pending.is_empty() {
+        return None;
+    }
+    let index = last_service
+        .and_then(|last| pending.iter().position(|operation| operation.service != last))
+        .unwrap_or(0);
+    pending.remove(index)
 }
 
 /// Single-owner debug-target worker shared by RTT and future observation services.
@@ -77,13 +95,42 @@ impl DebugTargetRuntime {
                     return;
                 }
 
-                while let Ok(command) = command_rx.recv() {
-                    match command {
-                        TargetCommand::Execute(operation) => operation(&mut probe),
-                        TargetCommand::Shutdown(reply) => {
-                            let _ = reply.send(());
-                            break;
+                let mut pending = VecDeque::<ScheduledTargetOperation>::new();
+                let mut last_service: Option<String> = None;
+                loop {
+                    if pending.is_empty() {
+                        match command_rx.recv() {
+                            Ok(TargetCommand::Execute(operation)) => pending.push_back(operation),
+                            Ok(TargetCommand::Shutdown(reply)) => {
+                                let _ = reply.send(());
+                                break;
+                            }
+                            Err(_) => break,
                         }
+                    }
+
+                    let mut shutdown_reply = None;
+                    while pending.len() < COMMAND_QUEUE_CAPACITY {
+                        match command_rx.try_recv() {
+                            Ok(TargetCommand::Execute(operation)) => pending.push_back(operation),
+                            Ok(TargetCommand::Shutdown(reply)) => {
+                                shutdown_reply = Some(reply);
+                                break;
+                            }
+                            Err(mpsc::TryRecvError::Empty) => break,
+                            Err(mpsc::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    if let Some(reply) = shutdown_reply {
+                        let _ = reply.send(());
+                        break;
+                    }
+
+                    if let Some(operation) =
+                        take_next_operation(&mut pending, last_service.as_deref())
+                    {
+                        last_service = Some(operation.service.clone());
+                        (operation.operation)(&mut probe);
                     }
                 }
             })
@@ -118,6 +165,7 @@ impl DebugTargetRuntime {
     /// target-side effect after another service temporarily occupied the worker.
     fn execute<T, E, F>(
         &self,
+        service: &str,
         timeout: Duration,
         operation: F,
     ) -> Result<Result<T, E>, DebugTargetRuntimeError>
@@ -129,13 +177,16 @@ impl DebugTargetRuntime {
         let deadline = Instant::now() + timeout;
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         self.command_tx
-            .try_send(TargetCommand::Execute(Box::new(move |probe| {
-                if Instant::now() >= deadline {
-                    let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
-                    return;
-                }
-                let _ = reply_tx.send(Ok(operation(probe)));
-            })))
+            .try_send(TargetCommand::Execute(ScheduledTargetOperation {
+                service: service.to_string(),
+                operation: Box::new(move |probe| {
+                    if Instant::now() >= deadline {
+                        let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
+                        return;
+                    }
+                    let _ = reply_tx.send(Ok(operation(probe)));
+                }),
+            }))
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => DebugTargetRuntimeError::QueueFull,
                 mpsc::TrySendError::Disconnected(_) => DebugTargetRuntimeError::WorkerStopped,
@@ -212,7 +263,7 @@ impl DebugServiceLease {
         E: Send + 'static,
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
-        self.runtime.execute(timeout, operation)
+        self.runtime.execute(&self.service, timeout, operation)
     }
 }
 
@@ -289,6 +340,29 @@ impl Default for EmbeddedDebugManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduler_rotates_between_waiting_services() {
+        let mut pending = VecDeque::from([
+            ScheduledTargetOperation {
+                service: "rtt".to_string(),
+                operation: Box::new(|_| {}),
+            },
+            ScheduledTargetOperation {
+                service: "rtt".to_string(),
+                operation: Box::new(|_| {}),
+            },
+            ScheduledTargetOperation {
+                service: "superwatch".to_string(),
+                operation: Box::new(|_| {}),
+            },
+        ]);
+
+        let next = take_next_operation(&mut pending, Some("rtt")).expect("next operation");
+        assert_eq!(next.service, "superwatch");
+        let next = take_next_operation(&mut pending, Some("superwatch")).expect("next operation");
+        assert_eq!(next.service, "rtt");
+    }
 
     #[test]
     fn target_connection_config_distinguishes_session_settings_not_service_kind() {
