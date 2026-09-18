@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.
-- **RTT Debug Assistant** — adds a first-class embedded RTT Session with native debug-probe access through probe-rs, coexistence with existing local J-Link debug sessions, independent Up/Down multi-channel I/O, bounded background history, and Terminal/Text/HEX views.
+- **RTT Debug Assistant** — adds a first-class embedded RTT Session with native debug-probe access through probe-rs, coexistence with existing local J-Link sessions, independent Up/Down multi-channel I/O, ELF/AXF-assisted Control Block discovery, shared SendBar/Auto Reply/Lua integration, bounded background history, channel-labelled Session Data Logs, and Terminal/Log/HEX observation views.
 
 ### Changed
+- **Embedded observability foundation** — introduces shared single-owner debug-probe attachment, immutable firmware-artifact loading and acquisition-time observation sequencing so RTT and future memory/trace tools can share target ownership without moving protocol semantics into the Kernel; RTT now separates automation Up sources, SendBar Down targets, history loss, automation loss and WebView presentation loss.
 - **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
 - **Virtual-port capability boundary** — isolates physical→virtual forwarding from per-endpoint readers, uses explicit external-peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, and versions the privileged-service handshake.
 - **Chronological log segment names** — System and Session log segments now start with their actual segment creation timestamp so filename sorting follows creation order across processes, sessions and rotations.
