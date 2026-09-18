@@ -88,12 +88,23 @@ pub async fn rtt_refresh_channels(
 }
 
 #[tauri::command]
-pub fn rtt_set_automation_channel(
+pub fn rtt_set_automation_source_channel(
     state: State<'_, AppState>,
     session_id: String,
     channel_index: u32,
 ) -> Result<(), RttCommandError> {
     runtime(&state, &session_id)?
-        .set_automation_channel(channel_index)
+        .set_automation_source_channel(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub fn rtt_set_send_channel(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .set_send_channel(channel_index)
         .map_err(RttCommandError::from)
 }
