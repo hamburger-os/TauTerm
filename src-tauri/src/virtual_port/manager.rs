@@ -401,7 +401,10 @@ impl VirtualPortManager {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
         self.active_endpoints.insert(endpoint.clone());
-        self.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+        register_internal_endpoint_path(&endpoint.bridge_path);
+        if self.mode == ManagementMode::Privileged {
+            self.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+        }
     }
 
     fn adopt_active_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
@@ -413,6 +416,14 @@ impl VirtualPortManager {
     fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
+
+        if self.mode == ManagementMode::DirectUac {
+            // The direct GUI has read-only access to machine ownership state. The elevated helper
+            // already committed/removed the protected record; the GUI only updates local hiding.
+            unregister_internal_endpoint_path(&endpoint.bridge_path);
+            return;
+        }
+
         let mut owned = self.load_owned_records();
         let removed_paths = owned
             .iter()
@@ -434,7 +445,9 @@ impl VirtualPortManager {
     fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) {
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
-        self.remember_owned_endpoints(std::slice::from_ref(endpoint));
+        if self.mode == ManagementMode::Privileged {
+            self.remember_owned_endpoints(std::slice::from_ref(endpoint));
+        }
     }
 
     fn record_is_reclaimable(&self, record: &OwnedEndpointRecord) -> bool {
@@ -644,7 +657,7 @@ impl VirtualPortManager {
         match self.mode {
             ManagementMode::Privileged => self.install_driver_privileged(),
             ManagementMode::DirectUac => {
-                super::elevated::ensure_driver(&self.resource_dir, &self.state_dir)
+                super::elevated::ensure_driver(&self.resource_dir)
             }
         }
     }
@@ -665,7 +678,6 @@ impl VirtualPortManager {
                 let cleanup = self.orphan_endpoints();
                 let endpoints = super::elevated::ensure_endpoints(
                     &self.resource_dir,
-                    &self.state_dir,
                     config.count.clamp(1, 4),
                     cleanup,
                 )
@@ -964,11 +976,8 @@ impl VirtualPortManager {
         }
 
         if self.mode == ManagementMode::DirectUac {
-            let cleaned = super::elevated::cleanup_endpoints(
-                &self.resource_dir,
-                &self.state_dir,
-                orphans.clone(),
-            )?;
+            let cleaned =
+                super::elevated::cleanup_endpoints(&self.resource_dir, orphans.clone())?;
             for endpoint in &orphans {
                 self.forget_owned_endpoint(endpoint);
             }
@@ -1045,7 +1054,11 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         (
-            VirtualPortManager::new_direct_uac(root.clone(), root.clone()),
+            VirtualPortManager::new_privileged_for_owner(
+                root.clone(),
+                root.clone(),
+                std::process::id(),
+            ),
             root,
         )
     }
