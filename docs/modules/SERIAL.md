@@ -38,7 +38,7 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
 
 虚拟串口是平台能力而不是协议替代品：
 
-- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`，普通启动不运行 `setupc list` 或 orphan 清理，只有创建/安装/手动清理等明确动作才按需提权；
+- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`。该回退通过当前 TauTerm 可执行文件启动窄类型 one-shot UAC helper，普通 GUI 不执行 `setupc.exe`，普通启动也不运行 `setupc list` 或 orphan 清理；只有创建、安装、手动清理等明确动作才进入特权事务；
 - Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。
 
 Serial 运行时只调用统一的 `ensure_endpoints` capability，并消费强类型的创建失败语义；驱动安装、UAC、特权服务选择和 setupc 文本错误归一化全部留在 virtual-port backend 边界，Serial 不通过字符串猜测平台权限状态。
@@ -59,7 +59,7 @@ Serial 运行时只调用统一的 `ensure_endpoints` capability，并消费强�
 external COM21/COM23 → per-endpoint reader → SessionIo confirmed write → 物理 COM6
 ```
 
-桥接不挂在 UI `on_data` 回调。物理 → 虚拟方向只有一个**有界 DataPlane subscription pump**，它只负责接收与非阻塞 fan-out，绝不执行可能阻塞的虚拟端口 I/O。每个 external endpoint 独占自己的 writer actor 和按字节计量的有界 egress backlog；预算随串口线速给出有限抖动窗口并设置硬上限，因此一个外部工具停止读取时只能耗尽自己的预算，不能拖慢 DataPlane subscription，也不能阻塞其它虚拟端口。多个 endpoint 共享物理数据块的不可变引用，fan-out 不为每个端口复制整块数据。
+桥接不挂在 UI `on_data` 回调。物理 → 虚拟方向只有一个**有界 DataPlane subscription pump**，它只负责接收与非阻塞 fan-out，绝不执行可能阻塞的虚拟端口 I/O。DataPlane subscription 支持按消费者指定消息容量并记录明确的 detach reason；VPort 根据串口线速给上游分配有限 burst 窗口，避免 Windows 驱动产生大量小 chunk 时被通用 256-message 默认值误摘除，同时仍有硬上限。每个 external endpoint 还独占自己的 writer actor 和按字节计量的有界 egress backlog；一个外部工具停止读取时只能耗尽自己的 endpoint 预算，不能拖慢 DataPlane subscription，也不能阻塞其它虚拟端口。多个 endpoint 共享物理数据块的不可变引用，fan-out 不为每个端口复制整块数据。
 
 每个 external endpoint 的虚拟 → 物理读取仍由独立 reader worker 承担，再通过 `Arc<SessionIo>` 做确认式写入。多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在 Bridge 注册到 SessionStore 之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。
 
@@ -71,33 +71,42 @@ external peer 的存在是独立生命周期：Unix PTY master 在 slave 尚未�
 
 ## 虚拟端口所有权与清理
 
-残留资源判断必须建立在明确所有权上，不能通过“驱动里存在一个 com0com bus”推断它属于 TauTerm。
+Windows endpoint 删除权限只来自 TauTerm 自己的**受保护 ownership ledger**，不能通过“驱动里存在一个 com0com bus”推断归属。TauTermService 与 direct-UAC helper 共用：
 
-直连 Windows 后端维护两层状态：
+`%ProgramData%\TauTerm\virtual-port\com0com_state.json`
 
-- `active_endpoints`：当前进程仍被活动 Session 持有的端点；
-- 持久化 `owned_endpoints`：TauTerm 已创建且仍负责回收的端点，包括 active 和异常退出/权限不足后留下的资源。
+目录由特权进程创建/修复 DACL：Authenticated Users 只读，SYSTEM 与 Administrators 完全控制；普通 GUI 可以读取 ownership 用于隐藏内部 bridge、计算 orphan，但**不能写入或伪造删除授权**。状态记录包含完整 `VirtualEndpoint` 和创建 owner PID；当前进程/服务仍持有的 endpoint 另外存在内存 `active_endpoints` 中。
 
-严格定义：
+语义上：
 
 ```text
-orphan = owned_endpoints - active_endpoints
+reclaimable orphan
+  = owned endpoint
+  - current backend active endpoint
+  - endpoint owned by another still-running TauTerm process
 ```
 
-由此得到以下生命周期规则：
+Windows mutation 还使用一个全局命名 mutex，把 TauTermService、direct-UAC helper 与多实例之间的 com0com 写操作串行化。创建流程必须在**已经进入特权上下文后**完成真实状态读取、分配、安装与验证：
 
-1. 普通创建成功后立即登记 ownership；提权批量创建会在启动特权子进程前预登记目标 ownership，并在明确失败时回滚已创建端口；
-2. 创建成功后把 bridge path 注册为内部不可见端点，并将 endpoint 转为 active；
-3. 正常活动期间端点同时属于 owned 和 active，因此不是 orphan；
-4. 外部程序断开 external endpoint 不改变父 Serial Session ownership；
-5. 父 Serial Session 结束时尝试销毁端口对；成功后同时移除 active/owned 和内部隐藏注册；
-6. 销毁暂时失败时只移除 active、保留 owned，此时才成为可恢复 orphan；
-7. 进程异常退出后新进程没有 active owner，而持久化 owned 仍存在，因此可恢复清理；正式安装场景由 TauTermService 在特权启动恢复中处理，GUI 直连 fallback 不在普通启动阶段尝试特权枚举或删除；
-8. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
-9. 特权服务模式同样使用 ownership 模型，服务重启只恢复/清理有 ownership 证据的 TauTerm orphan；
-10. com0com 驱动本身是系统级共享资源，与 TauTerm endpoint ownership 分开处理；无法确认系统级 driver ownership 时必须保留共享驱动。
+1. 获取全局 mutation lock；
+2. 通过 `setupc --silent list`、系统 COM 枚举和 protected ownership 建立权威冲突视图；
+3. 在产品区间内选择空闲 bus 与 COM 对，避开测试预留区；
+4. 使用 `setupc --silent install` 创建端口对；
+5. 再次枚举并确认实际 `CNCA/CNCB → bridge/external COM` 映射；不能假设“请求 bus N 就一定得到 bus N”；
+6. 只有验证后的实际 bus/COM 才提交到 protected ownership，并转为当前 backend 的 active endpoint；
+7. 批量创建任一环节失败时回滚本批已创建资源；未知/第三方 bus 永远不参与回滚。
 
-持久化状态采用当前唯一 schema，不保留旧版 bus-only 兼容逻辑；预稳定阶段发现旧/损坏 schema 时只备份用于诊断，并重新建立当前模型。
+因此 direct-UAC GUI 不再在提权前猜 bus、预写 ownership 或动态生成 `.cmd`。com0com 的交互式“标识符已占用，改用另一组 CNCA/CNCB”窗口也不得进入产品流程；所有产品调用都必须静默执行，并由 TauTerm 自己验证结果。
+
+生命周期规则：
+
+- active endpoint 永远不是 orphan；external peer 打开/关闭不改变父 Serial Session ownership；
+- 特权服务正常断开客户端时直接销毁该客户端 endpoint，并同步删除 protected ownership；
+- direct-UAC Session 断开不突然弹第二次 UAC：GUI 只结束本地 active/hide 状态，protected ownership 保留为可恢复记录；下一次明确创建或手动清理动作由 helper 在同一特权事务中先回收；
+- 服务与 direct helper 共用同一个 machine ledger，因此服务恢复后也能识别 direct-UAC 异常遗留；另一个仍存活的 TauTerm 进程所拥有的记录必须保留；
+- 手动“清理残留端口”只处理 protected ledger 中可证明归属且当前可回收的 endpoint，禁止扫描删除第三方/用户自行创建的 com0com bus；
+- 当前 ownership schema 唯一，不维护旧 bus-only 兼容迁移。旧/损坏状态只能由特权边界备份并重置；普通 GUI 不修写机器级 ownership；
+- com0com 驱动本身是系统级共享资源，与 endpoint ownership 分开处理；无法确认系统级 driver ownership 时必须保留共享驱动。
 
 ## 关键数据流
 
@@ -121,10 +130,10 @@ flowchart LR
 - Serial transport 只解析真正消费的链路字段；终端展示与虚拟端口策略不得重新进入串口 driver 配置。
 - 串口链路配置错误必须 fail-fast，禁止以默认值掩盖损坏配置。
 - Transport open 不承担自动重试和清空输入缓冲等 Session 策略；设备 open 后产生的字节必须进入统一接收链路。
-- DataPlane subscriber 必须有界且带 consumer identity；VPort subscription pump 不执行 endpoint I/O，单个 peer 的慢消费只能触发自己的有界 egress backpressure，禁止扩散成 DataPlane overflow、静默丢字节或无界增长内存。
+- DataPlane subscriber 必须有界且带 consumer identity；需要不同 burst 容量的消费者通过显式 subscription capacity 配置，并在摘除时保留原因。VPort subscription pump 不执行 endpoint I/O，单个 peer 的慢消费只能触发自己的有界 egress backpressure，禁止扩散成 DataPlane overflow、静默丢字节或无界增长内存。
 - external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。Windows 已连接 peer 一旦发生数据完整性缺口，必须经过 close → reopen 才能以 fresh stream 恢复。
 - 虚拟串口创建/桥接启动失败不能让主串口连接的状态变成错误真相，并必须回滚本次不可用端点资源。
-- 平台提权逻辑不得进入普通 Serial UI/协议语义；Windows 直连 fallback 只在明确动作中按需 UAC，普通启动不得为了诊断/清理调用需要提升的 `setupc`。
+- 平台提权逻辑不得进入普通 Serial UI/协议语义；Windows 直连 fallback 只在明确动作中启动窄类型 UAC helper，普通 GUI 永不执行 `setupc`。所有 setupc 产品调用必须 `--silent`，bus/COM 分配与安装后核验必须发生在同一特权事务内。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。
 - 不展示没有真实后端 capability 的 DTR/RTS/CTS/DSR 等控制线占位状态。
 - 当前采集设备 identity，但自动按 stable identity 重连仍是后续能力，不能提前宣传。
