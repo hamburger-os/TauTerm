@@ -753,6 +753,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
+      throw error;
     }
   }, [writeData]);
 
