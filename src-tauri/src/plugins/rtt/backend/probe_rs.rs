@@ -154,7 +154,7 @@ impl RttBackend for ProbeRsRttBackend {
             display_name: "ProbeRs".into(),
             target: Some(self.probe.target().to_string()),
             probe: Some(self.probe.probe_label().to_string()),
-            control_block_address: Some(self.rtt.ptr()),
+            control_block_address: Some(format!("0x{:X}", self.rtt.ptr())),
             capabilities: RttBackendCapabilities {
                 enumerate_channels: true,
                 channel_metadata: true,
