@@ -333,8 +333,10 @@ pub fn run() {
                                         "虚拟串口管理后端: direct-uac-on-demand（特权服务不可用: {}）",
                                         error
                                     );
-                                    // Release/portable fallback remains explicit-action UAC only:
+                                    // Installed-release fallback remains explicit-action UAC only:
                                     // ordinary startup never enumerates or cleans setupc resources.
+                                    // The elevated helper itself rejects user-writable portable
+                                    // release locations instead of trusting their setupc.exe.
                                     let state_dir = virtual_port::windows_state::ownership_state_dir();
                                     *vpm = Box::new(VirtualPortManager::new_direct_uac(vpm_dir, state_dir));
                                 }
