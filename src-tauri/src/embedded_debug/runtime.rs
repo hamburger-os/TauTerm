@@ -171,19 +171,25 @@ impl DebugTargetRuntime {
 impl Drop for DebugTargetRuntime {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        if self
+        let join_safe = match self
             .command_tx
-            .send(TargetCommand::Shutdown(reply_tx))
-            .is_ok()
+            .try_send(TargetCommand::Shutdown(reply_tx))
         {
-            let _ = reply_rx.recv_timeout(SHUTDOWN_TIMEOUT);
-        }
+            Ok(()) => reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok(),
+            Err(mpsc::TrySendError::Disconnected(_)) => true,
+            Err(mpsc::TrySendError::Full(_)) => false,
+        };
 
         if let Ok(worker) = self.worker.get_mut() {
             if let Some(handle) = worker.take() {
-                if handle.thread().id() != std::thread::current().id() {
+                let same_thread = handle.thread().id() == std::thread::current().id();
+                if !same_thread && (join_safe || handle.is_finished()) {
                     let _ = handle.join();
                 }
+                // A stuck probe operation cannot safely be cancelled. If the bounded shutdown
+                // handshake did not complete, dropping JoinHandle deliberately detaches the
+                // worker; dropping command_tx at the end of this destructor disconnects its
+                // queue so it exits once the in-flight operation eventually returns.
             }
         }
     }
