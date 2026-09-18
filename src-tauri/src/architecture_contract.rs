@@ -474,6 +474,15 @@ fn virtual_port_backend_hides_platform_elevation_mechanics() {
         manager.contains("endpoints_by_bus") && manager.contains("identity.matches(endpoint)"),
         "virtual-port deletion must remain gated by exact driver identity"
     );
+    assert!(
+        manager.contains("reconcile_owned_state_locked")
+            && manager.contains("destroy_endpoint_privileged_locked"),
+        "virtual-port privileged transactions must keep one mutation-lock owner and use locked helpers internally"
+    );
+    assert!(
+        manager.contains("current protected ownership no longer authorizes this identity"),
+        "virtual-port deletion must re-check protected ownership under the mutation lock"
+    );
 
     #[cfg(windows)]
     {
