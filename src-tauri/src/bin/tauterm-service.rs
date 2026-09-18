@@ -79,14 +79,6 @@ mod service {
             .collect()
     }
 
-    fn service_state_dir() -> PathBuf {
-        std::env::var_os("PROGRAMDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("TauTerm")
-            .join("service")
-    }
-
     // ── 命名管道 + 帧协议 ──────────────────────────────
 
     fn build_security_descriptor() -> *mut core::ffi::c_void {
@@ -458,14 +450,14 @@ mod service {
         // 服务的 ownership 簿记属于机器级特权状态，存放在 ProgramData，而不是
         // 安装目录或某个交互用户的 AppData。它只记录 TauTerm 自己创建的 endpoint，
         // 因而服务崩溃/掉电后仍能安全恢复，且不会把第三方 com0com bus 当作孤儿。
-        let state_dir = service_state_dir();
-        if let Err(error) = std::fs::create_dir_all(&state_dir) {
-            log::error!(
-                "cannot create privileged virtual-port state directory {:?}: {}",
-                state_dir,
-                error
-            );
-        }
+        let state_dir = match tauterm_lib::virtual_port::windows_state::ensure_ownership_state_dir()
+        {
+            Ok(state_dir) => state_dir,
+            Err(error) => {
+                log::error!("cannot secure privileged virtual-port ownership state: {error}");
+                return;
+            }
+        };
         let vpm = Mutex::new(VirtualPortManager::new_privileged(resource_dir, state_dir));
         let clients: Mutex<Clients> = Mutex::new(HashMap::new());
 
