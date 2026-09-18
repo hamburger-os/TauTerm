@@ -58,10 +58,12 @@ com0com bus
 | Windows com0com endpoint ownership、分配、创建、销毁、恢复 | `src-tauri/src/virtual_port/manager.rs` |
 | App ↔ 特权服务客户端 | `src-tauri/src/virtual_port/service_backend.rs` |
 | Windows LocalSystem 服务 | `src-tauri/src/bin/tauterm-service.rs` |
-| Session 创建/桥接生命周期 | `src-tauri/src/commands.rs` |
+| Serial Session / VPort 生命周期编排 | `src-tauri/src/plugins/serial/mod.rs` |
+| VPort 数据桥接与 endpoint backpressure | `src-tauri/src/virtual_port/bridge.rs` |
 | 驱动状态/显式残留清理 Tauri 命令 | `src-tauri/src/commands/platform.rs` |
 | Serial 端点发现与展示描述 | `src-tauri/src/plugins/serial/mod.rs` |
-| 前端状态栏 | `src/components/Layout/StatusBar.tsx` |
+| 前端 VPort runtime 状态 | `src/plugins/serial/runtime-store.ts` |
+| 前端 Serial 状态栏 | `src/plugins/serial/SerialStatusItems.tsx` |
 | 前端驱动/orphan 状态 | `src/hooks/useCom0comStatus.ts` |
 | Windows 安装/更新/卸载与 driver ownership | `src-tauri/windows/hooks.nsh` |
 | 产品设计 | `docs/modules/SERIAL.md` |
