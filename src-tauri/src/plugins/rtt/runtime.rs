@@ -736,14 +736,18 @@ mod tests {
                 RttChannelInfo {
                     index: 1,
                     name: None,
-                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                    }),
                     down: None,
                     metadata_complete: true,
                 },
                 RttChannelInfo {
                     index: 2,
                     name: None,
-                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                    }),
                     down: None,
                     metadata_complete: true,
                 },
