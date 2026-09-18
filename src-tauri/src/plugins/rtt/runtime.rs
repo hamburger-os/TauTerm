@@ -749,7 +749,7 @@ mod tests {
     fn automation_subscription_keeps_its_startup_source_channel() {
         use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
 
-        let shared = RttShared::new();
+        let shared = Arc::new(RttShared::new());
         shared.set_running(
             backend_descriptor(),
             vec![
