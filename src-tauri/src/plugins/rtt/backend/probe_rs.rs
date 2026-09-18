@@ -246,7 +246,8 @@ impl RttBackend for ProbeRsRttBackend {
 
 fn map_probe_open_error(error: DebugProbeOpenError) -> RttError {
     let code = match error {
-        DebugProbeOpenError::NotFound | DebugProbeOpenError::Open(_) => RttErrorCode::ProbeNotFound,
+        DebugProbeOpenError::NotFound => RttErrorCode::ProbeNotFound,
+        DebugProbeOpenError::Open(_) => RttErrorCode::BackendFault,
         DebugProbeOpenError::Ambiguous => RttErrorCode::ProbeAmbiguous,
         DebugProbeOpenError::Busy(_) => RttErrorCode::ProbeBusy,
         DebugProbeOpenError::PermissionDenied(_) => RttErrorCode::ProbePermissionDenied,
