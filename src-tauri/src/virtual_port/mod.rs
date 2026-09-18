@@ -12,6 +12,8 @@
 pub mod backend;
 pub mod bridge;
 #[cfg(target_os = "windows")]
+pub mod elevated;
+#[cfg(target_os = "windows")]
 pub mod manager;
 #[cfg(not(target_os = "windows"))]
 pub mod pty;
@@ -19,3 +21,5 @@ pub mod pty;
 pub mod service_backend;
 #[cfg(target_os = "windows")]
 pub mod windows_driver;
+#[cfg(target_os = "windows")]
+pub mod windows_state;

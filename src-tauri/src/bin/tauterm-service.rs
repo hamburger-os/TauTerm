@@ -17,13 +17,14 @@
 
 #[cfg(windows)]
 mod service {
-    use std::collections::HashMap;
     use std::os::windows::ffi::OsStrExt;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
@@ -34,7 +35,9 @@ mod service {
         RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
         SERVICE_STATUS, SERVICE_STATUS_HANDLE, SERVICE_TABLE_ENTRYW,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, WaitForSingleObject,
+    };
 
     use tauterm_lib::virtual_port::backend::{VirtualEndpoint, VirtualPortConfig};
     use tauterm_lib::virtual_port::manager::VirtualPortManager;
@@ -44,9 +47,13 @@ mod service {
     const PIPE_TYPE_BYTE: u32 = 0x0;
     const PIPE_READMODE_BYTE: u32 = 0x0;
     const PIPE_WAIT: u32 = 0x0;
+    const PIPE_REJECT_REMOTE_CLIENTS: u32 = 0x0000_0008;
     const PIPE_UNLIMITED_INSTANCES: u32 = 255;
     const ERROR_PIPE_CONNECTED: u32 = 535;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_OBJECT_0: u32 = 0;
+    const INFINITE: u32 = 0xFFFF_FFFF;
 
     const GENERIC_READ: u32 = 0x80000000;
     const GENERIC_WRITE: u32 = 0x40000000;
@@ -65,7 +72,8 @@ mod service {
     const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
     const SERVICE_NAME: &str = "TauTermService";
     const EXPECTED_CLIENT_EXE: &str = "tauterm.exe";
-    const SERVICE_PROTOCOL_VERSION: u64 = 1;
+    const SERVICE_PROTOCOL_VERSION: u64 = 2;
+    const MAX_FRAME: usize = 1024 * 1024;
 
     /// 收到 STOP/SHUTDOWN 时置位，主循环据此退出。
     static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -79,72 +87,76 @@ mod service {
             .collect()
     }
 
-    fn service_state_dir() -> PathBuf {
-        std::env::var_os("PROGRAMDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("TauTerm")
-            .join("service")
-    }
-
     // ── 命名管道 + 帧协议 ──────────────────────────────
 
-    fn build_security_descriptor() -> *mut core::ffi::c_void {
-        // AU=Authenticated Users(读写) SY=SYSTEM(完全) BA=Administrators(完全)
-        let sddl = wide("D:(A;;GRGW;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)");
-        let mut sd: *mut core::ffi::c_void = std::ptr::null_mut();
-        let mut size = 0u32;
-        let ok = unsafe {
+    fn create_pipe() -> Result<HANDLE, String> {
+        // AU=Authenticated Users(read/write), SY=SYSTEM(full), BA=Administrators(full).
+        // The pipe rejects remote clients before process-identity verification.
+        let sddl = wide("D:P(A;;GRGW;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)");
+        let mut descriptor: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut descriptor_size = 0u32;
+        let converted = unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 sddl.as_ptr(),
-                1, // SDDL_REVISION_1
-                &mut sd,
-                &mut size,
+                1,
+                &mut descriptor,
+                &mut descriptor_size,
             )
         };
-        if ok == 0 {
-            std::ptr::null_mut()
-        } else {
-            sd
+        if converted == 0 || descriptor.is_null() {
+            return Err(format!(
+                "failed to build TauTermService pipe DACL (Win32 {})",
+                unsafe { GetLastError() }
+            ));
         }
-    }
 
-    fn create_pipe(sd: *mut core::ffi::c_void) -> HANDLE {
-        let name = wide(PIPE_NAME);
-        let sa = SECURITY_ATTRIBUTES {
+        let attributes = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: sd,
+            lpSecurityDescriptor: descriptor,
             bInheritHandle: 0,
         };
-        unsafe {
+        let name = wide(PIPE_NAME);
+        let pipe = unsafe {
             CreateNamedPipeW(
                 name.as_ptr(),
                 PIPE_ACCESS_DUPLEX,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                 PIPE_UNLIMITED_INSTANCES,
-                4096,
-                4096,
+                64 * 1024,
+                64 * 1024,
                 0,
-                &sa,
+                &attributes,
             )
+        };
+        let create_error = (pipe == INVALID_HANDLE_VALUE).then(|| unsafe { GetLastError() });
+        unsafe {
+            let _ = LocalFree(descriptor);
+        }
+
+        if let Some(error) = create_error {
+            Err(format!(
+                "failed to create TauTermService pipe (Win32 {error})"
+            ))
+        } else {
+            Ok(pipe)
         }
     }
 
-    fn verify_client(pipe: HANDLE) -> bool {
+    fn verify_client(pipe: HANDLE) -> Option<u32> {
         let mut pid = 0u32;
         if unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) } == 0 {
-            return false;
+            return None;
         }
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if process.is_null() {
-            return false;
+            return None;
         }
         let mut buf = [0u16; 1024];
         let mut size = buf.len() as u32;
         let ok = unsafe { QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut size) };
         unsafe { CloseHandle(process) };
         if ok == 0 {
-            return false;
+            return None;
         }
         let path = String::from_utf16_lossy(&buf[..size as usize]);
         let client_path = std::path::Path::new(&path);
@@ -154,7 +166,7 @@ mod service {
             .unwrap_or("")
             .to_lowercase();
         if file_name != EXPECTED_CLIENT_EXE {
-            return false;
+            return None;
         }
         // 仅校验文件名可被轻易绕过（把任意程序改名成 tauterm.exe 即可冒充）。
         // 客户端 exe 必须与服务自身位于同一目录（安装目录）：安装目录普通用户
@@ -166,17 +178,73 @@ mod service {
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_lowercase()));
         match (client_dir, service_dir) {
-            (Some(c), Some(s)) if c == s => true,
+            (Some(c), Some(s)) if c == s => Some(pid),
             (Some(c), Some(s)) => {
                 log::warn!(
                     "pipe client rejected: dir mismatch (client={}, service={})",
                     c,
                     s
                 );
-                false
+                None
             }
-            _ => false,
+            _ => None,
         }
+    }
+
+    fn schedule_disconnect_cleanup(
+        vpm: Arc<Mutex<VirtualPortManager>>,
+        client_pid: u32,
+        endpoints: Vec<VirtualEndpoint>,
+    ) {
+        if endpoints.is_empty() {
+            return;
+        }
+
+        let process = unsafe { OpenProcess(SYNCHRONIZE, 0, client_pid) };
+        if process.is_null() {
+            // Fail closed: an unverifiable PID must not authorize endpoint deletion. Protected
+            // ownership remains available for service restart/manual reconciliation.
+            log::warn!(
+                "cannot monitor GUI PID {} after service disconnect; preserving {} virtual endpoint(s)",
+                client_pid,
+                endpoints.len()
+            );
+            return;
+        }
+
+        let process_value = process as usize;
+        let _ = std::thread::spawn(move || {
+            let process = process_value as HANDLE;
+            let wait = unsafe { WaitForSingleObject(process, INFINITE) };
+            unsafe { CloseHandle(process) };
+            if wait != WAIT_OBJECT_0 {
+                log::warn!(
+                    "GUI PID {} exit watcher failed; preserving {} virtual endpoint(s)",
+                    client_pid,
+                    endpoints.len()
+                );
+                return;
+            }
+
+            match vpm.lock() {
+                Ok(mut manager) => {
+                    for endpoint in &endpoints {
+                        if let Err(error) = manager.destroy_endpoint(endpoint) {
+                            log::warn!(
+                                "post-exit cleanup bus {} deferred after error: {}",
+                                endpoint.resource_id,
+                                error
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!(
+                        "virtual-port manager lock poisoned during post-exit cleanup: {error}"
+                    );
+                }
+            }
+        });
     }
 
     fn read_exact(pipe: HANDLE, buf: &mut [u8]) -> bool {
@@ -227,7 +295,7 @@ mod service {
             return None;
         }
         let len = u32::from_le_bytes(len_buf) as usize;
-        if len == 0 || len > 16 * 1024 * 1024 {
+        if len == 0 || len > MAX_FRAME {
             return None;
         }
         let mut data = vec![0u8; len];
@@ -238,6 +306,9 @@ mod service {
     }
 
     fn write_frame(pipe: HANDLE, data: &[u8]) -> bool {
+        if data.is_empty() || data.len() > MAX_FRAME {
+            return false;
+        }
         let header = (data.len() as u32).to_le_bytes();
         write_exact(pipe, &header) && write_exact(pipe, data)
     }
@@ -274,12 +345,30 @@ mod service {
         }
     }
 
-    type Clients = HashMap<String, Vec<VirtualEndpoint>>;
-
-    fn dispatch(vpm: &mut VirtualPortManager, clients: &mut Clients, req: &Request) -> Response {
+    fn dispatch(
+        vpm: &mut VirtualPortManager,
+        endpoints: &mut Vec<VirtualEndpoint>,
+        bound_client_id: &mut Option<String>,
+        req: &Request,
+        client_pid: u32,
+    ) -> Response {
         let id = req.id;
+
+        if req.op != "hello" && bound_client_id.as_deref() != Some(req.client_id.as_str()) {
+            return Response::err(
+                id,
+                "virtual-port service request rejected: hello is required and client_id must match the connection".into(),
+            );
+        }
+
         let data = match req.op.as_str() {
             "hello" => {
+                if bound_client_id.is_some() {
+                    return Response::err(
+                        id,
+                        "virtual-port service hello may only be sent once per connection".into(),
+                    );
+                }
                 let version = req
                     .payload
                     .get("protocol_version")
@@ -295,8 +384,17 @@ mod service {
                         ),
                     );
                 }
-                clients.entry(req.client_id.clone()).or_default();
-                Some(serde_json::json!({ "protocol_version": SERVICE_PROTOCOL_VERSION }))
+
+                let adopted = match vpm.adopt_owned_endpoints_for_owner(client_pid) {
+                    Ok(adopted) => adopted,
+                    Err(error) => return Response::err(id, error),
+                };
+                *endpoints = adopted.clone();
+                *bound_client_id = Some(req.client_id.clone());
+                Some(serde_json::json!({
+                    "protocol_version": SERVICE_PROTOCOL_VERSION,
+                    "adopted_endpoints": adopted,
+                }))
             }
             "status" => Some(serde_json::json!({
                 "files_present": vpm.are_files_present(),
@@ -305,70 +403,74 @@ mod service {
             })),
             "install_driver" => match vpm.install_driver() {
                 Ok(()) => Some(serde_json::json!({})),
-                Err(e) => return Response::err(id, e),
+                Err(error) => return Response::err(id, error),
             },
             "create_endpoints" => {
-                let count = req
-                    .payload
-                    .get("count")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(1) as u32;
-                let config = VirtualPortConfig {
-                    enabled: count > 0,
-                    count,
+                let Some(count) = req.payload.get("count").and_then(serde_json::Value::as_u64)
+                else {
+                    return Response::err(id, "missing 'count'".into());
                 };
-                match vpm.create_endpoints(&config) {
+                if !(1..=4).contains(&count) {
+                    return Response::err(
+                        id,
+                        format!("virtual endpoint count must be in 1..=4, got {count}"),
+                    );
+                }
+                let config = VirtualPortConfig {
+                    enabled: true,
+                    count: count as u32,
+                };
+                match vpm.ensure_endpoints_for_owner(&config, client_pid) {
                     Ok(pairs) => {
-                        let entry = clients.entry(req.client_id.clone()).or_default();
-                        for p in &pairs {
-                            entry.push(p.clone());
+                        for pair in &pairs {
+                            endpoints.retain(|existing| existing.resource_id != pair.resource_id);
+                            endpoints.push(pair.clone());
                         }
-                        Some(serde_json::to_value(&pairs).unwrap_or_else(|_| serde_json::json!([])))
+                        match serde_json::to_value(&pairs) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                return Response::err(
+                                    id,
+                                    format!(
+                                        "failed to serialize created virtual endpoints: {error}"
+                                    ),
+                                );
+                            }
+                        }
                     }
-                    Err(e) => return Response::err(id, e),
+                    Err(error) => return Response::err(id, error.to_string()),
                 }
             }
             "remove_pair" => {
-                let bus = req
+                let Some(bus) = req
                     .payload
                     .get("bus")
-                    .and_then(|b| b.as_u64())
-                    .map(|b| b as u32);
-                match bus {
-                    Some(bus) => {
-                        if let Some(list) = clients.get_mut(&req.client_id) {
-                            if let Some(pos) = list.iter().position(|p| p.resource_id == bus) {
-                                let pair = list[pos].clone();
-                                if let Err(error) = vpm.destroy_endpoint(&pair) {
-                                    return Response::err(id, error);
-                                }
-                                list.remove(pos);
-                            }
-                        }
-                        Some(serde_json::json!({}))
-                    }
-                    None => return Response::err(id, "missing 'bus'".into()),
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                else {
+                    return Response::err(id, "missing or invalid 'bus'".into());
+                };
+                let Some(position) = endpoints
+                    .iter()
+                    .position(|endpoint| endpoint.resource_id == bus)
+                else {
+                    return Response::err(
+                        id,
+                        format!("virtual endpoint bus {bus} is not owned by this connection"),
+                    );
+                };
+                let endpoint = endpoints[position].clone();
+                if let Err(error) = vpm.destroy_endpoint(&endpoint) {
+                    return Response::err(id, error);
                 }
-            }
-            "cleanup_client" => {
-                if let Some(list) = clients.remove(&req.client_id) {
-                    for pair in list {
-                        if let Err(error) = vpm.destroy_endpoint(&pair) {
-                            log::warn!(
-                                "cleanup_client bus {} deferred after error: {}",
-                                pair.resource_id,
-                                error
-                            );
-                        }
-                    }
-                }
+                endpoints.remove(position);
                 Some(serde_json::json!({}))
             }
-            "cleanup_orphans" => {
-                let cleaned = vpm.cleanup_orphans();
-                Some(serde_json::json!({ "cleaned": cleaned }))
-            }
-            other => return Response::err(id, format!("unknown op: {}", other)),
+            "cleanup_orphans" => match vpm.cleanup_orphans() {
+                Ok(cleaned) => Some(serde_json::json!({ "cleaned": cleaned })),
+                Err(error) => return Response::err(id, error),
+            },
+            other => return Response::err(id, format!("unknown op: {other}")),
         };
         Response {
             id,
@@ -378,45 +480,54 @@ mod service {
         }
     }
 
-    fn handle_client(pipe: HANDLE, vpm: &Mutex<VirtualPortManager>, clients: &Mutex<Clients>) {
-        let mut client_id: Option<String> = None;
+    fn handle_client(pipe: HANDLE, vpm: &Arc<Mutex<VirtualPortManager>>, client_pid: u32) {
+        let mut client_id = None;
+        let mut endpoints = Vec::new();
+
         while let Some(frame) = read_frame(pipe) {
             let req: Request = match serde_json::from_slice(&frame) {
-                Ok(r) => r,
-                Err(_) => break,
+                Ok(request) => request,
+                Err(error) => {
+                    log::warn!("invalid TauTermService request frame: {error}");
+                    break;
+                }
             };
-            if req.op == "hello" {
-                client_id = Some(req.client_id.clone());
-            }
-            let resp = {
-                let mut v = vpm.lock().unwrap();
-                let mut c = clients.lock().unwrap();
-                dispatch(&mut v, &mut c, &req)
+            let response = match vpm.lock() {
+                Ok(mut manager) => dispatch(
+                    &mut manager,
+                    &mut endpoints,
+                    &mut client_id,
+                    &req,
+                    client_pid,
+                ),
+                Err(error) => Response::err(
+                    req.id,
+                    format!("virtual-port manager lock poisoned: {error}"),
+                ),
             };
-            let body = serde_json::to_vec(&resp).unwrap_or_default();
+            let body = match serde_json::to_vec(&response) {
+                Ok(body) => body,
+                Err(error) => {
+                    log::warn!("failed to serialize TauTermService response: {error}");
+                    break;
+                }
+            };
             if !write_frame(pipe, &body) {
                 break;
             }
         }
 
-        // 管道关闭 = 客户端消失。逐一释放该客户端资源；若底层删除失败，
-        // VirtualPortManager 会把 ownership 留在持久化 orphan 集中供后续恢复清理。
-        if let Some(cid) = client_id {
-            if let Ok(mut v) = vpm.lock() {
-                if let Ok(mut c) = clients.lock() {
-                    if let Some(list) = c.remove(&cid) {
-                        for p in &list {
-                            if let Err(error) = v.destroy_endpoint(p) {
-                                log::warn!(
-                                    "disconnect cleanup bus {} deferred after error: {}",
-                                    p.resource_id,
-                                    error
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        // A broken pipe is not proof that the GUI process is gone: ServiceBackend may reconnect
+        // while this server thread is unwinding. Keep the endpoint active and attach cleanup to
+        // the authenticated process handle. Reconnects can safely re-adopt the same identity;
+        // cleanup happens only after that exact process exits.
+        if !endpoints.is_empty() {
+            log::info!(
+                "service connection closed for GUI PID {}; preserving {} virtual endpoint(s) until process exit",
+                client_pid,
+                endpoints.len()
+            );
+            schedule_disconnect_cleanup(Arc::clone(vpm), client_pid, endpoints);
         }
     }
 
@@ -458,26 +569,31 @@ mod service {
         // 服务的 ownership 簿记属于机器级特权状态，存放在 ProgramData，而不是
         // 安装目录或某个交互用户的 AppData。它只记录 TauTerm 自己创建的 endpoint，
         // 因而服务崩溃/掉电后仍能安全恢复，且不会把第三方 com0com bus 当作孤儿。
-        let state_dir = service_state_dir();
-        if let Err(error) = std::fs::create_dir_all(&state_dir) {
-            log::error!(
-                "cannot create privileged virtual-port state directory {:?}: {}",
-                state_dir,
-                error
-            );
-        }
-        let vpm = Mutex::new(VirtualPortManager::new(resource_dir, state_dir));
-        let clients: Mutex<Clients> = Mutex::new(HashMap::new());
+        let state_dir = match tauterm_lib::virtual_port::windows_state::ensure_ownership_state_dir()
+        {
+            Ok(state_dir) => state_dir,
+            Err(error) => {
+                log::error!("cannot secure privileged virtual-port ownership state: {error}");
+                return;
+            }
+        };
+        let vpm = Arc::new(Mutex::new(VirtualPortManager::new_privileged(
+            resource_dir,
+            state_dir,
+        )));
 
         // 启动时只清理有 TauTerm ownership 证据、且当前无 active owner 的资源。
         if let Ok(mut v) = vpm.lock() {
-            let cleaned = v.cleanup_orphans();
-            if cleaned > 0 {
-                log::info!("startup: cleaned {} orphan port pair(s)", cleaned);
+            match v.cleanup_orphans() {
+                Ok(cleaned) if cleaned > 0 => {
+                    log::info!("startup: cleaned {} orphan port pair(s)", cleaned);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("startup orphan cleanup failed: {error}");
+                }
             }
         }
-
-        let sd = build_security_descriptor();
 
         // 停止监视线程：SHUTDOWN 置位后连接一次管道，使阻塞中的 ConnectNamedPipe
         // 返回（连接进程即服务自身，verify_client 会因文件名不匹配拒绝它），
@@ -488,17 +604,23 @@ mod service {
             if SHUTDOWN.load(Ordering::SeqCst) {
                 break;
             }
-            let pipe = create_pipe(sd);
-            if pipe == (-1isize) as HANDLE {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                continue;
-            }
+            let pipe = match create_pipe() {
+                Ok(pipe) => pipe,
+                Err(error) => {
+                    log::error!("TauTermService pipe creation failed: {error}");
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    continue;
+                }
+            };
 
-            // 阻塞等待客户端连接（STOP 到达时由 unblocker 线程自连接唤醒）
+            // Block only the accept loop. Each verified GUI connection is served on its own
+            // thread, while com0com mutations remain serialized by VirtualPortManager + the global
+            // driver mutation mutex. This prevents one long-lived TauTerm instance from forcing
+            // every other instance into the direct-UAC fallback.
             let connected = unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) };
             if connected == 0 {
-                let err = unsafe { windows_sys::Win32::Foundation::GetLastError() };
-                if err != ERROR_PIPE_CONNECTED {
+                let error = unsafe { GetLastError() };
+                if error != ERROR_PIPE_CONNECTED {
                     unsafe { CloseHandle(pipe) };
                     continue;
                 }
@@ -509,19 +631,24 @@ mod service {
                 break;
             }
 
-            if !verify_client(pipe) {
+            let Some(client_pid) = verify_client(pipe) else {
                 unsafe {
                     DisconnectNamedPipe(pipe);
                     CloseHandle(pipe);
                 }
                 continue;
-            }
+            };
 
-            handle_client(pipe, &vpm, &clients);
-            unsafe {
-                DisconnectNamedPipe(pipe);
-                CloseHandle(pipe);
-            }
+            let manager = Arc::clone(&vpm);
+            let pipe_value = pipe as usize;
+            let _ = std::thread::spawn(move || {
+                let pipe = pipe_value as HANDLE;
+                handle_client(pipe, &manager, client_pid);
+                unsafe {
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }
+            });
         }
         let _ = unblocker.join();
     }

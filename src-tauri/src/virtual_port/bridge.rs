@@ -25,6 +25,9 @@ const EGRESS_QUEUE_MESSAGES: usize = 1024;
 const EGRESS_BACKLOG_WINDOW_MS: u64 = 2_000;
 const EGRESS_MIN_BYTES: usize = 64 * 1024;
 const EGRESS_MAX_BYTES: usize = 1024 * 1024;
+const VPORT_SUBSCRIPTION_MIN_MESSAGES: usize = 4 * 1024;
+const VPORT_SUBSCRIPTION_MAX_MESSAGES: usize = 64 * 1024;
+const VPORT_SUBSCRIPTION_WINDOW_MS: u64 = 3_000;
 const WRITE_STALL_DEADLINE: Duration = Duration::from_secs(2);
 
 const ENDPOINT_ACTIVE: u8 = 0;
@@ -256,10 +259,11 @@ impl VirtualPortBridge {
             return Err("no virtual endpoints were available for bridging".into());
         }
 
-        let subscription = io
-            .subscribe("virtual-port-bridge")
-            .map_err(|error| error.to_string())?;
         let backlog_limit_bytes = egress_backlog_limit_bytes(baud_rate);
+        let subscription_capacity_messages = vport_subscription_capacity_messages(baud_rate);
+        let subscription = io
+            .subscribe_with_capacity("virtual-port-bridge", subscription_capacity_messages)
+            .map_err(|error| error.to_string())?;
         let mut prepared = Vec::with_capacity(endpoints.len());
 
         // Prepare every endpoint before spawning any worker. A later open/clone failure must not
@@ -354,9 +358,10 @@ impl VirtualPortBridge {
             }
 
             log::info!(
-                "Virtual bridge attached for external endpoint {} (egress_limit={} bytes)",
+                "Virtual bridge attached for external endpoint {} (egress_limit={} bytes, subscription_capacity={} messages)",
                 external_path,
-                backlog_limit_bytes
+                backlog_limit_bytes,
+                subscription_capacity_messages
             );
         }
 
@@ -424,6 +429,17 @@ fn egress_backlog_limit_bytes(baud_rate: u32) -> usize {
     usize::try_from(window_bytes)
         .unwrap_or(usize::MAX)
         .clamp(EGRESS_MIN_BYTES, EGRESS_MAX_BYTES)
+}
+
+fn vport_subscription_capacity_messages(baud_rate: u32) -> usize {
+    // DataPlane events may be very small on Windows serial drivers. Size the upstream queue from
+    // a worst-case one-byte event rate over a finite scheduling-jitter window, then cap memory.
+    let bytes_per_second = (u64::from(baud_rate) / 10).max(1);
+    let messages = bytes_per_second.saturating_mul(VPORT_SUBSCRIPTION_WINDOW_MS) / 1_000;
+    usize::try_from(messages).unwrap_or(usize::MAX).clamp(
+        VPORT_SUBSCRIPTION_MIN_MESSAGES,
+        VPORT_SUBSCRIPTION_MAX_MESSAGES,
+    )
 }
 
 fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
@@ -494,7 +510,11 @@ fn physical_subscription_pump(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("data-plane bridge subscription detached or overflowed".into());
+                let detail = subscription
+                    .disconnect_reason()
+                    .map(|reason| reason.to_string())
+                    .unwrap_or_else(|| "channel closed without a recorded detach reason".into());
+                return Err(format!("data-plane bridge subscription ended: {detail}"));
             }
         }
     }
@@ -801,6 +821,14 @@ mod tests {
         assert_eq!(slow, EGRESS_MIN_BYTES);
         assert!(faster > slow);
         assert_eq!(fastest, EGRESS_MAX_BYTES);
+
+        let serial_capacity = vport_subscription_capacity_messages(115_200);
+        assert!(serial_capacity > 256);
+        assert!(serial_capacity <= VPORT_SUBSCRIPTION_MAX_MESSAGES);
+        assert_eq!(
+            vport_subscription_capacity_messages(10_000_000),
+            VPORT_SUBSCRIPTION_MAX_MESSAGES
+        );
     }
 
     #[test]

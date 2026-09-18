@@ -22,7 +22,7 @@ use super::backend::{
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
-const SERVICE_PROTOCOL_VERSION: u64 = 1;
+const SERVICE_PROTOCOL_VERSION: u64 = 2;
 const GENERIC_READ: u32 = 0x80000000;
 const GENERIC_WRITE: u32 = 0x40000000;
 const OPEN_EXISTING: u32 = 3;
@@ -313,6 +313,22 @@ impl ServiceBackend {
             ));
         }
 
+        let adopted: Vec<VirtualEndpoint> = response
+            .data
+            .as_ref()
+            .and_then(|data| data.get("adopted_endpoints"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("invalid adopted endpoint list from service: {error}"))?
+            .unwrap_or_default();
+
+        Self::clear_local_endpoints(inner);
+        for endpoint in adopted {
+            register_internal_endpoint_path(&endpoint.bridge_path);
+            inner.endpoints.insert(endpoint.resource_id, endpoint);
+        }
+
         inner.client_id = client_id;
         inner.pipe = Some(pipe);
         Ok(())
@@ -333,7 +349,8 @@ impl ServiceBackend {
     fn reset_connection(inner: &mut ServiceInner) {
         inner.pipe = None;
         inner.client_id.clear();
-        Self::clear_local_endpoints(inner);
+        // Keep endpoint identity and internal-port hiding across a transient service restart.
+        // The next hello re-adopts protected records for this GUI PID in TauTermService.
     }
 
     fn call(&self, op: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -398,12 +415,6 @@ impl ServiceBackend {
         }
         Ok(())
     }
-
-    fn forget_all_endpoints(&self) -> Result<(), String> {
-        let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
-        Self::clear_local_endpoints(&mut inner);
-        Ok(())
-    }
 }
 
 impl VirtualPortBackend for ServiceBackend {
@@ -422,10 +433,6 @@ impl VirtualPortBackend for ServiceBackend {
     fn install_driver(&mut self) -> Result<(), String> {
         self.call("install_driver", serde_json::json!({}))
             .map(|_| ())
-    }
-
-    fn install_driver_elevated(&mut self) -> Result<(), String> {
-        self.install_driver()
     }
 
     fn ensure_endpoints(
@@ -447,31 +454,19 @@ impl VirtualPortBackend for ServiceBackend {
                 return Err(VirtualPortError::DriverMissing);
             }
         }
-        self.create_endpoints(config)
-            .map_err(VirtualPortError::from_backend)
-    }
-    fn create_endpoints(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        if !config.enabled || config.count == 0 {
-            return Ok(Vec::new());
-        }
-        let data = self.call(
-            "create_endpoints",
-            serde_json::json!({ "count": config.count }),
-        )?;
-        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data)
-            .map_err(|error| format!("invalid create_endpoints response: {error}"))?;
-        self.remember_endpoints(&endpoints)?;
-        Ok(endpoints)
-    }
 
-    fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        self.create_endpoints(config)
+        let data = self
+            .call(
+                "create_endpoints",
+                serde_json::json!({ "count": config.count }),
+            )
+            .map_err(VirtualPortError::from_backend)?;
+        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data).map_err(|error| {
+            VirtualPortError::Backend(format!("invalid create_endpoints response: {error}"))
+        })?;
+        self.remember_endpoints(&endpoints)
+            .map_err(VirtualPortError::from_backend)?;
+        Ok(endpoints)
     }
 
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
@@ -483,19 +478,27 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn cleanup_all(&mut self) {
-        if self.call("cleanup_client", serde_json::json!({})).is_ok() {
-            let _ = self.forget_all_endpoints();
+        let endpoints = match self.inner.lock() {
+            Ok(inner) => inner.endpoints.values().cloned().collect::<Vec<_>>(),
+            Err(error) => {
+                log::warn!("failed to lock virtual-port service backend for cleanup: {error}");
+                return;
+            }
+        };
+
+        for endpoint in endpoints {
+            if let Err(error) = self.destroy_endpoint(&endpoint) {
+                log::warn!(
+                    "virtual-port service cleanup deferred for {} (bus {}): {}",
+                    endpoint.external_path,
+                    endpoint.resource_id,
+                    error
+                );
+            }
         }
     }
 
-    fn cleanup_orphans(&mut self) -> u32 {
-        self.call("cleanup_orphans", serde_json::json!({}))
-            .ok()
-            .and_then(|data| data["cleaned"].as_u64())
-            .unwrap_or(0) as u32
-    }
-
-    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
+    fn cleanup_orphans(&mut self) -> Result<u32, String> {
         let data = self.call("cleanup_orphans", serde_json::json!({}))?;
         Ok(data["cleaned"].as_u64().unwrap_or(0) as u32)
     }

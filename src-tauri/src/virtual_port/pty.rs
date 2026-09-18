@@ -104,14 +104,13 @@ impl VirtualPortBackend for PtyBackend {
         Ok(())
     }
 
-    fn install_driver_elevated(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn create_endpoints(
+    fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, super::backend::VirtualPortError> {
+        if !config.enabled || config.count == 0 {
+            return Ok(Vec::new());
+        }
         let count = config.count.clamp(1, MAX_ENDPOINT_COUNT);
         let mut created = Vec::with_capacity(count as usize);
 
@@ -122,18 +121,11 @@ impl VirtualPortBackend for PtyBackend {
                     for endpoint in &created {
                         self.remove_endpoint(&endpoint.bridge_path);
                     }
-                    return Err(error);
+                    return Err(super::backend::VirtualPortError::Backend(error));
                 }
             }
         }
         Ok(created)
-    }
-
-    fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        self.create_endpoints(config)
     }
 
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
@@ -148,14 +140,9 @@ impl VirtualPortBackend for PtyBackend {
         }
     }
 
-    fn cleanup_orphans(&mut self) -> u32 {
+    fn cleanup_orphans(&mut self) -> Result<u32, String> {
         // PTYs are kernel objects tied to open file descriptors. Process exit closes
         // the master descriptors, so there is no persistent endpoint to clean up.
-        0
-    }
-
-    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
-        self.cleanup_all();
         Ok(0)
     }
 
@@ -173,7 +160,7 @@ mod tests {
     fn native_pty_round_trip() {
         let mut backend = PtyBackend::new();
         let endpoints = backend
-            .create_endpoints(&VirtualPortConfig {
+            .ensure_endpoints(&VirtualPortConfig {
                 enabled: true,
                 count: 1,
             })
