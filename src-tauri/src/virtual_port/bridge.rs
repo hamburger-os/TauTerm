@@ -849,6 +849,43 @@ mod tests {
     }
 
     #[test]
+    fn sustained_stalled_endpoint_does_not_block_healthy_sibling() {
+        let (event_tx, _event_rx) = mpsc::channel();
+        let stalled = Arc::new(EndpointShared::new(
+            "COM21".into(),
+            8,
+            true,
+            event_tx.clone(),
+        ));
+        let healthy = Arc::new(EndpointShared::new("COM23".into(), 32, true, event_tx));
+        let (stalled_tx, _stalled_rx) = mpsc::sync_channel(8);
+        let (healthy_tx, healthy_rx) = mpsc::sync_channel(8);
+        let targets = vec![
+            EgressTarget {
+                sender: stalled_tx,
+                shared: stalled.clone(),
+            },
+            EgressTarget {
+                sender: healthy_tx,
+                shared: healthy.clone(),
+            },
+        ];
+
+        for sequence in 0..1_000u16 {
+            let value = (sequence % 251) as u8;
+            fan_out_physical_chunk(&targets, vec![value; 4]).unwrap();
+
+            let delivered = healthy_rx.try_recv().expect("healthy endpoint must keep up");
+            assert_eq!(&*delivered, &[value; 4]);
+            healthy.release_bytes(delivered.len());
+        }
+
+        assert!(stalled.is_backpressured());
+        assert!(!healthy.is_backpressured());
+        assert_eq!(healthy.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn endpoint_recovery_requires_explicit_reopen_transition() {
         let (event_tx, event_rx) = mpsc::channel();
         let shared = EndpointShared::new("COM21".into(), 64, true, event_tx);
