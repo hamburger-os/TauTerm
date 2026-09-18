@@ -685,10 +685,10 @@ impl VirtualPortManager {
         })
     }
 
-    fn reconcile_owned_state(&mut self) {
+    fn reconcile_owned_state(&mut self) -> Result<(), String> {
         let driver = self.query_driver_state();
         if !driver.queried {
-            return;
+            return Err("cannot enumerate com0com state while reconciling ownership".into());
         }
 
         let owned = self.load_owned_endpoints();
@@ -704,9 +704,10 @@ impl VirtualPortManager {
                     endpoint.external_path,
                     endpoint.resource_id
                 );
-                self.forget_owned_endpoint(&endpoint);
+                self.forget_owned_endpoint(&endpoint)?;
             }
         }
+        Ok(())
     }
 
     fn rollback_verified_endpoint(&mut self, endpoint: &VirtualEndpoint) {
@@ -801,7 +802,8 @@ impl VirtualPortManager {
                 )
                 .map_err(VirtualPortError::from_backend)?;
                 for endpoint in &result.cleaned_endpoints {
-                    self.forget_owned_endpoint(endpoint);
+                    self.forget_owned_endpoint(endpoint)
+                        .map_err(VirtualPortError::from_backend)?;
                 }
                 self.adopt_active_endpoints(&result.endpoints);
                 Ok(result.endpoints)
@@ -825,11 +827,14 @@ impl VirtualPortManager {
     /// This is intentionally read-only with respect to the ownership ledger: the records already
     /// carry the authenticated GUI PID. Re-adoption only rebuilds the service's in-memory active
     /// set and client map so a later remove/cleanup request targets the same proven resources.
-    pub fn adopt_owned_endpoints_for_owner(&mut self, owner_pid: u32) -> Vec<VirtualEndpoint> {
+    pub fn adopt_owned_endpoints_for_owner(
+        &mut self,
+        owner_pid: u32,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
         if self.mode != ManagementMode::Privileged {
-            return Vec::new();
+            return Err("endpoint re-adoption requires a privileged backend".into());
         }
-        self.reconcile_owned_state();
+        self.reconcile_owned_state()?;
         let endpoints = self
             .load_owned_records()
             .into_iter()
@@ -842,7 +847,7 @@ impl VirtualPortManager {
             self.active_endpoints.insert(endpoint.clone());
             register_internal_endpoint_path(&endpoint.bridge_path);
         }
-        endpoints
+        Ok(endpoints)
     }
 
     /// Privileged service entry point that attributes newly created endpoints to the
@@ -937,7 +942,12 @@ impl VirtualPortManager {
         let _mutation = DriverMutationGuard::acquire()?;
 
         let count = config.count.clamp(1, 4);
-        self.reconcile_owned_state();
+        self.reconcile_owned_state()?;
+
+        // Fail before touching the driver if the protected ledger cannot be durably replaced.
+        let ownership_snapshot = self.load_owned_records();
+        self.persist_owned_records(&ownership_snapshot)?;
+
         let mut initial_driver = self.query_driver_state();
         if !initial_driver.queried {
             return Err("cannot enumerate com0com driver state before endpoint allocation".into());
@@ -1008,7 +1018,16 @@ impl VirtualPortManager {
                         endpoint.external_path,
                         endpoint.resource_id
                     );
-                    self.track_active_endpoint_with_owner(endpoint.clone(), owner_pid);
+                    if let Err(error) =
+                        self.track_active_endpoint_with_owner(endpoint.clone(), owner_pid)
+                    {
+                        self.rollback_verified_endpoint(&endpoint);
+                        self.rollback_batch(&pairs);
+                        return Err(format!(
+                            "virtual-port ownership commit failed after creating bus {}: {}",
+                            endpoint.resource_id, error
+                        ));
+                    }
                     pairs.push(endpoint);
                 }
                 Ok(output) => {
@@ -1023,7 +1042,16 @@ impl VirtualPortManager {
                                 resource_id: actual_bus,
                                 ..endpoint.clone()
                             };
-                            self.track_active_endpoint_with_owner(partial.clone(), owner_pid);
+                            if let Err(error) =
+                                self.track_active_endpoint_with_owner(partial.clone(), owner_pid)
+                            {
+                                self.rollback_verified_endpoint(&partial);
+                                self.rollback_batch(&pairs);
+                                return Err(format!(
+                                    "failed to persist ownership for partially created bus {}: {}",
+                                    partial.resource_id, error
+                                ));
+                            }
                             self.rollback_verified_endpoint(&partial);
                         }
                     }
@@ -1077,7 +1105,7 @@ impl VirtualPortManager {
         if self.mode == ManagementMode::DirectUac {
             // Disconnect must stay non-interactive. Keep ownership and let the next explicit
             // create/cleanup action reclaim the endpoint through the one-shot helper.
-            self.defer_cleanup(endpoint);
+            self.defer_cleanup(endpoint)?;
             return Ok(());
         }
         self.destroy_endpoint_privileged(endpoint)
@@ -1091,13 +1119,13 @@ impl VirtualPortManager {
         for attempt in 0..DESTROY_RETRY_COUNT {
             let driver = self.query_driver_state();
             if !driver.queried {
-                self.defer_cleanup(endpoint);
+                self.defer_cleanup(endpoint)?;
                 return Err("cannot enumerate com0com state before endpoint removal".into());
             }
 
             match driver.endpoints_by_bus.get(&endpoint.resource_id) {
                 None => {
-                    self.forget_owned_endpoint(endpoint);
+                    self.forget_owned_endpoint(endpoint)?;
                     return Ok(());
                 }
                 Some(identity) if identity.matches(endpoint) => {}
@@ -1110,14 +1138,14 @@ impl VirtualPortManager {
                         identity.bridge_path,
                         identity.external_path
                     );
-                    self.forget_owned_endpoint(endpoint);
+                    self.forget_owned_endpoint(endpoint)?;
                     return Ok(());
                 }
             }
 
             match run_setupc(&self.resource_dir, &["remove", &bus]) {
                 Ok(output) if output.status.success() => {
-                    self.forget_owned_endpoint(endpoint);
+                    self.forget_owned_endpoint(endpoint)?;
                     log::info!(
                         "Virtual port pair destroyed: {} ↔ {}",
                         endpoint.bridge_path,
@@ -1144,7 +1172,7 @@ impl VirtualPortManager {
             }
         }
 
-        self.defer_cleanup(endpoint);
+        self.defer_cleanup(endpoint)?;
         let error = last_error.unwrap_or_else(|| {
             format!(
                 "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup",
@@ -1165,8 +1193,7 @@ impl VirtualPortManager {
         let active = self.active_endpoints.iter().cloned().collect::<Vec<_>>();
         for endpoint in active {
             let result = if self.mode == ManagementMode::DirectUac {
-                self.defer_cleanup(&endpoint);
-                Ok(())
+                self.defer_cleanup(&endpoint)
             } else {
                 self.destroy_endpoint_privileged(&endpoint)
             };
@@ -1191,7 +1218,7 @@ impl VirtualPortManager {
 
     pub fn cleanup_orphans(&mut self) -> Result<u32, String> {
         if self.mode == ManagementMode::Privileged {
-            self.reconcile_owned_state();
+            self.reconcile_owned_state()?;
         }
         let orphans = self.orphan_endpoints();
         if orphans.is_empty() {
@@ -1201,7 +1228,7 @@ impl VirtualPortManager {
         if self.mode == ManagementMode::DirectUac {
             let cleaned = super::elevated::cleanup_endpoints(&self.resource_dir, orphans)?;
             for endpoint in &cleaned {
-                self.forget_owned_endpoint(endpoint);
+                self.forget_owned_endpoint(endpoint)?;
             }
             return Ok(cleaned.len() as u32);
         }
