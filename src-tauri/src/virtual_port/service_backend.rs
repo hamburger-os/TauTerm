@@ -424,10 +424,6 @@ impl VirtualPortBackend for ServiceBackend {
             .map(|_| ())
     }
 
-    fn install_driver_elevated(&mut self) -> Result<(), String> {
-        self.install_driver()
-    }
-
     fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
@@ -447,31 +443,20 @@ impl VirtualPortBackend for ServiceBackend {
                 return Err(VirtualPortError::DriverMissing);
             }
         }
-        self.create_endpoints(config)
-            .map_err(VirtualPortError::from_backend)
-    }
-    fn create_endpoints(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        if !config.enabled || config.count == 0 {
-            return Ok(Vec::new());
-        }
-        let data = self.call(
-            "create_endpoints",
-            serde_json::json!({ "count": config.count }),
-        )?;
-        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data)
-            .map_err(|error| format!("invalid create_endpoints response: {error}"))?;
-        self.remember_endpoints(&endpoints)?;
-        Ok(endpoints)
-    }
 
-    fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String> {
-        self.create_endpoints(config)
+        let data = self
+            .call(
+                "create_endpoints",
+                serde_json::json!({ "count": config.count }),
+            )
+            .map_err(VirtualPortError::from_backend)?;
+        let endpoints: Vec<VirtualEndpoint> = serde_json::from_value(data)
+            .map_err(|error| VirtualPortError::Backend(format!(
+                "invalid create_endpoints response: {error}"
+            )))?;
+        self.remember_endpoints(&endpoints)
+            .map_err(VirtualPortError::from_backend)?;
+        Ok(endpoints)
     }
 
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
@@ -488,14 +473,7 @@ impl VirtualPortBackend for ServiceBackend {
         }
     }
 
-    fn cleanup_orphans(&mut self) -> u32 {
-        self.call("cleanup_orphans", serde_json::json!({}))
-            .ok()
-            .and_then(|data| data["cleaned"].as_u64())
-            .unwrap_or(0) as u32
-    }
-
-    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
+    fn cleanup_orphans(&mut self) -> Result<u32, String> {
         let data = self.call("cleanup_orphans", serde_json::json!({}))?;
         Ok(data["cleaned"].as_u64().unwrap_or(0) as u32)
     }
