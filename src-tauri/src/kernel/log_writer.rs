@@ -335,6 +335,28 @@ mod tests {
     }
 
     #[test]
+    fn multiplexed_stream_label_is_rendered_without_changing_log_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = LogWriter::new(
+            temp.path(),
+            1024 * 1024,
+            1024,
+            "session-123",
+            "RTT test",
+            "rtt",
+            "text",
+        )
+        .unwrap();
+        let mut item = entry(b"hello");
+        item.stream = Some("RTT:3".to_string());
+        writer.write_entry(&item).unwrap();
+        writer.flush().unwrap();
+
+        let content = std::fs::read_to_string(writer.current_path()).unwrap();
+        assert!(content.contains("[RX][RTT:3] hello"));
+    }
+
+    #[test]
     fn filenames_use_chronological_prefix_and_session_identity_not_user_names() {
         let temp = tempfile::tempdir().unwrap();
         let writer = LogWriter::new(
