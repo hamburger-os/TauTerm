@@ -13,7 +13,7 @@ use std::time::Duration;
 use mlua::{Function, Lua, Table};
 use tauri::Emitter;
 
-use crate::session::SessionIo;
+use crate::session::AutomationIo;
 
 /// 向 Lua 全局环境注入脚本 API
 ///
@@ -21,7 +21,7 @@ use crate::session::SessionIo;
 /// 使停止脚本时长睡眠能及时中断（否则 join 会阻塞整段睡眠时长并卡住全局锁）。
 pub fn inject_lua_api(
     lua: &Lua,
-    io: Arc<SessionIo>,
+    io: Arc<dyn AutomationIo>,
     app_handle: tauri::AppHandle,
     session_id: &str,
     shutdown: Arc<AtomicBool>,
