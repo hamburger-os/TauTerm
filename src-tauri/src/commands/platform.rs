@@ -66,7 +66,9 @@ pub async fn install_virtual_port_driver(app: AppHandle) -> Result<String, Strin
         log::info!("尝试初始化虚拟串口驱动...");
         backend.install_driver()?;
         if !driver_installed(backend) {
-            return Err("Driver initialization completed but the driver is still unavailable".into());
+            return Err(
+                "Driver initialization completed but the driver is still unavailable".into(),
+            );
         }
         Ok("installed".to_string())
     })
