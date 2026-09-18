@@ -15,16 +15,12 @@ use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_CANCELLED, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
 };
-use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
-};
+use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING};
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
     SetNamedPipeHandleState,
 };
-use windows_sys::Win32::System::Threading::{
-    GetProcessId, TerminateProcess, WaitForSingleObject,
-};
+use windows_sys::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 
 use super::backend::{VirtualEndpoint, VirtualPortConfig};
@@ -323,7 +319,9 @@ fn validate_resource_dir(path: &Path) -> Result<PathBuf, String> {
         }
     }
 
-    let valid = allowed.iter().any(|candidate| windows_path_eq(&requested, candidate));
+    let valid = allowed
+        .iter()
+        .any(|candidate| windows_path_eq(&requested, candidate));
     if !valid {
         return Err(format!(
             "virtual-port helper rejected untrusted resource directory: {}",
