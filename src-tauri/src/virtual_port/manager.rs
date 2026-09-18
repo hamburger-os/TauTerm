@@ -204,7 +204,7 @@ fn process_is_running(pid: u32) -> bool {
         return true;
     }
     // Access denied/other lookup failures are treated as "possibly alive" so cleanup fails safe.
-    unsafe { GetLastError() } != ERROR_INVALID_PARAMETER
+    (unsafe { GetLastError() }) != ERROR_INVALID_PARAMETER
 }
 
 impl VirtualPortManager {
