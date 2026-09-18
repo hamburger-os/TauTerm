@@ -448,3 +448,42 @@ fn connect_dialog_uses_registry_session_option_policy() {
         "ConnectDialog must not maintain a second copy of plugin default-session policy"
     );
 }
+
+
+#[test]
+fn virtual_port_backend_hides_platform_elevation_mechanics() {
+    let backend = read_source("virtual_port/backend.rs");
+    for forbidden in [
+        "install_driver_elevated",
+        "create_endpoints_elevated",
+        "cleanup_endpoints_elevated",
+    ] {
+        assert!(
+            !backend.contains(forbidden),
+            "VirtualPortBackend must keep privilege selection private: {forbidden}"
+        );
+    }
+
+    let manager = read_source("virtual_port/manager.rs");
+    for forbidden in ["cmd.exe", ".cmd", "ShellExecuteExW"] {
+        assert!(
+            !manager.contains(forbidden),
+            "VirtualPortManager must not rebuild the old shell/batch elevation path: {forbidden}"
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        let elevated = read_source("virtual_port/elevated.rs");
+        assert!(elevated.contains("--tauterm-vport-helper"));
+        assert!(elevated.contains("GetNamedPipeClientProcessId"));
+        assert!(elevated.contains("GetNamedPipeServerProcessId"));
+        assert!(!elevated.contains("cmd.exe"));
+        assert!(!elevated.contains("state_dir: PathBuf"));
+
+        let state = read_source("virtual_port/windows_state.rs");
+        assert!(state.contains(r#".join("ProgramData")"#) || state.contains("PROGRAMDATA"));
+        assert!(state.contains("Authenticated Users"));
+        assert!(state.contains("PROTECTED_DACL_SECURITY_INFORMATION"));
+    }
+}
