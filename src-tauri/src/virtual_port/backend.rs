@@ -163,7 +163,7 @@ pub trait VirtualPortBackend: Send {
     fn cleanup_orphans(&mut self) -> Result<u32, String>;
 
     fn pending_orphan_count(&self) -> u32;
-
+}
 
 #[cfg(test)]
 mod tests {
