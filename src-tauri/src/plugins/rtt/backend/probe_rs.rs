@@ -4,7 +4,7 @@ use crate::embedded_debug::probe_runtime::{
     list_probes as list_debug_probes, DebugProbeConfig, DebugProbeOpenError, DebugWireProtocol,
 };
 use crate::embedded_debug::runtime::{
-    DebugServiceLease, DebugTargetRuntime, DebugTargetRuntimeError, EmbeddedDebugManager,
+    DebugServiceLease, DebugTargetRuntimeError, EmbeddedDebugManager,
 };
 use crate::plugins::rtt::config::{RttConfig, RttLocator, RttWireProtocol};
 use crate::plugins::rtt::error::{RttError, RttErrorCode};
@@ -25,8 +25,7 @@ const MAX_UP_CHANNELS_PER_POLL: usize = 4;
 const MAX_READS_PER_UP_CHANNEL: usize = 4;
 
 pub struct ProbeRsRttBackend {
-    target: Arc<DebugTargetRuntime>,
-    _service_lease: DebugServiceLease,
+    service: DebugServiceLease,
     rtt: Arc<Mutex<Rtt>>,
     control_block_address: u64,
     core_index: usize,
@@ -69,15 +68,16 @@ impl ProbeRsRttBackend {
                 speed_khz: config.speed_khz,
             })
             .map_err(map_target_runtime_error)?;
-        let service_lease = target
+        let service = target
             .acquire_service("rtt")
             .map_err(map_target_runtime_error)?;
+        drop(target);
 
         let region = resolve_scan_region(config)?;
         let core_index = config.core_index;
         let attach_timeout = config.attach_timeout;
         let attach_region = region.clone();
-        let (rtt, channels) = target
+        let (rtt, channels) = service
             .execute(
                 attach_timeout.saturating_add(Duration::from_secs(1)),
                 move |probe| {
@@ -98,8 +98,7 @@ impl ProbeRsRttBackend {
         let control_block_address = rtt.ptr();
 
         Ok(Self {
-            target,
-            _service_lease: service_lease,
+            service,
             rtt: Arc::new(Mutex::new(rtt)),
             control_block_address,
             core_index,
@@ -181,8 +180,8 @@ impl RttBackend for ProbeRsRttBackend {
         RttBackendDescriptor {
             kind: "probe_rs".into(),
             display_name: "ProbeRs".into(),
-            target: Some(self.target.descriptor().target.clone()),
-            probe: Some(self.target.descriptor().probe_label.clone()),
+            target: Some(self.service.descriptor().target.clone()),
+            probe: Some(self.service.descriptor().probe_label.clone()),
             control_block_address: Some(format!("0x{:X}", self.control_block_address)),
             capabilities: RttBackendCapabilities {
                 enumerate_channels: true,
@@ -202,7 +201,7 @@ impl RttBackend for ProbeRsRttBackend {
         let core_index = self.core_index;
         let poll_cursor = self.poll_cursor;
         let (chunks, next_poll_cursor) = self
-            .target
+            .service
             .execute(TARGET_OPERATION_TIMEOUT, move |probe| {
                 let mut core = probe.session_mut().core(core_index).map_err(|error| {
                     RttError::new(
@@ -283,7 +282,7 @@ impl RttBackend for ProbeRsRttBackend {
         let refresh_timeout = self.refresh_timeout;
         let region = self.region.clone();
         let (channels, control_block_address) = self
-            .target
+            .service
             .execute(
                 refresh_timeout.saturating_add(Duration::from_secs(1)),
                 move |probe| {
