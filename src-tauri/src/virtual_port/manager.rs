@@ -20,12 +20,9 @@ use super::backend::{
 
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
-use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE,
-};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE};
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -483,9 +480,9 @@ impl VirtualPortManager {
     }
 
     pub(crate) fn is_reclaimable_owned_endpoint(&self, endpoint: &VirtualEndpoint) -> bool {
-        self.load_owned_records().into_iter().any(|record| {
-            record.endpoint == *endpoint && self.record_is_reclaimable(&record)
-        })
+        self.load_owned_records()
+            .into_iter()
+            .any(|record| record.endpoint == *endpoint && self.record_is_reclaimable(&record))
     }
 
     /// 不启动 setupc 的本地 ownership 投影，仅用于冲突避让与恢复判断。
@@ -666,9 +663,7 @@ impl VirtualPortManager {
     pub fn install_driver(&mut self) -> Result<(), String> {
         match self.mode {
             ManagementMode::Privileged => self.install_driver_privileged(),
-            ManagementMode::DirectUac => {
-                super::elevated::ensure_driver(&self.resource_dir)
-            }
+            ManagementMode::DirectUac => super::elevated::ensure_driver(&self.resource_dir),
         }
     }
 
@@ -986,8 +981,7 @@ impl VirtualPortManager {
         }
 
         if self.mode == ManagementMode::DirectUac {
-            let cleaned =
-                super::elevated::cleanup_endpoints(&self.resource_dir, orphans.clone())?;
+            let cleaned = super::elevated::cleanup_endpoints(&self.resource_dir, orphans.clone())?;
             for endpoint in &orphans {
                 self.forget_owned_endpoint(endpoint);
             }
@@ -1170,8 +1164,8 @@ mod tests {
     fn reserved_region_is_never_allocated() {
         let occupied = (20..199).collect::<HashSet<_>>();
         let pairs = VirtualPortManager::find_available_port_pairs(2, &occupied);
-        assert!(pairs.iter().all(|(a, b)| {
-            !is_reserved_port(*a) && !is_reserved_port(*b)
-        }));
+        assert!(pairs
+            .iter()
+            .all(|(a, b)| { !is_reserved_port(*a) && !is_reserved_port(*b) }));
     }
 }
