@@ -141,35 +141,29 @@ pub fn contains_elevation_indicator(text: &str) -> bool {
 pub trait VirtualPortBackend: Send {
     fn are_files_present(&self) -> bool;
     fn detect_driver(&self) -> bool;
-    fn install_driver(&mut self) -> Result<(), String>;
-    fn install_driver_elevated(&mut self) -> Result<(), String>;
 
-    /// 创建可供 Session 使用的 endpoint。权限选择、驱动安装和平台 fallback 都属于
-    /// backend 自身策略；Serial/UI 只消费强类型失败语义，不编排 Windows UAC/setupc。
+    /// Ensure the platform virtual-port driver/runtime is ready. Permission selection belongs to
+    /// the backend; callers never choose between privileged and unprivileged implementations.
+    fn install_driver(&mut self) -> Result<(), String>;
+
+    /// Create endpoints for one Session. The backend owns platform allocation, privilege,
+    /// transactionality and ownership persistence.
     fn ensure_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError> {
-        self.create_endpoints(config)
-            .map_err(VirtualPortError::from_backend)
-    }
+    ) -> Result<Vec<VirtualEndpoint>, VirtualPortError>;
 
-    fn create_endpoints(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String>;
-
-    fn create_endpoints_elevated(
-        &mut self,
-        config: &VirtualPortConfig,
-    ) -> Result<Vec<VirtualEndpoint>, String>;
-
+    /// Release one endpoint owned by this backend. A direct-UAC backend may defer physical removal
+    /// until the next explicit privileged action, but it must preserve ownership evidence.
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String>;
+
     fn cleanup_all(&mut self);
-    fn cleanup_orphans(&mut self) -> u32;
-    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String>;
+
+    /// Explicit orphan cleanup. Implementations must only remove resources with ownership evidence.
+    fn cleanup_orphans(&mut self) -> Result<u32, String>;
+
     fn pending_orphan_count(&self) -> u32;
-}
+
 
 #[cfg(test)]
 mod tests {
