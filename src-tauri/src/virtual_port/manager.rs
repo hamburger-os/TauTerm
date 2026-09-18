@@ -705,7 +705,7 @@ impl VirtualPortManager {
     }
 
     fn rollback_verified_endpoint(&mut self, endpoint: &VirtualEndpoint) {
-        if let Err(error) = self.destroy_endpoint_privileged_locked(endpoint) {
+        if let Err(error) = self.remove_endpoint_privileged_locked(endpoint, false) {
             log::warn!(
                 "Failed to roll back verified virtual endpoint {} ↔ {} (bus {}): {}",
                 endpoint.bridge_path,
@@ -1101,17 +1101,27 @@ impl VirtualPortManager {
         &mut self,
         endpoint: &VirtualEndpoint,
     ) -> Result<(), String> {
-        let active_authorized = self.active_endpoints.contains(endpoint);
-        let owned = self.try_load_owned_records()?;
-        let reclaim_authorized = owned
-            .iter()
-            .find(|record| record.endpoint == *endpoint)
-            .is_some_and(|record| self.record_is_reclaimable(record));
-        if !active_authorized && !reclaim_authorized {
-            return Err(format!(
-                "refusing to remove virtual endpoint {} ↔ {} (bus {}): current protected ownership no longer authorizes this identity",
-                endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
-            ));
+        self.remove_endpoint_privileged_locked(endpoint, true)
+    }
+
+    fn remove_endpoint_privileged_locked(
+        &mut self,
+        endpoint: &VirtualEndpoint,
+        require_ownership_authorization: bool,
+    ) -> Result<(), String> {
+        if require_ownership_authorization {
+            let active_authorized = self.active_endpoints.contains(endpoint);
+            let owned = self.try_load_owned_records()?;
+            let reclaim_authorized = owned
+                .iter()
+                .find(|record| record.endpoint == *endpoint)
+                .is_some_and(|record| self.record_is_reclaimable(record));
+            if !active_authorized && !reclaim_authorized {
+                return Err(format!(
+                    "refusing to remove virtual endpoint {} ↔ {} (bus {}): current protected ownership no longer authorizes this identity",
+                    endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
+                ));
+            }
         }
 
         let bus = endpoint.resource_id.to_string();
@@ -1131,16 +1141,20 @@ impl VirtualPortManager {
                 }
                 Some(identity) if identity.matches(endpoint) => {}
                 Some(identity) => {
-                    log::warn!(
-                        "Refusing to remove bus {} because its driver identity no longer matches ownership (expected {} ↔ {}, actual {:?} ↔ {:?})",
+                    let message = format!(
+                        "refusing to remove bus {} because its driver identity no longer matches the verified endpoint (expected {} ↔ {}, actual {:?} ↔ {:?})",
                         endpoint.resource_id,
                         endpoint.bridge_path,
                         endpoint.external_path,
                         identity.bridge_path,
                         identity.external_path
                     );
-                    self.forget_owned_endpoint(endpoint)?;
-                    return Ok(());
+                    log::warn!("{message}");
+                    if require_ownership_authorization {
+                        self.forget_owned_endpoint(endpoint)?;
+                        return Ok(());
+                    }
+                    return Err(message);
                 }
             }
 
@@ -1171,7 +1185,17 @@ impl VirtualPortManager {
             }
         }
 
-        self.defer_cleanup(endpoint)?;
+        if let Err(track_error) = self.defer_cleanup(endpoint) {
+            let remove_error = last_error.unwrap_or_else(|| {
+                format!(
+                    "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup",
+                    endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
+                )
+            });
+            return Err(format!(
+                "{remove_error}; additionally failed to persist deferred ownership: {track_error}"
+            ));
+        }
         let error = last_error.unwrap_or_else(|| {
             format!(
                 "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup",
