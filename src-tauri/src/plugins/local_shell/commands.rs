@@ -74,6 +74,7 @@ async fn connect_session(
                 file_transfer: None,
                 channel_factory: Some(factory),
                 io: None,
+                automation_io: None,
                 attachment: None,
                 teardown_delay: std::time::Duration::ZERO,
             },
