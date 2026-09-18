@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -46,6 +47,61 @@ impl Default for ObservationSequencer {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ObservationPublishReport {
+    pub delivered: usize,
+    pub dropped: usize,
+    pub disconnected: usize,
+}
+
+/// Typed, bounded fan-out source for one canonical observation stream.
+///
+/// Producers publish the canonical record once. Consumers such as decoders, recorders or
+/// presentation adapters subscribe independently and therefore cannot create a second hardware
+/// reader. Slow consumers lose only their own bounded queue entries.
+pub struct ObservationSource<T: Clone + Send + 'static> {
+    capacity: usize,
+    subscribers: Mutex<Vec<mpsc::SyncSender<T>>>,
+}
+
+impl<T: Clone + Send + 'static> ObservationSource<T> {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            subscribers: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn subscribe(&self) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::sync_channel(self.capacity);
+        if let Ok(mut subscribers) = self.subscribers.lock() {
+            subscribers.push(tx);
+        }
+        rx
+    }
+
+    pub fn publish(&self, value: &T) -> ObservationPublishReport {
+        let mut report = ObservationPublishReport::default();
+        if let Ok(mut subscribers) = self.subscribers.lock() {
+            subscribers.retain(|subscriber| match subscriber.try_send(value.clone()) {
+                Ok(()) => {
+                    report.delivered += 1;
+                    true
+                }
+                Err(mpsc::TrySendError::Full(_)) => {
+                    report.dropped += 1;
+                    true
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    report.disconnected += 1;
+                    false
+                }
+            });
+        }
+        report
+    }
+}
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -64,5 +120,22 @@ mod tests {
         assert!(second.generation() > first.generation());
         assert_eq!(first.stamp().sequence, 1);
         assert_eq!(first.stamp().sequence, 2);
+    }
+
+    #[test]
+    fn observation_source_is_bounded_per_subscriber() {
+        let source = ObservationSource::new(1);
+        let fast = source.subscribe();
+        let slow = source.subscribe();
+
+        let first = source.publish(&1u32);
+        assert_eq!(first.delivered, 2);
+        assert_eq!(fast.recv().unwrap(), 1);
+
+        let second = source.publish(&2u32);
+        assert_eq!(second.delivered, 1);
+        assert_eq!(second.dropped, 1);
+        assert_eq!(fast.recv().unwrap(), 2);
+        assert_eq!(slow.recv().unwrap(), 1);
     }
 }
