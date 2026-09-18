@@ -19,7 +19,6 @@ const HISTORY_PER_CHANNEL_BYTES: usize = 256 * 1024;
 const HISTORY_PER_SESSION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const RAW_OBSERVATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_REPLY_GRACE: Duration = Duration::from_secs(3);
@@ -141,11 +140,6 @@ impl HistoryStore {
     }
 }
 
-struct RttAutomationSubscriber {
-    source_channel: u32,
-    sender: mpsc::SyncSender<Vec<u8>>,
-}
-
 pub(super) struct RttShared {
     snapshot: Mutex<RttSnapshot>,
     history: Mutex<HistoryStore>,
@@ -154,7 +148,6 @@ pub(super) struct RttShared {
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
-    automation_subscribers: Mutex<Vec<RttAutomationSubscriber>>,
 }
 
 impl RttShared {
@@ -172,7 +165,6 @@ impl RttShared {
             channel_offsets: Mutex::new(BTreeMap::new()),
             automation_source_channel: Mutex::new(None),
             send_channel: Mutex::new(None),
-            automation_subscribers: Mutex::new(Vec::new()),
         }
     }
 
@@ -266,30 +258,7 @@ impl RttShared {
             snapshot.dropped_history_bytes = loss.1;
         }
         let _ = self.raw_source.publish(&chunk);
-        self.publish_automation(&chunk);
         chunk
-    }
-
-    fn publish_automation(&self, chunk: &StoredRttChunk) {
-        let mut dropped = false;
-        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.retain(|subscriber| {
-                if subscriber.source_channel != chunk.channel_index {
-                    return true;
-                }
-                match subscriber.sender.try_send(chunk.data.clone()) {
-                    Ok(()) => true,
-                    Err(mpsc::TrySendError::Full(_)) => {
-                        dropped = true;
-                        true
-                    }
-                    Err(mpsc::TrySendError::Disconnected(_)) => false,
-                }
-            });
-        }
-        if dropped {
-            self.record_automation_drop(chunk.data.len());
-        }
     }
 
     pub(super) fn record_tx(&self, bytes: usize) {
@@ -427,7 +396,10 @@ impl RttShared {
             })
     }
 
-    fn subscribe_automation(&self, _consumer: &str) -> Result<RttAutomationRx, SessionIoError> {
+    fn subscribe_automation(
+        self: &Arc<Self>,
+        _consumer: &str,
+    ) -> Result<RttAutomationRx, SessionIoError> {
         // Capture the source at subscription time. A running Auto Reply/Lua execution therefore
         // keeps an immutable Up Channel even if the user later browses another RTT channel.
         let source_channel = self
@@ -435,21 +407,16 @@ impl RttShared {
             .lock()
             .map_err(|error| SessionIoError::Send(error.to_string()))?
             .ok_or(SessionIoError::AutomationReceiveUnsupported)?;
-        let (tx, rx) = mpsc::sync_channel(AUTOMATION_SUBSCRIPTION_CAPACITY);
-        self.automation_subscribers
-            .lock()
-            .map_err(|error| SessionIoError::Send(error.to_string()))?
-            .push(RttAutomationSubscriber {
-                source_channel,
-                sender: tx,
-            });
-        Ok(RttAutomationRx { receiver: rx })
-    }
-
-    fn close_automation(&self) {
-        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.clear();
-        }
+        let weak = Arc::downgrade(self);
+        let subscription = self.raw_source.subscribe_filtered(
+            move |chunk| chunk.channel_index == source_channel,
+            move |chunk| {
+                if let Some(shared) = weak.upgrade() {
+                    shared.record_automation_drop(chunk.data.len());
+                }
+            },
+        );
+        Ok(RttAutomationRx { subscription })
     }
 }
 
@@ -538,11 +505,6 @@ impl RttRuntime {
         self.shared.history(channel_index, after_sequence)
     }
 
-    /// Subscribe to canonical RTT acquisition records without opening another RTT reader.
-    pub fn subscribe_observations(&self) -> ObservationSubscription<StoredRttChunk> {
-        self.shared.raw_source.subscribe()
-    }
-
     pub fn set_automation_source_channel(&self, channel_index: u32) -> Result<(), RttError> {
         self.shared.set_automation_source_channel(channel_index)
     }
@@ -629,7 +591,7 @@ impl RttRuntime {
                 }
             }
         }
-        self.shared.close_automation();
+        self.shared.raw_source.close();
         if !preserve_faulted {
             self.shared.set_phase(RttPhase::Idle);
         }
@@ -637,12 +599,14 @@ impl RttRuntime {
 }
 
 struct RttAutomationRx {
-    receiver: mpsc::Receiver<Vec<u8>>,
+    subscription: ObservationSubscription<StoredRttChunk>,
 }
 
 impl AutomationRx for RttAutomationRx {
     fn try_recv(&mut self) -> Result<AutomationRxEvent, mpsc::TryRecvError> {
-        self.receiver.try_recv().map(AutomationRxEvent::Data)
+        self.subscription
+            .try_recv()
+            .map(|chunk| AutomationRxEvent::Data(chunk.data))
     }
 }
 
@@ -829,12 +793,10 @@ mod tests {
     #[test]
     fn canonical_rtt_observations_are_published_once_from_acquisition() {
         let shared = RttShared::new();
-        let observations = shared.raw_source.subscribe();
+        let observations = shared.raw_source.subscribe_filtered(|_| true, |_| {});
         let chunk = shared.record_rx(3, b"trace".to_vec());
 
-        let observed = observations
-            .recv_timeout(Duration::from_millis(50))
-            .unwrap();
+        let observed = observations.try_recv().unwrap();
         assert_eq!(observed.generation, chunk.generation);
         assert_eq!(observed.sequence, chunk.sequence);
         assert_eq!(observed.channel_index, 3);
