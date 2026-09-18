@@ -10,12 +10,14 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
+const MAX_CHANNELS_PER_POLL: usize = 4;
 const MAX_READS_PER_CHANNEL_PER_POLL: usize = 4;
 
 pub struct JlinkExistingRttBackend {
     port: u16,
     streams: BTreeMap<u32, TcpStream>,
     channels: Vec<RttChannelInfo>,
+    poll_cursor: usize,
 }
 
 impl JlinkExistingRttBackend {
@@ -70,6 +72,7 @@ impl JlinkExistingRttBackend {
             port: config.jlink_port,
             streams,
             channels,
+            poll_cursor: 0,
         })
     }
 }
@@ -100,8 +103,22 @@ impl RttBackend for JlinkExistingRttBackend {
     }
 
     fn poll(&mut self, output: &mut Vec<RttReadChunk>) -> Result<(), RttError> {
+        let channel_count = self.channels.len();
+        if channel_count == 0 {
+            self.poll_cursor = 0;
+            return Ok(());
+        }
+
+        let start = self.poll_cursor % channel_count;
+        let channel_budget = channel_count.min(MAX_CHANNELS_PER_POLL);
         let mut buffer = [0u8; 8 * 1024];
-        for (channel_index, stream) in &mut self.streams {
+
+        for offset in 0..channel_budget {
+            let position = (start + offset) % channel_count;
+            let channel_index = self.channels[position].index;
+            let Some(stream) = self.streams.get_mut(&channel_index) else {
+                continue;
+            };
             for _ in 0..MAX_READS_PER_CHANNEL_PER_POLL {
                 match stream.read(&mut buffer) {
                     Ok(0) => {
@@ -112,7 +129,7 @@ impl RttBackend for JlinkExistingRttBackend {
                     }
                     Ok(count) => {
                         output.push(RttReadChunk {
-                            channel_index: *channel_index,
+                            channel_index,
                             data: buffer[..count].to_vec(),
                         });
                         if count < buffer.len() {
@@ -130,6 +147,7 @@ impl RttBackend for JlinkExistingRttBackend {
                 }
             }
         }
+        self.poll_cursor = (start + channel_budget) % channel_count;
         Ok(())
     }
 
@@ -162,13 +180,31 @@ impl RttBackend for JlinkExistingRttBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::jlink_telnet_channel_config;
+    use super::{jlink_telnet_channel_config, JlinkExistingRttBackend, MAX_CHANNELS_PER_POLL};
+    use crate::plugins::rtt::backend::RttBackend;
+    use crate::plugins::rtt::model::RttChannelInfo;
+    use std::collections::BTreeMap;
 
     #[test]
     fn channel_selection_uses_segger_telnet_config_string() {
         assert_eq!(
             jlink_telnet_channel_config(3),
-            "$$SEGGER_TELNET_ConfigStr=RTTCh;3$$"
+            "$SEGGER_TELNET_ConfigStr=RTTCh;3$"
         );
+    }
+
+    #[test]
+    fn empty_backend_poll_is_stable() {
+        let mut backend = JlinkExistingRttBackend {
+            port: 19_021,
+            streams: BTreeMap::new(),
+            channels: Vec::<RttChannelInfo>::new(),
+            poll_cursor: 99,
+        };
+        let mut output = Vec::new();
+        backend.poll(&mut output).unwrap();
+        assert_eq!(backend.poll_cursor, 0);
+        assert!(output.is_empty());
+        assert_eq!(MAX_CHANNELS_PER_POLL, 4);
     }
 }
