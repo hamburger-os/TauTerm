@@ -67,16 +67,38 @@ function chooseSendChannel(snapshot: RttSnapshot, previous: number | null): numb
 
 function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   const prev = current(sessionId);
-  const generationChanged = prev.snapshot != null && prev.snapshot.generation !== snapshot.generation;
+  const generationChanged = prev.snapshot == null || prev.snapshot.generation !== snapshot.generation;
   if (generationChanged) loadedChannels.delete(sessionId);
+
+  const selectedChannel = chooseViewChannel(snapshot, prev.selectedChannel);
+  const selectedSendChannel = chooseSendChannel(snapshot, prev.selectedSendChannel);
   publish(sessionId, {
     snapshot,
-    selectedChannel: chooseViewChannel(snapshot, prev.selectedChannel),
-    selectedSendChannel: chooseSendChannel(snapshot, prev.selectedSendChannel),
+    selectedChannel,
+    selectedSendChannel,
     viewModes: prev.viewModes,
     buffers: generationChanged ? Object.freeze({}) : prev.buffers,
     error: snapshot.last_error?.message ?? null,
   });
+
+  const sourceChanged = generationChanged || selectedChannel !== prev.selectedChannel;
+  if (sourceChanged && selectedChannel != null
+      && snapshot.channels.some(channel => channel.index === selectedChannel && channel.up)) {
+    void invoke("rtt_set_automation_source_channel", { sessionId, channelIndex: selectedChannel })
+      .catch(error => {
+        const latest = current(sessionId);
+        publish(sessionId, { ...latest, error: String(error) });
+      });
+  }
+
+  const targetChanged = generationChanged || selectedSendChannel !== prev.selectedSendChannel;
+  if (targetChanged && selectedSendChannel != null) {
+    void invoke("rtt_set_send_channel", { sessionId, channelIndex: selectedSendChannel })
+      .catch(error => {
+        const latest = current(sessionId);
+        publish(sessionId, { ...latest, error: String(error) });
+      });
+  }
 }
 
 function base64ByteLength(value: string): number {
