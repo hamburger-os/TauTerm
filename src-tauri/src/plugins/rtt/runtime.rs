@@ -143,7 +143,7 @@ pub(super) struct RttShared {
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
-    automation_subscribers: Mutex<Vec<(u32, mpsc::SyncSender<Vec<u8>>)>>,
+    automation_subscribers: Mutex<Vec<(u32, String, mpsc::SyncSender<Vec<u8>>)>>,
 }
 
 impl RttShared {
@@ -252,7 +252,7 @@ impl RttShared {
     fn publish_automation(&self, chunk: &StoredRttChunk) {
         let mut dropped = false;
         if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.retain(|(source_channel, subscriber)| {
+            subscribers.retain(|(source_channel, _consumer, subscriber)| {
                 if *source_channel != chunk.channel_index {
                     return true;
                 }
@@ -389,7 +389,7 @@ impl RttShared {
             })
     }
 
-    fn subscribe_automation(&self) -> Result<RttAutomationRx, SessionIoError> {
+    fn subscribe_automation(&self, consumer: &str) -> Result<RttAutomationRx, SessionIoError> {
         // Capture the source at subscription time. A running Auto Reply/Lua execution therefore
         // keeps an immutable Up Channel even if the user later browses another RTT channel.
         let source_channel = self
@@ -401,7 +401,7 @@ impl RttShared {
         self.automation_subscribers
             .lock()
             .map_err(|error| SessionIoError::Send(error.to_string()))?
-            .push((source_channel, tx));
+            .push((source_channel, consumer.to_string(), tx));
         Ok(RttAutomationRx { receiver: rx })
     }
 
@@ -629,8 +629,8 @@ impl AutomationIo for RttRuntime {
         Ok(data.to_vec())
     }
 
-    fn subscribe(&self) -> Result<Box<dyn AutomationRx>, SessionIoError> {
-        Ok(Box::new(self.shared.subscribe_automation()?))
+    fn subscribe(&self, consumer: &str) -> Result<Box<dyn AutomationRx>, SessionIoError> {
+        Ok(Box::new(self.shared.subscribe_automation(consumer)?))
     }
 }
 
@@ -762,7 +762,7 @@ mod tests {
             ],
         );
         shared.set_automation_source_channel(1).unwrap();
-        let mut subscription = shared.subscribe_automation().unwrap();
+        let mut subscription = shared.subscribe_automation("test-script").unwrap();
         shared.set_automation_source_channel(2).unwrap();
 
         shared.record_rx(1, b"old-source".to_vec());
