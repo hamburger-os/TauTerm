@@ -59,6 +59,12 @@ pub struct DataPlaneSubscription {
     receiver: mpsc::Receiver<DataPlaneEvent>,
 }
 
+struct RuntimeSubscriber {
+    id: u64,
+    consumer: String,
+    sender: mpsc::SyncSender<DataPlaneEvent>,
+}
+
 impl Deref for DataPlaneSubscription {
     type Target = mpsc::Receiver<DataPlaneEvent>;
 
@@ -138,12 +144,16 @@ impl DataPlaneHandle {
         }
     }
 
-    pub fn subscribe(&self) -> Result<DataPlaneSubscription, TransportError> {
+    pub fn subscribe(
+        &self,
+        consumer: impl Into<String>,
+    ) -> Result<DataPlaneSubscription, TransportError> {
         let id = next_subscription_id();
         let (event_tx, event_rx) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
         self.command_tx
             .send(RuntimeCommand::Subscribe {
                 id,
+                consumer: consumer.into(),
                 subscriber: event_tx,
             })
             .map_err(|_| runtime_closed("subscribe"))?;
@@ -533,6 +543,7 @@ enum RuntimeCommand {
     },
     Subscribe {
         id: u64,
+        consumer: String,
         subscriber: mpsc::SyncSender<DataPlaneEvent>,
     },
     Unsubscribe {
@@ -565,7 +576,7 @@ struct ExclusiveState {
 }
 
 struct RuntimeLoopState {
-    subscribers: Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
+    subscribers: Vec<RuntimeSubscriber>,
     startup_buffer: VecDeque<Vec<u8>>,
     startup_buffer_bytes: usize,
     /// Bytes physically read while an exclusive acquisition was already requested but before the
@@ -600,7 +611,7 @@ impl Drop for RuntimeStateGuard {
 
 fn apply_command_outcome(
     outcome: CommandOutcome,
-    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
+    subscribers: &mut Vec<RuntimeSubscriber>,
     closing: &mut bool,
     driver_shutdown: &mut bool,
 ) {
@@ -633,13 +644,17 @@ fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
             }
         }
     } else {
-        state.subscribers.retain(|(id, subscriber)| {
-            match subscriber.try_send(DataPlaneEvent::Data(data.clone())) {
+        state.subscribers.retain(|subscriber| {
+            match subscriber
+                .sender
+                .try_send(DataPlaneEvent::Data(data.clone()))
+            {
                 Ok(()) => true,
                 Err(mpsc::TrySendError::Full(_)) => {
                     log::warn!(
-                        "DataPlane subscriber {} exceeded bounded backlog; detaching consumer",
-                        id
+                        "DataPlane subscriber {} ({}) exceeded bounded backlog; detaching consumer",
+                        subscriber.id,
+                        subscriber.consumer
                     );
                     false
                 }
@@ -869,7 +884,11 @@ fn handle_command(
             ack.send(result);
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
-        RuntimeCommand::Subscribe { id, subscriber } => {
+        RuntimeCommand::Subscribe {
+            id,
+            consumer,
+            subscriber,
+        } => {
             // A new subscription has an empty bounded queue. Coalesce the bounded startup backlog
             // into one event so many tiny pre-subscribe reads cannot exhaust queue slots before the
             // consumer thread starts. The startup byte limit remains the memory bound.
@@ -886,14 +905,18 @@ fn handle_command(
             let alive =
                 startup.is_none_or(|data| subscriber.try_send(DataPlaneEvent::Data(data)).is_ok());
             if alive {
-                state.subscribers.push((id, subscriber));
+                state.subscribers.push(RuntimeSubscriber {
+                    id,
+                    consumer,
+                    sender: subscriber,
+                });
             }
             CommandOutcome::Continue
         }
         RuntimeCommand::Unsubscribe { id } => {
             state
                 .subscribers
-                .retain(|(subscriber_id, _)| *subscriber_id != id);
+                .retain(|subscriber| subscriber.id != id);
             CommandOutcome::Continue
         }
         RuntimeCommand::AcquireExclusive {
@@ -1028,17 +1051,18 @@ fn handle_command(
     }
 }
 
-fn broadcast_close(
-    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
-    info: TransportCloseInfo,
-) {
-    subscribers.retain(|(id, subscriber)| {
-        match subscriber.try_send(DataPlaneEvent::Closed(info.clone())) {
+fn broadcast_close(subscribers: &mut Vec<RuntimeSubscriber>, info: TransportCloseInfo) {
+    subscribers.retain(|subscriber| {
+        match subscriber
+            .sender
+            .try_send(DataPlaneEvent::Closed(info.clone()))
+        {
             Ok(()) => true,
             Err(mpsc::TrySendError::Full(_)) => {
                 log::warn!(
-                    "DataPlane subscriber {} backlog was full while closing; detaching consumer",
-                    id
+                    "DataPlane subscriber {} ({}) backlog was full while closing; detaching consumer",
+                    subscriber.id,
+                    subscriber.consumer
                 );
                 false
             }
@@ -1263,7 +1287,7 @@ mod tests {
         started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("actor should enter the physical read");
-        let subscription = runtime.handle.subscribe().unwrap();
+        let subscription = runtime.handle.subscribe("test").unwrap();
 
         let handle = runtime.handle.clone();
         let (lease_tx, lease_rx) = mpsc::channel();
@@ -1290,7 +1314,11 @@ mod tests {
     fn slow_subscriber_is_detached_instead_of_blocking_or_growing_unbounded() {
         let (subscriber_tx, subscriber_rx) = mpsc::sync_channel(1);
         let mut state = RuntimeLoopState {
-            subscribers: vec![(42, subscriber_tx)],
+            subscribers: vec![RuntimeSubscriber {
+                id: 42,
+                consumer: "slow-test".into(),
+                sender: subscriber_tx,
+            }],
             startup_buffer: VecDeque::new(),
             startup_buffer_bytes: 0,
             handoff_buffer: VecDeque::new(),
@@ -1529,7 +1557,7 @@ mod tests {
             writes,
             fail_write: true,
         }));
-        let subscription = runtime.handle.subscribe().unwrap();
+        let subscription = runtime.handle.subscribe("test").unwrap();
         let handle = runtime.handle.clone();
         let writer = std::thread::spawn(move || handle.write(b"fail"));
         gate_tx.send(()).unwrap();
@@ -1568,7 +1596,7 @@ mod tests {
             writes,
         }));
         std::thread::sleep(Duration::from_millis(10));
-        let subscription = runtime.handle.subscribe().unwrap();
+        let subscription = runtime.handle.subscribe("test").unwrap();
         match subscription.recv_timeout(Duration::from_secs(1)).unwrap() {
             DataPlaneEvent::Data(data) => assert_eq!(data, vec![0, 1, 2]),
             DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),
@@ -1584,7 +1612,7 @@ mod tests {
             reads: VecDeque::new(),
             writes,
         }));
-        let subscription = runtime.handle.subscribe().unwrap();
+        let subscription = runtime.handle.subscribe("test").unwrap();
         drop(subscription);
         runtime.handle.write(b"wake").unwrap();
         runtime.join();
