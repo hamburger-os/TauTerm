@@ -8,7 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::os::windows::ffi::OsStrExt;
+use std::ffi::OsString;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -20,8 +21,13 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
     SetNamedPipeHandleState,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Threading::{GetProcessId, TerminateProcess, WaitForSingleObject};
-use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+use windows_sys::Win32::UI::Shell::{
+    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS,
+    SHELLEXECUTEINFOW,
+};
+use windows_sys::core::{GUID, PWSTR};
 
 use super::backend::{VirtualEndpoint, VirtualPortConfig};
 use super::manager::VirtualPortManager;
@@ -326,18 +332,55 @@ fn validate_endpoint(endpoint: &VirtualEndpoint) -> Result<(), String> {
     Ok(())
 }
 
+fn known_folder(id: &GUID) -> Option<PathBuf> {
+    unsafe {
+        let mut raw: PWSTR = std::ptr::null_mut();
+        let result = SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut raw);
+        if result != 0 || raw.is_null() {
+            if !raw.is_null() {
+                CoTaskMemFree(raw.cast());
+            }
+            return None;
+        }
+
+        let mut len = 0usize;
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        let path = PathBuf::from(OsString::from_wide(std::slice::from_raw_parts(raw, len)));
+        CoTaskMemFree(raw.cast());
+        Some(path)
+    }
+}
+
 fn validate_resource_dir(path: &Path) -> Result<PathBuf, String> {
     let requested = normalize_path(path);
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("failed to resolve elevated TauTerm executable: {error}"))?;
+    let executable_dir = executable
+        .parent()
+        .map(normalize_path)
+        .ok_or_else(|| "elevated TauTerm executable has no parent directory".to_string())?;
+
     let mut allowed = Vec::new();
 
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(parent) = executable.parent() {
-            allowed.push(normalize_path(parent));
+    #[cfg(not(debug_assertions))]
+    {
+        let program_files = known_folder(&FOLDERID_ProgramFiles)
+            .map(|path| normalize_path(&path))
+            .ok_or_else(|| "failed to resolve the Windows Program Files known folder".to_string())?;
+        if !executable_dir.starts_with(&program_files) {
+            return Err(format!(
+                "direct-UAC virtual-port management is disabled outside Program Files: {}",
+                executable_dir.display()
+            ));
         }
+        allowed.push(executable_dir);
     }
 
     #[cfg(debug_assertions)]
     {
+        allowed.push(executable_dir);
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         if let Some(root) = manifest.parent() {
             allowed.push(normalize_path(&root.join("resources").join("com0com")));
