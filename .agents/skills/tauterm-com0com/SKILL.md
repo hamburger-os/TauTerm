@@ -17,7 +17,7 @@ metadata:
 
 修改虚拟串口之前先确认以下规则全部成立：
 
-1. **Windows 生产路径优先通过 `TauTermService` 执行 com0com 特权操作。** 服务以 LocalSystem 运行，App 通过窄类型命名管道协议请求固定操作，绝不透传任意 setupc 参数。Release 构建服务不可用时进入 `direct-uac-on-demand`；Debug 开发构建直接使用该模式。direct-UAC 通过当前 TauTerm 可执行文件的窄类型 one-shot helper 执行，GUI/helper 双向校验 pipe PID；普通 GUI 永不执行 `setupc.exe`。普通启动不执行 `setupc list`/orphan cleanup，只有用户明确创建、安装或手动清理时才进入按需 UAC。
+1. **Windows 生产路径优先通过 `TauTermService` 执行 com0com 特权操作。** 服务以 LocalSystem 运行，App 通过窄类型命名管道协议请求固定操作，绝不透传任意 setupc 参数。Release 构建服务不可用时进入 `direct-uac-on-demand`，但 release helper 只接受 Program Files 中受 ACL 保护的安装目录；portable/user-writable release 必须 fail closed。Debug 开发构建直接使用该模式。direct-UAC 通过当前 TauTerm 可执行文件的窄类型 one-shot helper 执行，GUI/helper 双向校验 pipe PID；普通 GUI 永不执行 `setupc.exe`。普通启动不执行 `setupc list`/orphan cleanup，只有用户明确创建、安装或手动清理时才进入按需 UAC。
 2. **用户只看到 external endpoint。** `VirtualEndpoint.bridge_path` 是 TauTerm 内部桥接资源，`external_path` 才是用户和第三方串口工具应该打开的端口。
 3. **内部 bridge 必须从普通 Serial 端点发现中隐藏。** Windows 直连后端和 ServiceBackend 客户端都通过 `virtual_port::backend` 的内部端点注册表维护可见性。
 4. **前端契约只暴露 `external_path`。** 不把 `bridge_path`、CNCA/CNCB 或 bus 编号泄漏到 UI。状态栏示例：`VPort: COM21`。
@@ -378,7 +378,7 @@ NSIS 规则：
 | 父 Serial Session 断开 | 只清理该 Session 的端点 |
 | App 崩溃 | 服务检测管道断开并清理该 client |
 | Service 崩溃/掉电 | 重启依据 protected ProgramData endpoint ownership 恢复 |
-| Service 不可用、普通 GUI 启动 | 进入 direct-uac-on-demand；GUI 不执行 setupc、不弹 UAC、不产生 740；明确创建时只出现 TauTerm helper 的 UAC |
+| Service 不可用、普通 GUI 启动 | 进入 direct-uac-on-demand；GUI 不执行 setupc、不弹 UAC、不产生 740；Program Files 安装版的明确创建动作只出现 TauTerm helper 的 UAC；portable/user-writable release 在 helper 信任边界 fail closed |
 | CNCA/CNCB bus 已占用 | 无 com0com 交互确认框；特权事务重新选择/验证真实 bus，不按请求 bus 错记 ownership |
 | 部分创建失败 | 已创建的新资源回滚，不产生未知资源或猜测 ownership |
 | 手动 cleanup | 不删除 active、不删除第三方 bus |
