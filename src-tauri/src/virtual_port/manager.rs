@@ -681,14 +681,17 @@ impl VirtualPortManager {
         match self.mode {
             ManagementMode::DirectUac => {
                 let cleanup = self.orphan_endpoints();
-                let endpoints = super::elevated::ensure_endpoints(
+                let result = super::elevated::ensure_endpoints(
                     &self.resource_dir,
                     config.count.clamp(1, 4),
                     cleanup,
                 )
                 .map_err(VirtualPortError::from_backend)?;
-                self.adopt_active_endpoints(&endpoints);
-                Ok(endpoints)
+                for endpoint in &result.cleaned_endpoints {
+                    self.forget_owned_endpoint(endpoint);
+                }
+                self.adopt_active_endpoints(&result.endpoints);
+                Ok(result.endpoints)
             }
             ManagementMode::Privileged => {
                 if !self.detect_driver() {
@@ -934,16 +937,16 @@ impl VirtualPortManager {
         let driver = self.query_driver_state();
         if driver.queried && !driver.buses.contains(&endpoint.resource_id) {
             self.forget_owned_endpoint(endpoint);
+            Ok(())
         } else {
             self.defer_cleanup(endpoint);
-            log::warn!(
+            let error = format!(
                 "Virtual port pair {} ↔ {} (bus {}) requires deferred cleanup",
-                endpoint.bridge_path,
-                endpoint.external_path,
-                endpoint.resource_id
+                endpoint.bridge_path, endpoint.external_path, endpoint.resource_id
             );
+            log::warn!("{error}");
+            Err(error)
         }
-        Ok(())
     }
 
     pub fn cleanup_all(&mut self) {
@@ -981,11 +984,12 @@ impl VirtualPortManager {
         }
 
         if self.mode == ManagementMode::DirectUac {
-            let cleaned = super::elevated::cleanup_endpoints(&self.resource_dir, orphans.clone())?;
-            for endpoint in &orphans {
+            let cleaned =
+                super::elevated::cleanup_endpoints(&self.resource_dir, orphans)?;
+            for endpoint in &cleaned {
                 self.forget_owned_endpoint(endpoint);
             }
-            return Ok(cleaned);
+            return Ok(cleaned.len() as u32);
         }
 
         self.reconcile_orphan_state();
