@@ -13,6 +13,7 @@ use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptor
 use windows_sys::Win32::Security::{
     SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
 };
+use windows_sys::Win32::System::Memory::LocalFree;
 
 pub fn ownership_state_dir() -> PathBuf {
     std::env::var_os("PROGRAMDATA")
@@ -92,6 +93,9 @@ fn apply_readonly_user_acl(path: &Path) -> Result<(), String> {
             descriptor,
         )
     };
+    unsafe {
+        LocalFree(descriptor);
+    }
     if applied == 0 {
         return Err(format!(
             "failed to protect virtual-port ownership directory (Win32 {})",
