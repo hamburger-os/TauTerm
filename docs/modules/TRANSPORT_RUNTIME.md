@@ -47,7 +47,7 @@ Transport 不使用一个万能接口硬塞所有能力。基础语义分为：
 
 消费者（终端、脚本、日志、虚拟端口、协议解析器）通过订阅/运行时分发协作，禁止 `Mutex<Vec<callback>>` 回调树。
 
-每个 DataPlane subscription 都使用**有界 backlog**。actor 发布数据时不能因为某个消费者变慢而阻塞底层 I/O，也不能为了保住消费者而让内存无界增长；当订阅队列满时，该消费者会被明确摘除。需要透明字节完整性的消费者（例如虚拟串口桥接）必须把 subscription 断开视为自身失败并向上层暴露，不能静默丢 chunk 后继续伪装正常。关闭广播同样使用非阻塞发送：队列已满的消费者直接摘除，不能让 transport actor 在 shutdown 路径上死锁。
+每个 DataPlane subscription 都使用**有界 backlog**，并在创建时携带稳定的 consumer identity 供诊断日志定位具体消费者。actor 发布数据时不能因为某个消费者变慢而阻塞底层 I/O，也不能为了保住消费者而让内存无界增长；当订阅队列满时，该消费者会被明确摘除，日志同时记录 subscription id 与 consumer identity。需要透明字节完整性的消费者必须让自己的下游阻塞与 DataPlane pump 隔离；如果 subscription 本身仍被摘除，则把断开视为自身失败并向上层暴露，不能静默丢 chunk 后继续伪装正常。关闭广播同样使用非阻塞发送：队列已满的消费者直接摘除，不能让 transport actor 在 shutdown 路径上死锁。
 
 普通共享写入和终端 resize 使用**确认式 ACK**：调用结果只在 transport actor 实际执行底层驱动操作后完成，因此 TX 日志、终端 TX 展示和错误返回不会把“已排队”误当成“已经写入设备”。Transport 同时提供同步与异步等待入口，但两者用途严格区分：同步入口只允许 worker / Rust 内部阻塞路径使用；WebView/Tauri 高频路径必须通过 `src-tauri/src/ipc_transport.rs` 的 async command 和 SessionIo async API 等待 ACK，绝不能让同步 Tauri command 在应用主线程上执行 `recv()`。
 
