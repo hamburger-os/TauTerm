@@ -495,7 +495,7 @@ impl VirtualPortManager {
 
     fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
         self.active_endpoints
-            .retain(|existing| existing.resource_id != endpoint.resource_id);
+            .retain(|existing| existing != endpoint);
 
         if self.mode == ManagementMode::DirectUac {
             // The direct GUI has read-only access to machine ownership state. The elevated helper
@@ -507,10 +507,10 @@ impl VirtualPortManager {
         let mut owned = self.try_load_owned_records()?;
         let removed_paths = owned
             .iter()
-            .filter(|existing| existing.endpoint.resource_id == endpoint.resource_id)
+            .filter(|existing| existing.endpoint == *endpoint)
             .map(|existing| existing.endpoint.bridge_path.clone())
             .collect::<Vec<_>>();
-        owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
+        owned.retain(|existing| existing.endpoint != *endpoint);
         self.persist_owned_records(&owned)?;
 
         if removed_paths.is_empty() {
@@ -524,9 +524,21 @@ impl VirtualPortManager {
     }
 
     fn defer_cleanup(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
-        self.active_endpoints
-            .retain(|existing| existing.resource_id != endpoint.resource_id);
+        self.active_endpoints.retain(|existing| existing != endpoint);
         if self.mode == ManagementMode::Privileged {
+            let owned = self.try_load_owned_records()?;
+            if owned.iter().any(|record| record.endpoint == *endpoint) {
+                return Ok(());
+            }
+            if owned
+                .iter()
+                .any(|record| record.endpoint.resource_id == endpoint.resource_id)
+            {
+                return Err(format!(
+                    "refusing to overwrite virtual-port ownership for reused bus {}",
+                    endpoint.resource_id
+                ));
+            }
             self.remember_owned_endpoints(std::slice::from_ref(endpoint))?;
         }
         Ok(())
@@ -536,7 +548,7 @@ impl VirtualPortManager {
         if self
             .active_endpoints
             .iter()
-            .any(|active| active.resource_id == record.endpoint.resource_id)
+            .any(|active| *active == record.endpoint)
         {
             return false;
         }
