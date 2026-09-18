@@ -33,8 +33,9 @@ mod transport;
 pub mod virtual_port;
 
 #[cfg(windows)]
-pub fn maybe_run_elevated_shell_helper() -> bool {
-    plugins::catalog::maybe_run_elevated_shell_helper()
+pub fn maybe_run_elevated_helper() -> bool {
+    virtual_port::elevated::maybe_run_helper()
+        || plugins::catalog::maybe_run_elevated_shell_helper()
 }
 
 use kernel::config_store::ConfigStore;
@@ -297,28 +298,6 @@ pub fn run() {
                                 resource_dir
                             }
                         };
-                        let state_dir = match app.path().app_data_dir() {
-                            Ok(path) => path,
-                            Err(error) => {
-                                let fallback = std::env::temp_dir()
-                                    .join("TauTerm")
-                                    .join("virtual-port-state");
-                                log::warn!(
-                                    "应用数据目录不可用，虚拟串口状态使用临时隔离目录: {} ({:?})",
-                                    error,
-                                    fallback
-                                );
-                                fallback
-                            }
-                        };
-                        if let Err(error) = std::fs::create_dir_all(&state_dir) {
-                            log::warn!(
-                                "无法创建虚拟串口状态目录 {:?}: {}",
-                                state_dir,
-                                error
-                            );
-                        }
-
                         #[cfg(debug_assertions)]
                         {
                             // Development binaries are not accepted by the installed privileged
@@ -327,7 +306,8 @@ pub fn run() {
                             log::info!(
                                 "虚拟串口管理后端: development-direct-uac（debug build）"
                             );
-                            *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                            let state_dir = virtual_port::elevated::direct_state_dir();
+                            *vpm = Box::new(VirtualPortManager::new_direct_uac(vpm_dir, state_dir));
                         }
 
                         #[cfg(not(debug_assertions))]
@@ -338,9 +318,14 @@ pub fn run() {
                                 Ok(()) => {
                                     log::info!("虚拟串口管理后端: privileged-service");
                                     *vpm = Box::new(service_backend);
-                                    let orphan_count = vpm.cleanup_orphans();
-                                    if orphan_count > 0 {
-                                        log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                                    match vpm.cleanup_orphans() {
+                                        Ok(orphan_count) if orphan_count > 0 => {
+                                            log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                                        }
+                                        Ok(_) => {}
+                                        Err(error) => {
+                                            log::warn!("虚拟串口启动恢复失败: {error}");
+                                        }
                                     }
                                 }
                                 Err(error) => {
@@ -350,7 +335,8 @@ pub fn run() {
                                     );
                                     // Release/portable fallback remains explicit-action UAC only:
                                     // ordinary startup never enumerates or cleans setupc resources.
-                                    *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                                    let state_dir = virtual_port::elevated::direct_state_dir();
+                                    *vpm = Box::new(VirtualPortManager::new_direct_uac(vpm_dir, state_dir));
                                 }
                             }
                         }
@@ -384,9 +370,14 @@ pub fn run() {
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {
                         *vpm = Box::new(PtyBackend::new());
-                        let orphan_count = vpm.cleanup_orphans();
-                        if orphan_count > 0 {
-                            log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
+                        match vpm.cleanup_orphans() {
+                            Ok(orphan_count) if orphan_count > 0 => {
+                                log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                log::warn!("虚拟端点启动清理失败: {error}");
+                            }
                         }
                         if vpm.are_files_present() {
                             log::info!("原生 PTY 后端已就绪，虚拟串口功能可用");
