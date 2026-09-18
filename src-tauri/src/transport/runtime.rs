@@ -980,17 +980,20 @@ fn handle_command(
                 state.startup_buffer_bytes = 0;
                 Some(data)
             };
-            let alive = startup.is_none_or(|data| match subscriber.try_send(DataPlaneEvent::Data(data)) {
-                Ok(()) => true,
-                Err(mpsc::TrySendError::Full(_)) => {
-                    set_subscription_end(
-                        &disconnect_reason,
-                        DataPlaneSubscriptionEnd::BacklogExceeded { capacity_messages },
-                    );
-                    false
-                }
-                Err(mpsc::TrySendError::Disconnected(_)) => false,
-            });
+            let alive =
+                startup.is_none_or(
+                    |data| match subscriber.try_send(DataPlaneEvent::Data(data)) {
+                        Ok(()) => true,
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            set_subscription_end(
+                                &disconnect_reason,
+                                DataPlaneSubscriptionEnd::BacklogExceeded { capacity_messages },
+                            );
+                            false
+                        }
+                        Err(mpsc::TrySendError::Disconnected(_)) => false,
+                    },
+                );
             if alive {
                 state.subscribers.push(RuntimeSubscriber {
                     id,
