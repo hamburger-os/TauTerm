@@ -175,6 +175,26 @@ const networkPlugin = source("src/plugins/network/index.tsx");
 assert.ok(networkPlugin.includes("sendTarget: NetworkSendTarget"));
 assert.ok(networkPlugin.includes("sendTargetVisible: params => isNetworkSendTargetVisible(params)"));
 
+const rttPlugin = source("src/plugins/rtt/index.tsx");
+const rttTarget = source("src/plugins/rtt/RttSendTarget.tsx");
+const rttRuntime = source("src/plugins/rtt/runtime-store.ts");
+assert.ok(rttPlugin.includes("sendTarget: RttSendTarget"));
+assert.ok(rttPlugin.includes("sendData: sendRttData"));
+assert.ok(rttPlugin.includes("sendBarEnabled: true"));
+assert.ok(rttTarget.includes("selectRttSendChannel"));
+assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
+assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
+assert.ok(
+  rttRuntime.includes("selectedChannel") && rttRuntime.includes("selectedSendChannel"),
+  "RTT observation source and SendBar target must remain independent",
+);
+
+const sessionContext = source("src/context/SessionContext.tsx");
+const sendTargetCatch = sessionContext.match(
+  /const sendToTarget = useCallback\([\s\S]*?catch \(error\) \{([\s\S]*?)\n    \}/,
+)?.[1] ?? "";
+assert.ok(sendTargetCatch.includes("throw error"), "SendBar write failures must propagate to execution owners");
+
 const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeAutoReplyConfig"));
