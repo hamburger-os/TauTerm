@@ -37,6 +37,8 @@ pub(crate) enum DebugTargetRuntimeError {
     InFlightTimeout,
     #[error("调试目标服务 {service} 已被占用")]
     ServiceBusy { service: String },
+    #[error("调试探针 {probe} 的目标连接仍在建立中")]
+    TargetOpening { probe: String },
     #[error("调试探针 {probe} 已连接到不同目标配置")]
     TargetConfigConflict { probe: String },
 }
@@ -173,7 +175,10 @@ pub(crate) struct DebugTargetRuntime {
 }
 
 impl DebugTargetRuntime {
-    fn open(config: ResolvedDebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
+    fn open(
+        config: ResolvedDebugProbeConfig,
+        worker_exited: Arc<AtomicBool>,
+    ) -> Result<Arc<Self>, DebugTargetRuntimeError> {
         let connection_config = config.connection_config();
         let scheduler = Arc::new(TargetScheduler::new());
         let worker_scheduler = Arc::clone(&scheduler);
@@ -185,6 +190,7 @@ impl DebugTargetRuntime {
                     Ok(probe) => probe,
                     Err(error) => {
                         let _ = startup_tx.send(Err(error));
+                        worker_exited.store(true, Ordering::Release);
                         return;
                     }
                 };
@@ -193,6 +199,7 @@ impl DebugTargetRuntime {
                     target: probe.target().to_string(),
                 };
                 if startup_tx.send(Ok(descriptor)).is_err() {
+                    worker_exited.store(true, Ordering::Release);
                     return;
                 }
 
@@ -210,6 +217,7 @@ impl DebugTargetRuntime {
                         }
                     }
                 }
+                worker_exited.store(true, Ordering::Release);
             })
             .map_err(|error| DebugTargetRuntimeError::WorkerStart(error.to_string()))?;
 
@@ -349,7 +357,18 @@ impl Drop for DebugServiceLease {
     }
 }
 
-type TargetSlot = Arc<Mutex<Weak<DebugTargetRuntime>>>;
+struct OpeningTarget {
+    connection_config: DebugProbeConfig,
+    worker_exited: Arc<AtomicBool>,
+}
+
+enum TargetSlotState {
+    Vacant,
+    Opening(OpeningTarget),
+    Active(Weak<DebugTargetRuntime>),
+}
+
+type TargetSlot = Arc<Mutex<TargetSlotState>>;
 
 /// Process-local registry for physical debug probes.
 ///
@@ -382,26 +401,66 @@ impl EmbeddedDebugManager {
                 .lock()
                 .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
             targets
-                .entry(selector)
-                .or_insert_with(|| Arc::new(Mutex::new(Weak::new())))
+                .entry(selector.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(TargetSlotState::Vacant)))
                 .clone()
         };
 
         let mut runtime_slot = slot
             .lock()
             .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
-        if let Some(runtime) = runtime_slot.upgrade() {
-            if runtime.connection_config == resolved.connection_config() {
-                return Ok(runtime);
+        loop {
+            match &*runtime_slot {
+                TargetSlotState::Active(runtime) => {
+                    if let Some(runtime) = runtime.upgrade() {
+                        if runtime.connection_config == resolved.connection_config() {
+                            return Ok(runtime);
+                        }
+                        return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                            probe: runtime.descriptor.probe_label.clone(),
+                        });
+                    }
+                    *runtime_slot = TargetSlotState::Vacant;
+                }
+                TargetSlotState::Opening(opening) => {
+                    if opening.worker_exited.load(Ordering::Acquire) {
+                        *runtime_slot = TargetSlotState::Vacant;
+                        continue;
+                    }
+                    if opening.connection_config != resolved.connection_config() {
+                        return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                            probe: selector.clone(),
+                        });
+                    }
+                    return Err(DebugTargetRuntimeError::TargetOpening {
+                        probe: selector.clone(),
+                    });
+                }
+                TargetSlotState::Vacant => break,
             }
-            return Err(DebugTargetRuntimeError::TargetConfigConflict {
-                probe: runtime.descriptor.probe_label.clone(),
-            });
         }
 
-        let runtime = DebugTargetRuntime::open(resolved)?;
-        *runtime_slot = Arc::downgrade(&runtime);
-        Ok(runtime)
+        let connection_config = resolved.connection_config();
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        *runtime_slot = TargetSlotState::Opening(OpeningTarget {
+            connection_config,
+            worker_exited: Arc::clone(&worker_exited),
+        });
+
+        match DebugTargetRuntime::open(resolved, Arc::clone(&worker_exited)) {
+            Ok(runtime) => {
+                *runtime_slot = TargetSlotState::Active(Arc::downgrade(&runtime));
+                Ok(runtime)
+            }
+            Err(error) => {
+                let late_open_still_running = matches!(error, DebugTargetRuntimeError::StartupTimeout)
+                    && !worker_exited.load(Ordering::Acquire);
+                if !late_open_still_running {
+                    *runtime_slot = TargetSlotState::Vacant;
+                }
+                Err(error)
+            }
+        }
     }
 }
 
