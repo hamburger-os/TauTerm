@@ -212,6 +212,12 @@ assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
+assert.ok(
+  sendBar.includes("<SendTarget sessionId={containerId} disabled={executionMode !== null} />"),
+  "plugin target controls must lock with the current SendBar execution snapshot",
+);
+assert.ok(networkTarget.includes("disabled={disabled}"));
+assert.ok(rttTarget.includes("disabled={disabled}"));
 
 assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
 assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");
