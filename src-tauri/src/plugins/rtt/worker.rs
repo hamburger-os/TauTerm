@@ -3,7 +3,9 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
-use crate::kernel::log_engine::{try_send_session_log, DataDirection, DataLogEntry, LogEntry};
+use crate::kernel::log_engine::{
+    session_log_is_active, try_send_session_log, DataDirection, DataLogEntry, LogEntry,
+};
 use crate::AppState;
 use chrono::{Local, TimeZone};
 use serde_json::json;
@@ -17,6 +19,7 @@ const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
 const PRESENTATION_QUEUE_MAX_BYTES: usize = 256 * 1024;
 const MAX_COMMANDS_PER_TICK: usize = 8;
+const MAX_PENDING_WRITES: usize = 32;
 const WRITE_QUANTUM_BYTES: usize = 4 * 1024;
 
 pub(super) enum WorkerCommand {
@@ -103,13 +106,22 @@ pub(super) fn run(
                     channel_index,
                     data,
                     reply,
-                }) => writes.push_back(PendingWrite {
-                    channel_index,
-                    data,
-                    offset: 0,
-                    deadline: Instant::now() + config.write_timeout,
-                    reply,
-                }),
+                }) => {
+                    if writes.len() >= MAX_PENDING_WRITES {
+                        let _ = reply.send(Err(RttError::new(
+                            RttErrorCode::RttWriteTimeout,
+                            "RTT 写入队列繁忙，请降低发送速率",
+                        )));
+                    } else {
+                        writes.push_back(PendingWrite {
+                            channel_index,
+                            data,
+                            offset: 0,
+                            deadline: Instant::now() + config.write_timeout,
+                            reply,
+                        });
+                    }
+                }
                 Ok(WorkerCommand::RefreshChannels { reply }) => {
                     let result = backend.refresh_channels();
                     if let Ok(channels) = result.as_ref() {
@@ -290,6 +302,9 @@ fn log_rtt_data(
     payload: &[u8],
     timestamp_ms: u64,
 ) {
+    if !session_log_is_active(session_id) {
+        return;
+    }
     let timestamp = Local
         .timestamp_millis_opt(timestamp_ms as i64)
         .single()
