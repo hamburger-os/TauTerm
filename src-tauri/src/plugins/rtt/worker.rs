@@ -467,9 +467,7 @@ mod tests {
         }]);
 
         while !writes.is_empty() {
-            assert!(
-                service_one_write(&mut backend, &shared, &mut writes, None, "test").is_none()
-            );
+            assert!(service_one_write(&mut backend, &shared, &mut writes, None, "test").is_none());
         }
 
         assert_eq!(reply_rx.recv().unwrap().unwrap(), payload.len());
