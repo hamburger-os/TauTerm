@@ -287,6 +287,33 @@ class PluginRegistry {
     return this.getAll().filter((plugin) => plugin.manifest.capabilities.includes(capability));
   }
 
+  async resolveSessionDefaultName(
+    pluginId: string,
+    params: Record<string, unknown>,
+    endpoint: string,
+  ): Promise<string> {
+    const plugin = this.get(pluginId);
+    if (!plugin) {
+      const normalizedEndpoint = endpoint.trim();
+      return normalizedEndpoint
+        ? `${pluginId.toUpperCase()} @ ${normalizedEndpoint}`
+        : pluginId.toUpperCase();
+    }
+
+    const normalizedParams = plugin.normalizeConnectionParams?.(params) ?? params;
+    const resolvedName = plugin.resolveDefaultSessionName
+      ? (await plugin.resolveDefaultSessionName(normalizedParams, endpoint)).trim()
+      : "";
+    const presentationName = plugin.sessionPresentation
+      ?.defaultName?.(normalizedParams, endpoint)
+      ?.trim() ?? "";
+    const normalizedEndpoint = endpoint.trim();
+    const fallbackName = normalizedEndpoint
+      ? `${plugin.manifest.name} @ ${normalizedEndpoint}`
+      : plugin.manifest.name;
+    return resolvedName || presentationName || fallbackName;
+  }
+
   getDefaultSessionOptions(pluginId: string): SessionConnectOptions {
     const plugin = this.get(pluginId);
     return plugin?.defaultSessionOptions?.() ?? {
