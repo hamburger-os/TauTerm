@@ -16,6 +16,8 @@ pub mod manager;
 #[cfg(not(target_os = "windows"))]
 pub mod pty;
 #[cfg(target_os = "windows")]
+pub mod elevated;
+#[cfg(target_os = "windows")]
 pub mod service_backend;
 #[cfg(target_os = "windows")]
 pub mod windows_driver;
