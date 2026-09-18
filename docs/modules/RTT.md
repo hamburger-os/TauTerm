@@ -100,7 +100,7 @@ RTT 数据离开 backend 的当刻就形成 canonical frame，包含：
 
 sequence/offset 不在 WebView presentation 阶段补造，因此不同 Channel 的原始到达顺序和每 Channel 偏移不会因批处理而丢失。
 
-worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。每次循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
+worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native backend 的一次 target-worker Up poll 同样限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免 RTT 在共享 probe scheduler 上形成一个无界长操作。每次循环仍优先保持持续 Up polling，从而降低日志/Trace 类高吞吐流被发送操作饿死的风险。
 
 ## 历史、日志与丢失语义
 
