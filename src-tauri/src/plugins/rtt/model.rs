@@ -25,7 +25,7 @@ pub struct RttBackendDescriptor {
     pub display_name: String,
     pub target: Option<String>,
     pub probe: Option<String>,
-    pub control_block_address: Option<u64>,
+    pub control_block_address: Option<String>,
     pub capabilities: RttBackendCapabilities,
 }
 
