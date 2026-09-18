@@ -8,7 +8,7 @@ TauTerm 的插件模型是 **显式编译期内建插件架构**，不是运行�
 
 ## 当前方案
 
-后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。`PluginRuntime` 是插件身份、canonical manifest、通用 `ProtocolAdapter` 与类型化 contribution 的唯一后端运行时目录；`plugins/catalog.rs` 是唯一了解完整内建插件集合的后端 composition 模块，负责把 manifest、Adapter、连接/配置/断开 contribution、插件专属 IPC wiring 以及需要宿主资源的插件初始化组装成 `PluginRuntime`。`AppState` 与应用 bootstrap 不再为 Serial、SSH、Telnet 等维护平行 adapter 字段、逐插件初始化分支或插件命令清单。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。
+后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。`PluginRuntime` 是插件身份、canonical manifest、通用 `ProtocolAdapter` 与类型化 contribution 的唯一后端运行时目录；`plugins/catalog.rs` 是唯一了解完整内建插件集合的后端 composition 模块，负责把 manifest、Adapter、连接/配置/断开 contribution、插件专属 IPC wiring 以及需要宿主资源的插件初始化组装成 `PluginRuntime`。`AppState` 与应用 bootstrap 不再为 Serial、SSH、Telnet 等维护平行 adapter 字段、逐插件初始化分支或插件命令清单。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把普通 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。Container Session 可以额外提供协议无关 `AutomationIo` capability，使多路协议参与 SendBar/Lua 而不伪造一个不存在的主 DataPlane。
 
 Transport、Protocol、Session Runtime 三层职责固定：Transport 只拥有串口/TCP/UDP/PTY 等物理或系统资源；Protocol 解释 Telnet、Modbus、SSH 等协议语义；Session Runtime 负责生命周期、事件、日志、脚本、统计、子连接和取消。协议不得复制公共 Session 生命周期，Session Runtime 也不得解析协议字段。
 
@@ -54,7 +54,7 @@ stateDiagram-v2
 - 插件私有工作台、协议视图和工具组件归 `src/plugins/<id>/` 所有；`src/components/` 只保留真正跨插件共享的 UI 组件。
 - 全局动作行为只由 action registry owner 注册一次；Toolbar、命令面板和键盘绑定不得复制行为分发表，也不得使用脱离 `ShortcutActionId` 的第二套 action 名称。
 - 运行时对象不能被持久化为 Session 配置；插件需要从编辑态参数剥离凭据或其它瞬态字段时，通过自己的持久化投影 contribution 完成，公共 Session 层不解释字段名。
-- 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
+- 所有单流 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭。多路 Container Session 若需要公共 SendBar/脚本，只暴露最小 `AutomationIo/AutomationRx` capability；它不能为了接入公共 UI 把某个子流伪装成根 DataPlane。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
 - PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。文件传输 provider 的具体执行策略只存在于 `transfer/`；Kernel 仅传递不透明传输协议 ID，不维护 X/Y/ZModem、SFTP 等 provider 名称或执行模式。
 - 异常断开必须保留足够信息供 UI 呈现，同时后端负责确定性资源清理。
