@@ -6,7 +6,10 @@ use crate::plugins::rtt::model::{
     RttProbeInfo, RttReadChunk,
 };
 use probe_rs::probe::{list::Lister, DebugProbeSelector, WireProtocol};
-use probe_rs::rtt::{try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion};
+use probe_rs::rtt::{
+    find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt,
+    ScanRegion,
+};
 use probe_rs::{Permissions, Session};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -106,11 +109,7 @@ impl ProbeRsRttBackend {
                     format!("连接目标芯片 {target} 失败: {error}"),
                 )
             })?;
-        let region = match &config.locator {
-            RttLocator::AutoRam => ScanRegion::Ram,
-            RttLocator::Exact(address) => ScanRegion::Exact(*address),
-            RttLocator::Ranges(ranges) => ScanRegion::Ranges(ranges.clone()),
-        };
+        let region = resolve_scan_region(config)?;
         let mut core = session.core(config.core_index).map_err(|error| {
             RttError::new(
                 RttErrorCode::CoreNotFound,
@@ -132,6 +131,33 @@ impl ProbeRsRttBackend {
             refresh_timeout: config.attach_timeout.min(CHANNEL_REFRESH_TIMEOUT_CAP),
             channels,
         })
+    }
+}
+
+fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
+    match &config.locator {
+        RttLocator::Auto => {
+            let Some(path) = config.firmware_path.as_deref() else {
+                return Ok(ScanRegion::Ram);
+            };
+            let bytes = std::fs::read(path).map_err(|error| {
+                RttError::new(
+                    RttErrorCode::FirmwareFileUnavailable,
+                    format!("无法读取固件符号文件 {path}: {error}"),
+                )
+            })?;
+            match find_rtt_control_block_in_raw_file(&bytes).map_err(|error| {
+                RttError::new(
+                    RttErrorCode::FirmwareArtifactInvalid,
+                    format!("无法解析固件符号文件 {path}: {error}"),
+                )
+            })? {
+                Some(address) => Ok(ScanRegion::Exact(address)),
+                None => Ok(ScanRegion::Ram),
+            }
+        }
+        RttLocator::Exact(address) => Ok(ScanRegion::Exact(*address)),
+        RttLocator::Ranges(ranges) => Ok(ScanRegion::Ranges(ranges.clone())),
     }
 }
 
