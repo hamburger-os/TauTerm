@@ -3,11 +3,12 @@ use super::probe_runtime::{
     ResolvedDebugProbeConfig,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{mpsc, Arc, Mutex, Weak};
+use std::sync::{mpsc, Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const SERVICE_QUEUE_CAPACITY: usize = 16;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -42,22 +43,115 @@ struct ScheduledTargetOperation {
     operation: TargetOperation,
 }
 
-enum TargetCommand {
-    Execute(ScheduledTargetOperation),
-    Shutdown(mpsc::SyncSender<()>),
+#[derive(Default)]
+struct TargetSchedulerState {
+    queues: HashMap<String, VecDeque<TargetOperation>>,
+    service_order: VecDeque<String>,
+    total_pending: usize,
+    closed: bool,
+    shutdown_reply: Option<mpsc::SyncSender<()>>,
 }
 
-fn take_next_operation(
-    pending: &mut VecDeque<ScheduledTargetOperation>,
-    last_service: Option<&str>,
-) -> Option<ScheduledTargetOperation> {
-    if pending.is_empty() {
-        return None;
+struct TargetScheduler {
+    state: Mutex<TargetSchedulerState>,
+    ready: Condvar,
+}
+
+enum ScheduledWork {
+    Operation(ScheduledTargetOperation),
+    Shutdown(Option<mpsc::SyncSender<()>>),
+}
+
+impl TargetScheduler {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(TargetSchedulerState::default()),
+            ready: Condvar::new(),
+        }
     }
-    let index = last_service
-        .and_then(|last| pending.iter().position(|operation| operation.service != last))
-        .unwrap_or(0);
-    pending.remove(index)
+
+    fn try_enqueue(
+        &self,
+        service: &str,
+        operation: TargetOperation,
+    ) -> Result<(), DebugTargetRuntimeError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
+        if state.closed {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
+        if state.total_pending >= COMMAND_QUEUE_CAPACITY {
+            return Err(DebugTargetRuntimeError::QueueFull);
+        }
+
+        let queue = state.queues.entry(service.to_string()).or_default();
+        if queue.len() >= SERVICE_QUEUE_CAPACITY {
+            return Err(DebugTargetRuntimeError::QueueFull);
+        }
+        let was_empty = queue.is_empty();
+        queue.push_back(operation);
+        state.total_pending += 1;
+        if was_empty {
+            state.service_order.push_back(service.to_string());
+        }
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn request_shutdown(&self, reply: mpsc::SyncSender<()>) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                let _ = reply.send(());
+                return;
+            }
+            state.closed = true;
+            state.queues.clear();
+            state.service_order.clear();
+            state.total_pending = 0;
+            state.shutdown_reply = Some(reply);
+            self.ready.notify_all();
+        } else {
+            let _ = reply.send(());
+        }
+    }
+
+    fn next(&self) -> ScheduledWork {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        loop {
+            if state.closed {
+                return ScheduledWork::Shutdown(state.shutdown_reply.take());
+            }
+
+            if let Some(service) = state.service_order.pop_front() {
+                let mut remove_queue = false;
+                let operation = {
+                    let queue = state
+                        .queues
+                        .get_mut(&service)
+                        .expect("scheduled service queue must exist");
+                    let operation = queue
+                        .pop_front()
+                        .expect("scheduled service queue must not be empty");
+                    remove_queue = queue.is_empty();
+                    operation
+                };
+                state.total_pending = state.total_pending.saturating_sub(1);
+                if remove_queue {
+                    state.queues.remove(&service);
+                } else {
+                    state.service_order.push_back(service.clone());
+                }
+                return ScheduledWork::Operation(ScheduledTargetOperation { service, operation });
+            }
+
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+    }
 }
 
 /// Single-owner debug-target worker shared by RTT and future observation services.
@@ -65,7 +159,7 @@ fn take_next_operation(
 /// The probe-rs Session never leaves this worker thread. Protocol/observation services submit
 /// short operations and keep their own protocol state outside the target worker.
 pub(crate) struct DebugTargetRuntime {
-    command_tx: mpsc::SyncSender<TargetCommand>,
+    scheduler: Arc<TargetScheduler>,
     worker: Mutex<Option<JoinHandle<()>>>,
     connection_config: DebugProbeConfig,
     descriptor: DebugTargetDescriptor,
@@ -75,7 +169,8 @@ pub(crate) struct DebugTargetRuntime {
 impl DebugTargetRuntime {
     fn open(config: ResolvedDebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
         let connection_config = config.connection_config();
-        let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+        let scheduler = Arc::new(TargetScheduler::new());
+        let worker_scheduler = Arc::clone(&scheduler);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("embedded-debug-target".to_string())
@@ -95,42 +190,15 @@ impl DebugTargetRuntime {
                     return;
                 }
 
-                let mut pending = VecDeque::<ScheduledTargetOperation>::new();
-                let mut last_service: Option<String> = None;
                 loop {
-                    if pending.is_empty() {
-                        match command_rx.recv() {
-                            Ok(TargetCommand::Execute(operation)) => pending.push_back(operation),
-                            Ok(TargetCommand::Shutdown(reply)) => {
+                    match worker_scheduler.next() {
+                        ScheduledWork::Operation(operation) => (operation.operation)(&mut probe),
+                        ScheduledWork::Shutdown(reply) => {
+                            if let Some(reply) = reply {
                                 let _ = reply.send(());
-                                break;
                             }
-                            Err(_) => break,
+                            break;
                         }
-                    }
-
-                    let mut shutdown_reply = None;
-                    while pending.len() < COMMAND_QUEUE_CAPACITY {
-                        match command_rx.try_recv() {
-                            Ok(TargetCommand::Execute(operation)) => pending.push_back(operation),
-                            Ok(TargetCommand::Shutdown(reply)) => {
-                                shutdown_reply = Some(reply);
-                                break;
-                            }
-                            Err(mpsc::TryRecvError::Empty) => break,
-                            Err(mpsc::TryRecvError::Disconnected) => break,
-                        }
-                    }
-                    if let Some(reply) = shutdown_reply {
-                        let _ = reply.send(());
-                        break;
-                    }
-
-                    if let Some(operation) =
-                        take_next_operation(&mut pending, last_service.as_deref())
-                    {
-                        last_service = Some(operation.service.clone());
-                        (operation.operation)(&mut probe);
                     }
                 }
             })
@@ -143,14 +211,14 @@ impl DebugTargetRuntime {
                 return Err(DebugTargetRuntimeError::Open(error));
             }
             Err(_) => {
-                // Dropping command_tx lets a late-starting worker exit as soon as probe open returns.
-                drop(command_tx);
+                // The worker still owns config/probe open. A late startup observes the dropped
+                // startup receiver and exits without accepting target work.
                 return Err(DebugTargetRuntimeError::Timeout);
             }
         };
 
         Ok(Arc::new(Self {
-            command_tx,
+            scheduler,
             worker: Mutex::new(Some(handle)),
             connection_config,
             descriptor,
@@ -176,21 +244,16 @@ impl DebugTargetRuntime {
     {
         let deadline = Instant::now() + timeout;
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.command_tx
-            .try_send(TargetCommand::Execute(ScheduledTargetOperation {
-                service: service.to_string(),
-                operation: Box::new(move |probe| {
-                    if Instant::now() >= deadline {
-                        let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
-                        return;
-                    }
-                    let _ = reply_tx.send(Ok(operation(probe)));
-                }),
-            }))
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => DebugTargetRuntimeError::QueueFull,
-                mpsc::TrySendError::Disconnected(_) => DebugTargetRuntimeError::WorkerStopped,
-            })?;
+        self.scheduler.try_enqueue(
+            service,
+            Box::new(move |probe| {
+                if Instant::now() >= deadline {
+                    let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
+                    return;
+                }
+                let _ = reply_tx.send(Ok(operation(probe)));
+            }),
+        )?;
 
         reply_rx
             .recv_timeout(timeout)
@@ -222,11 +285,8 @@ impl DebugTargetRuntime {
 impl Drop for DebugTargetRuntime {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        let join_safe = match self.command_tx.try_send(TargetCommand::Shutdown(reply_tx)) {
-            Ok(()) => reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok(),
-            Err(mpsc::TrySendError::Disconnected(_)) => true,
-            Err(mpsc::TrySendError::Full(_)) => false,
-        };
+        self.scheduler.request_shutdown(reply_tx);
+        let join_safe = reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok();
 
         if let Ok(worker) = self.worker.get_mut() {
             if let Some(handle) = worker.take() {
@@ -236,8 +296,7 @@ impl Drop for DebugTargetRuntime {
                 }
                 // A stuck probe operation cannot safely be cancelled. If the bounded shutdown
                 // handshake did not complete, dropping JoinHandle deliberately detaches the
-                // worker; dropping command_tx at the end of this destructor disconnects its
-                // queue so it exits once the in-flight operation eventually returns.
+                // worker; the scheduler is already closed, so no new operation can reach it.
             }
         }
     }
@@ -342,26 +401,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scheduler_rotates_between_waiting_services() {
-        let mut pending = VecDeque::from([
-            ScheduledTargetOperation {
-                service: "rtt".to_string(),
-                operation: Box::new(|_| {}),
-            },
-            ScheduledTargetOperation {
-                service: "rtt".to_string(),
-                operation: Box::new(|_| {}),
-            },
-            ScheduledTargetOperation {
-                service: "superwatch".to_string(),
-                operation: Box::new(|_| {}),
-            },
-        ]);
+    fn scheduler_round_robins_services_and_bounds_each_service() {
+        let scheduler = TargetScheduler::new();
+        for _ in 0..SERVICE_QUEUE_CAPACITY {
+            scheduler.try_enqueue("rtt", Box::new(|_| {})).unwrap();
+        }
+        assert!(matches!(
+            scheduler.try_enqueue("rtt", Box::new(|_| {})),
+            Err(DebugTargetRuntimeError::QueueFull)
+        ));
+        scheduler
+            .try_enqueue("superwatch", Box::new(|_| {}))
+            .unwrap();
 
-        let next = take_next_operation(&mut pending, Some("rtt")).expect("next operation");
-        assert_eq!(next.service, "superwatch");
-        let next = take_next_operation(&mut pending, Some("superwatch")).expect("next operation");
-        assert_eq!(next.service, "rtt");
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "rtt"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "superwatch"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "rtt"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
     }
 
     #[test]
