@@ -56,6 +56,7 @@ SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SS
 - 文档保存是专用的 SFTP document transaction，不伪装成下载/上传 Transfer 任务，也不占用 `TransferScheduler`。后端先把文本严格序列化到同目录排他临时文件，再完成 flush、权限同步与 commit/rollback。
 - 完整打开后版本 token 由 `size + mtime + CRC32(content)` 组成。非强制保存会在写临时文件前和正式 commit 前各验证一次 expected version；远端文件被其他工具修改时返回 conflict，由 UI 明确选择重新加载或覆盖，禁止 silent lost update。
 - SSH 断开不会销毁已经打开的 dirty 文档；编辑内容仍留在当前 UI 生命周期中，但保存被禁用。重连后保存仍重新校验远端版本，不因“本地还有编辑内容”绕过并发保护。
+- 关闭 dirty 文档统一走共享的二元确认流程：明确询问是否保存，确认只在保存成功后关闭，取消返回编辑器；不再维护“关闭 / 保存 / 取消”三项并列的私有确认卡片。
 
 ### journald 日志查看器
 

@@ -1048,6 +1048,8 @@
     "name": "Name",
     "size": "Size",
     "modified": "Modified",
+    "saveChangesConfirm": "Save changes?",
+    "unsavedChanges": "Unsaved changes",
     "accessed": "Accessed",
     "permissions": "Permissions",
     "newFile": "New File",
