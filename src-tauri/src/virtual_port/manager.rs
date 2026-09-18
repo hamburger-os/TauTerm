@@ -39,7 +39,7 @@ const MUTATION_LOCK_TIMEOUT_MS: u32 = 120_000;
 const SETUPC_TIMEOUT_SECS: u64 = 30;
 const COM_PORT_SCAN_START: u32 = 20;
 const MAX_COM_PORT: u32 = 256;
-const CANDIDATE_MULTIPLIER: u32 = 2;
+const CANDIDATE_MULTIPLIER: u32 = 8;
 const DESTROY_RETRY_COUNT: u32 = 3;
 const DESTROY_RETRY_DELAY_MS: u64 = 200;
 
@@ -636,6 +636,29 @@ impl VirtualPortManager {
             }
             Err(error) => log::warn!("setupc list failed: {error}"),
         }
+        match run_setupc(&self.resource_dir, &["busynames", "COM?*"]) {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for token in stdout.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+                    let upper = token.to_ascii_uppercase();
+                    if let Some(number) = upper
+                        .strip_prefix("COM")
+                        .and_then(|number| number.parse::<u32>().ok())
+                    {
+                        state.occupied_ports.insert(number);
+                    }
+                }
+            }
+            Ok(output) => {
+                log::warn!(
+                    "setupc busynames returned {:?}: {}",
+                    output.status.code(),
+                    output_detail(&output)
+                );
+            }
+            Err(error) => log::warn!("setupc busynames failed: {error}"),
+        }
+
         state
     }
 
