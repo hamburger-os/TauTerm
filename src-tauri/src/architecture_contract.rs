@@ -449,6 +449,31 @@ fn connect_dialog_uses_registry_session_option_policy() {
     );
 }
 
+
+#[test]
+fn native_rtt_uses_shared_embedded_debug_service_capability() {
+    let backend = read_source("plugins/rtt/backend/probe_rs.rs");
+    assert!(
+        backend.contains("DebugServiceLease") && backend.contains(".service"),
+        "native RTT must execute target I/O through an embedded-debug service lease"
+    );
+    assert!(
+        !backend.contains("DebugProbeRuntime"),
+        "RTT backend must not own the concrete probe runtime directly"
+    );
+
+    let runtime = read_source("embedded_debug/runtime.rs");
+    assert!(
+        runtime.contains("resolve_probe_config(config)?")
+            && runtime.contains("targets: Mutex<HashMap<String, TargetSlot>>"),
+        "embedded-debug ownership must be keyed by canonical physical probe identity"
+    );
+    assert!(
+        runtime.contains("TargetConfigConflict"),
+        "one physical probe must reject a second incompatible target configuration"
+    );
+}
+
 #[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
