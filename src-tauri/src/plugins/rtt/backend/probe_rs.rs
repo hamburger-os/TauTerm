@@ -1,4 +1,5 @@
 use super::RttBackend;
+use crate::embedded_debug::firmware_artifact::{FirmwareArtifact, FirmwareArtifactError};
 use crate::embedded_debug::probe_runtime::{
     list_probes as list_debug_probes, DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime,
     DebugWireProtocol,
@@ -85,13 +86,8 @@ fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
             let Some(path) = config.firmware_path.as_deref() else {
                 return Ok(ScanRegion::Ram);
             };
-            let bytes = std::fs::read(path).map_err(|error| {
-                RttError::new(
-                    RttErrorCode::FirmwareFileUnavailable,
-                    format!("无法读取固件符号文件 {path}: {error}"),
-                )
-            })?;
-            match find_rtt_control_block_in_raw_file(&bytes).map_err(|error| {
+            let artifact = FirmwareArtifact::load(path).map_err(map_firmware_artifact_error)?;
+            match find_rtt_control_block_in_raw_file(artifact.bytes()).map_err(|error| {
                 RttError::new(
                     RttErrorCode::FirmwareArtifactInvalid,
                     format!("无法解析固件符号文件 {path}: {error}"),
@@ -104,6 +100,10 @@ fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
         RttLocator::Exact(address) => Ok(ScanRegion::Exact(*address)),
         RttLocator::Ranges(ranges) => Ok(ScanRegion::Ranges(ranges.clone())),
     }
+}
+
+fn map_firmware_artifact_error(error: FirmwareArtifactError) -> RttError {
+    RttError::new(RttErrorCode::FirmwareFileUnavailable, error.to_string())
 }
 
 fn collect_channels(rtt: &mut Rtt) -> Result<Vec<RttChannelInfo>, RttError> {
