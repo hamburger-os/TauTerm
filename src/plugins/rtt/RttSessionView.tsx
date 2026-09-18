@@ -166,6 +166,11 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           {t("rtt.presentationDropped", { count: snapshot?.dropped_presentation_chunks })}
         </div>
       )}
+      {(snapshot?.runtime_pressure_events ?? 0) > 0 && (
+        <div className={styles.warningBanner}>
+          {t("rtt.runtimePressure", { count: snapshot?.runtime_pressure_events })}
+        </div>
+      )}
 
       <div className={styles.body}>
         <aside className={styles.channels}>
