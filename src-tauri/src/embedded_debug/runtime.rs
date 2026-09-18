@@ -45,6 +45,14 @@ pub(crate) enum DebugTargetRuntimeError {
 
 type TargetOperation = Box<dyn FnOnce(&mut DebugProbeRuntime) + Send + 'static>;
 
+struct WorkerExitGuard(Arc<AtomicBool>);
+
+impl Drop for WorkerExitGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 struct ScheduledTargetOperation {
     service: String,
     operation: TargetOperation,
@@ -186,11 +194,11 @@ impl DebugTargetRuntime {
         let handle = std::thread::Builder::new()
             .name("embedded-debug-target".to_string())
             .spawn(move || {
+                let _exit_guard = WorkerExitGuard(Arc::clone(&worker_exited));
                 let mut probe = match DebugProbeRuntime::open_resolved(&config) {
                     Ok(probe) => probe,
                     Err(error) => {
                         let _ = startup_tx.send(Err(error));
-                        worker_exited.store(true, Ordering::Release);
                         return;
                     }
                 };
@@ -199,7 +207,6 @@ impl DebugTargetRuntime {
                     target: probe.target().to_string(),
                 };
                 if startup_tx.send(Ok(descriptor)).is_err() {
-                    worker_exited.store(true, Ordering::Release);
                     return;
                 }
 
@@ -217,7 +224,6 @@ impl DebugTargetRuntime {
                         }
                     }
                 }
-                worker_exited.store(true, Ordering::Release);
             })
             .map_err(|error| DebugTargetRuntimeError::WorkerStart(error.to_string()))?;
 
