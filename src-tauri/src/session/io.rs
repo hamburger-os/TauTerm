@@ -104,6 +104,18 @@ impl SessionIo {
             .map_err(Into::into)
     }
 
+    pub fn subscribe_with_capacity(
+        &self,
+        consumer: impl Into<String>,
+        capacity_messages: usize,
+    ) -> Result<DataPlaneSubscription, SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .subscribe_with_capacity(consumer, capacity_messages)
+            .map_err(Into::into)
+    }
+
     /// Confirm shared-mode bytes synchronously. This is intended for worker/internal callers that
     /// may block until the transport actor finishes the physical write. Tauri/WebView commands must
     /// use [`SessionIo::send_async`] instead.
