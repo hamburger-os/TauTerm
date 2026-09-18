@@ -38,7 +38,7 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
 
 虚拟串口是平台能力而不是协议替代品：
 
-- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`。该回退通过当前 TauTerm 可执行文件启动窄类型 one-shot UAC helper，普通 GUI 不执行 `setupc.exe`，普通启动也不运行 `setupc list` 或 orphan 清理；只有创建、安装、手动清理等明确动作才进入特权事务；
+- Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；特权服务不可用时进入 `direct-uac-on-demand`。Release helper 仅信任 Program Files 下的受保护安装目录；portable/user-writable release 不执行 privileged setupc。该回退通过当前 TauTerm 可执行文件启动窄类型 one-shot UAC helper，普通 GUI 不执行 `setupc.exe`，普通启动也不运行 `setupc list` 或 orphan 清理；只有创建、安装、手动清理等明确动作才进入特权事务；
 - Linux/macOS 使用进程内 POSIX PTY 桥接，不依赖外部 helper。
 
 Serial 运行时只调用统一的 `ensure_endpoints` capability，并消费强类型的创建失败语义；驱动安装、UAC、特权服务选择和 setupc 文本错误归一化全部留在 virtual-port backend 边界，Serial 不通过字符串猜测平台权限状态。
