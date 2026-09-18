@@ -4,7 +4,7 @@
 
 fn main() {
     #[cfg(windows)]
-    if tauterm_lib::maybe_run_elevated_shell_helper() {
+    if tauterm_lib::maybe_run_elevated_helper() {
         return;
     }
     tauterm_lib::run();
