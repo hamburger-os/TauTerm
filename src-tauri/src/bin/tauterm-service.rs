@@ -35,7 +35,9 @@ mod service {
         RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
         SERVICE_STATUS, SERVICE_STATUS_HANDLE, SERVICE_TABLE_ENTRYW,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, WaitForSingleObject,
+    };
 
     use tauterm_lib::virtual_port::backend::{VirtualEndpoint, VirtualPortConfig};
     use tauterm_lib::virtual_port::manager::VirtualPortManager;
@@ -49,6 +51,9 @@ mod service {
     const PIPE_UNLIMITED_INSTANCES: u32 = 255;
     const ERROR_PIPE_CONNECTED: u32 = 535;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_OBJECT_0: u32 = 0;
+    const DISCONNECT_EXIT_GRACE_MS: u32 = 5_000;
 
     const GENERIC_READ: u32 = 0x80000000;
     const GENERIC_WRITE: u32 = 0x40000000;
@@ -184,6 +189,17 @@ mod service {
             }
             _ => None,
         }
+    }
+
+    fn client_exited_within(pid: u32, timeout_ms: u32) -> bool {
+        let process = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if process.is_null() {
+            // Fail closed: an unverifiable PID must not authorize endpoint deletion.
+            return false;
+        }
+        let result = unsafe { WaitForSingleObject(process, timeout_ms) };
+        unsafe { CloseHandle(process) };
+        result == WAIT_OBJECT_0
     }
 
     fn read_exact(pipe: HANDLE, buf: &mut [u8]) -> bool {
@@ -456,23 +472,35 @@ mod service {
             }
         }
 
-        // Pipe close means this connection disappeared. Release only the resources bound to this
-        // verified connection. Failed removals keep protected ownership for later reconciliation.
-        match vpm.lock() {
-            Ok(mut manager) => {
-                for endpoint in &endpoints {
-                    if let Err(error) = manager.destroy_endpoint(endpoint) {
-                        log::warn!(
-                            "disconnect cleanup bus {} deferred after error: {}",
-                            endpoint.resource_id,
-                            error
-                        );
+        // A broken pipe is not proof that the GUI process is gone: ServiceBackend may reconnect
+        // while the previous server thread is still unwinding. Only delete this connection's
+        // endpoints after the authenticated process itself has exited. Otherwise keep the active
+        // set + protected ownership intact so a replacement connection can re-adopt it safely.
+        if client_exited_within(client_pid, DISCONNECT_EXIT_GRACE_MS) {
+            match vpm.lock() {
+                Ok(mut manager) => {
+                    for endpoint in &endpoints {
+                        if let Err(error) = manager.destroy_endpoint(endpoint) {
+                            log::warn!(
+                                "disconnect cleanup bus {} deferred after error: {}",
+                                endpoint.resource_id,
+                                error
+                            );
+                        }
                     }
                 }
+                Err(error) => {
+                    log::warn!(
+                        "virtual-port manager lock poisoned during disconnect cleanup: {error}"
+                    );
+                }
             }
-            Err(error) => {
-                log::warn!("virtual-port manager lock poisoned during disconnect cleanup: {error}");
-            }
+        } else if !endpoints.is_empty() {
+            log::info!(
+                "service connection closed while GUI PID {} is still alive; preserving {} virtual endpoint(s) for reconnect",
+                client_pid,
+                endpoints.len()
+            );
         }
     }
 
