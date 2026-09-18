@@ -344,6 +344,15 @@ impl VirtualPortManager {
             );
             return;
         }
+        let _mutation = match DriverMutationGuard::acquire() {
+            Ok(guard) => guard,
+            Err(error) => {
+                log::warn!(
+                    "cannot repair obsolete virtual-port ownership state without mutation lock: {error}"
+                );
+                return;
+            }
+        };
         let backup = path.with_extension(format!(
             "json.{}.bak",
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
