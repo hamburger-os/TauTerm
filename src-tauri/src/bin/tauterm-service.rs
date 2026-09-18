@@ -65,7 +65,7 @@ mod service {
     const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
     const SERVICE_NAME: &str = "TauTermService";
     const EXPECTED_CLIENT_EXE: &str = "tauterm.exe";
-    const SERVICE_PROTOCOL_VERSION: u64 = 1;
+    const SERVICE_PROTOCOL_VERSION: u64 = 2;
 
     /// 收到 STOP/SHUTDOWN 时置位，主循环据此退出。
     static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -293,8 +293,11 @@ mod service {
                     );
                 }
                 let adopted = vpm.adopt_owned_endpoints_for_owner(client_pid);
-                clients.insert(req.client_id.clone(), adopted);
-                Some(serde_json::json!({ "protocol_version": SERVICE_PROTOCOL_VERSION }))
+                clients.insert(req.client_id.clone(), adopted.clone());
+                Some(serde_json::json!({
+                    "protocol_version": SERVICE_PROTOCOL_VERSION,
+                    "adopted_endpoints": adopted,
+                }))
             }
             "status" => Some(serde_json::json!({
                 "files_present": vpm.are_files_present(),
