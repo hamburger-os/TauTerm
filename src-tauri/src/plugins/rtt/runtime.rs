@@ -143,7 +143,7 @@ pub(super) struct RttShared {
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
-    automation_subscribers: Mutex<Vec<mpsc::SyncSender<Vec<u8>>>>,
+    automation_subscribers: Mutex<Vec<(u32, mpsc::SyncSender<Vec<u8>>)>>,
 }
 
 impl RttShared {
@@ -250,23 +250,20 @@ impl RttShared {
     }
 
     fn publish_automation(&self, chunk: &StoredRttChunk) {
-        let selected = self
-            .automation_source_channel
-            .lock()
-            .ok()
-            .and_then(|channel| *channel);
-        if selected != Some(chunk.channel_index) {
-            return;
-        }
         let mut dropped = false;
         if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.retain(|subscriber| match subscriber.try_send(chunk.data.clone()) {
-                Ok(()) => true,
-                Err(mpsc::TrySendError::Full(_)) => {
-                    dropped = true;
-                    true
+            subscribers.retain(|(source_channel, subscriber)| {
+                if *source_channel != chunk.channel_index {
+                    return true;
                 }
-                Err(mpsc::TrySendError::Disconnected(_)) => false,
+                match subscriber.try_send(chunk.data.clone()) {
+                    Ok(()) => true,
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        dropped = true;
+                        true
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => false,
+                }
             });
         }
         if dropped {
@@ -393,11 +390,18 @@ impl RttShared {
     }
 
     fn subscribe_automation(&self) -> Result<RttAutomationRx, SessionIoError> {
+        // Capture the source at subscription time. A running Auto Reply/Lua execution therefore
+        // keeps an immutable Up Channel even if the user later browses another RTT channel.
+        let source_channel = self
+            .automation_source_channel
+            .lock()
+            .map_err(|error| SessionIoError::Send(error.to_string()))?
+            .ok_or(SessionIoError::AutomationReceiveUnsupported)?;
         let (tx, rx) = mpsc::sync_channel(AUTOMATION_SUBSCRIPTION_CAPACITY);
         self.automation_subscribers
             .lock()
             .map_err(|error| SessionIoError::Send(error.to_string()))?
-            .push(tx);
+            .push((source_channel, tx));
         Ok(RttAutomationRx { receiver: rx })
     }
 
@@ -719,6 +723,47 @@ mod tests {
         assert!(shared.set_automation_source_channel(2).is_err());
         assert!(shared.set_send_channel(1).is_err());
         assert_eq!(shared.send_channel().unwrap(), 2);
+    }
+
+    #[test]
+    fn automation_subscription_keeps_its_startup_source_channel() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![
+                RttChannelInfo {
+                    index: 1,
+                    name: None,
+                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    down: None,
+                    metadata_complete: true,
+                },
+                RttChannelInfo {
+                    index: 2,
+                    name: None,
+                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    down: None,
+                    metadata_complete: true,
+                },
+            ],
+        );
+        shared.set_automation_source_channel(1).unwrap();
+        let mut subscription = shared.subscribe_automation().unwrap();
+        shared.set_automation_source_channel(2).unwrap();
+
+        shared.record_rx(1, b"old-source".to_vec());
+        shared.record_rx(2, b"new-view".to_vec());
+
+        assert!(matches!(
+            subscription.try_recv(),
+            Ok(AutomationRxEvent::Data(data)) if data == b"old-source"
+        ));
+        assert!(matches!(
+            subscription.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]
