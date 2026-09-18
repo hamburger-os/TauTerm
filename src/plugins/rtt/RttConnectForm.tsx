@@ -214,35 +214,40 @@ export default function RttConnectForm({ params, onChange, disabled }: ConnectFo
             </div>
           )}
 
-          <details className={styles.advanced}>
-            <summary>{t("rtt.advanced")}</summary>
-            <div className={styles.grid2}>
-              <div className={styles.field}>
-                <label>{t("rtt.speed")}</label>
-                <input
-                  className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-                  type="number"
-                  min={1}
-                  max={50000}
-                  value={optionalPositiveNumber(normalized, "speed_khz")}
-                  disabled={disabled}
-                  onChange={event => patch({
-                    speed_khz: event.target.value === "" ? null : Number(event.target.value),
-                  })}
-                />
-                <small>{t("rtt.speedAuto")}</small>
-              </div>
-              <div className={styles.field}>
-                <label>{t("rtt.core")}</label>
-                <input
-                  className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
-                  type="number"
-                  min={0}
-                  max={31}
-                  value={num(normalized, "core_index", 0)}
-                  disabled={disabled}
-                  onChange={event => patch({ core_index: Number(event.target.value) })}
-                />
+          <details className={`${styles.advanced} liquid-glass-card`}>
+            <summary className={styles.advancedSummary}>
+              <Icon name="chevron-right" size="xs" className={styles.advancedChevron} />
+              {t("rtt.advanced")}
+            </summary>
+            <div className={styles.advancedBody}>
+              <div className={styles.grid2}>
+                <div className={styles.field}>
+                  <label>{t("rtt.speed")}</label>
+                  <input
+                    className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
+                    type="number"
+                    min={1}
+                    max={50000}
+                    value={optionalPositiveNumber(normalized, "speed_khz")}
+                    disabled={disabled}
+                    onChange={event => patch({
+                      speed_khz: event.target.value === "" ? null : Number(event.target.value),
+                    })}
+                  />
+                  <small>{t("rtt.speedAuto")}</small>
+                </div>
+                <div className={styles.field}>
+                  <label>{t("rtt.core")}</label>
+                  <input
+                    className={`liquid-glass-input ${styles.control} ${styles.numberControl}`}
+                    type="number"
+                    min={0}
+                    max={31}
+                    value={num(normalized, "core_index", 0)}
+                    disabled={disabled}
+                    onChange={event => patch({ core_index: Number(event.target.value) })}
+                  />
+                </div>
               </div>
             </div>
           </details>
