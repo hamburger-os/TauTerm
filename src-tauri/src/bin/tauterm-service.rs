@@ -317,7 +317,7 @@ mod service {
                     enabled: count > 0,
                     count,
                 };
-                match vpm.create_endpoints(&config) {
+                match vpm.ensure_endpoints(&config) {
                     Ok(pairs) => {
                         let entry = clients.entry(req.client_id.clone()).or_default();
                         for p in &pairs {
@@ -325,7 +325,7 @@ mod service {
                         }
                         Some(serde_json::to_value(&pairs).unwrap_or_else(|_| serde_json::json!([])))
                     }
-                    Err(e) => return Response::err(id, e),
+                    Err(e) => return Response::err(id, e.to_string()),
                 }
             }
             "remove_pair" => {
