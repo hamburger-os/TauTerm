@@ -328,19 +328,14 @@ impl VirtualPortManager {
         self.state_dir.join("com0com_state.json")
     }
 
-    fn load_owned_records(&self) -> Vec<OwnedEndpointRecord> {
+    fn try_load_owned_records(&self) -> Result<Vec<OwnedEndpointRecord>, String> {
         let path = self.state_path();
         if !path.exists() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) => {
-                log::warn!("Failed to read virtual-port ownership state: {error}");
-                return Vec::new();
-            }
-        };
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read virtual-port ownership state: {error}"))?;
         match serde_json::from_str::<PersistedState>(&content) {
             Ok(mut state) if state.schema_version == OWNERSHIP_SCHEMA_VERSION => {
                 state
@@ -349,53 +344,55 @@ impl VirtualPortManager {
                 state
                     .owned_endpoints
                     .dedup_by_key(|record| record.endpoint.resource_id);
-                state.owned_endpoints
+                Ok(state.owned_endpoints)
             }
             Ok(state) => {
-                self.reset_obsolete_state(
-                    &path,
-                    &format!(
-                        "unsupported schema version {} (expected {})",
-                        state.schema_version, OWNERSHIP_SCHEMA_VERSION
-                    ),
+                let reason = format!(
+                    "unsupported schema version {} (expected {})",
+                    state.schema_version, OWNERSHIP_SCHEMA_VERSION
                 );
-                Vec::new()
+                self.reset_obsolete_state(&path, &reason)?;
+                Ok(Vec::new())
             }
             Err(error) => {
-                self.reset_obsolete_state(&path, &error.to_string());
+                self.reset_obsolete_state(&path, &error.to_string())?;
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    fn load_owned_records(&self) -> Vec<OwnedEndpointRecord> {
+        match self.try_load_owned_records() {
+            Ok(records) => records,
+            Err(error) => {
+                log::warn!("virtual-port ownership state unavailable: {error}");
                 Vec::new()
             }
         }
     }
 
-    fn reset_obsolete_state(&self, path: &Path, reason: &str) {
+    fn reset_obsolete_state(&self, path: &Path, reason: &str) -> Result<(), String> {
         if self.mode == ManagementMode::DirectUac {
-            log::warn!(
-                "virtual-port ownership state requires privileged repair ({reason}); GUI leaves the protected ledger untouched"
-            );
-            return;
+            return Err(format!(
+                "virtual-port ownership state requires privileged repair ({reason})"
+            ));
         }
-        let _mutation = match DriverMutationGuard::acquire() {
-            Ok(guard) => guard,
-            Err(error) => {
-                log::warn!(
-                    "cannot repair obsolete virtual-port ownership state without mutation lock: {error}"
-                );
-                return;
-            }
-        };
+        let _mutation = DriverMutationGuard::acquire()?;
         let backup = path.with_extension(format!(
             "json.{}.bak",
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
         ));
-        let _ = std::fs::copy(path, &backup);
+        std::fs::copy(path, &backup).map_err(|error| {
+            format!(
+                "failed to back up obsolete virtual-port ownership state to {}: {error}",
+                backup.display()
+            )
+        })?;
         log::warn!(
             "virtual-port ownership state has obsolete/corrupt schema ({reason}); backed up to {:?} and reset",
             backup
         );
-        if let Err(error) = self.persist_owned_records(&[]) {
-            log::warn!("failed to reset obsolete virtual-port ownership state: {error}");
-        }
+        self.persist_owned_records(&[])
     }
 
     fn load_owned_endpoints(&self) -> Vec<VirtualEndpoint> {
@@ -446,7 +443,7 @@ impl VirtualPortManager {
         if endpoints.is_empty() {
             return Ok(());
         }
-        let mut owned = self.load_owned_records();
+        let mut owned = self.try_load_owned_records()?;
         for endpoint in endpoints {
             owned.retain(|existing| existing.endpoint.resource_id != endpoint.resource_id);
             owned.push(OwnedEndpointRecord {
@@ -512,7 +509,7 @@ impl VirtualPortManager {
             return Ok(());
         }
 
-        let mut owned = self.load_owned_records();
+        let mut owned = self.try_load_owned_records()?;
         let removed_paths = owned
             .iter()
             .filter(|existing| existing.endpoint.resource_id == endpoint.resource_id)
@@ -568,28 +565,9 @@ impl VirtualPortManager {
             .any(|record| record.endpoint == *endpoint && self.record_is_reclaimable(&record))
     }
 
-    /// 不启动 setupc 的本地 ownership 投影，仅用于冲突避让与恢复判断。
-    fn local_driver_state(&self) -> DriverState {
-        let mut state = DriverState::default();
-        for endpoint in self.load_owned_endpoints() {
-            let bus = endpoint.resource_id;
-            state.buses.insert(bus);
-            state.max_bus = Some(state.max_bus.map_or(bus, |current| current.max(bus)));
-            for path in [&endpoint.bridge_path, &endpoint.external_path] {
-                if let Some(number) = path
-                    .strip_prefix("COM")
-                    .and_then(|number| number.parse::<u32>().ok())
-                {
-                    state.occupied_ports.insert(number);
-                }
-            }
-        }
-        state
-    }
-
     /// 特权上下文中的完整驱动状态查询。只由 TauTermService/管理员直接路径调用。
     fn query_driver_state(&self) -> DriverState {
-        let mut state = self.local_driver_state();
+        let mut state = DriverState::default();
         match run_setupc(&self.resource_dir, &["list"]) {
             Ok(output) if output.status.success() => {
                 state.queried = true;
@@ -691,7 +669,11 @@ impl VirtualPortManager {
             return Err("cannot enumerate com0com state while reconciling ownership".into());
         }
 
-        let owned = self.load_owned_endpoints();
+        let owned = self
+            .try_load_owned_records()?
+            .into_iter()
+            .map(|record| record.endpoint)
+            .collect::<Vec<_>>();
         for endpoint in owned {
             let exact = driver
                 .endpoints_by_bus
@@ -729,23 +711,8 @@ impl VirtualPortManager {
     }
 
     fn next_free_bus(&self, driver: &DriverState) -> u32 {
-        let owned_ids = self
-            .load_owned_endpoints()
-            .into_iter()
-            .map(|endpoint| endpoint.resource_id)
-            .collect::<HashSet<_>>();
-        let mut bus = driver
-            .max_bus
-            .into_iter()
-            .chain(owned_ids.iter().copied())
-            .chain(
-                self.active_endpoints
-                    .iter()
-                    .map(|endpoint| endpoint.resource_id),
-            )
-            .max()
-            .map_or(0, |max| max.saturating_add(1));
-        while is_reserved_bus(bus) || driver.buses.contains(&bus) || owned_ids.contains(&bus) {
+        let mut bus = driver.max_bus.map_or(0, |max| max.saturating_add(1));
+        while is_reserved_bus(bus) || driver.actual_buses.contains(&bus) {
             bus = bus.saturating_add(1);
         }
         bus
@@ -836,7 +803,7 @@ impl VirtualPortManager {
         }
         self.reconcile_owned_state()?;
         let endpoints = self
-            .load_owned_records()
+            .try_load_owned_records()?
             .into_iter()
             .filter(|record| record.owner_pid == Some(owner_pid))
             .map(|record| record.endpoint)
@@ -945,7 +912,7 @@ impl VirtualPortManager {
         self.reconcile_owned_state()?;
 
         // Fail before touching the driver if the protected ledger cannot be durably replaced.
-        let ownership_snapshot = self.load_owned_records();
+        let ownership_snapshot = self.try_load_owned_records()?;
         self.persist_owned_records(&ownership_snapshot)?;
 
         let mut initial_driver = self.query_driver_state();
