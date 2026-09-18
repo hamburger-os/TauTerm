@@ -490,10 +490,11 @@ impl RttRuntime {
             if let Some(tx) = tx_slot.take() {
                 if !self.worker_exited.load(Ordering::Acquire) {
                     let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-                    if tx
-                        .try_send(WorkerCommand::Shutdown { reply: reply_tx })
-                        .is_ok()
-                    {
+                    // SessionService shutdown runs outside the SessionStore lock. A blocking
+                    // enqueue is intentional here: it guarantees the single-owner worker observes
+                    // the lifecycle command even when ordinary RTT writes temporarily fill the
+                    // bounded command queue.
+                    if tx.send(WorkerCommand::Shutdown { reply: reply_tx }).is_ok() {
                         let _ = reply_rx.recv_timeout(Duration::from_secs(2));
                     }
                 }
