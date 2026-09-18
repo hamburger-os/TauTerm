@@ -145,8 +145,8 @@ impl LogWriter {
             DataDirection::RX => "[RX]",
         };
         let stream = entry
-            .data_mode
-            .strip_prefix("stream:")
+            .stream
+            .as_deref()
             .map(|value| format!("[{value}]"))
             .unwrap_or_default();
         let prefix = format!("{ts} {dir}{stream}");
@@ -296,6 +296,7 @@ mod tests {
         DataLogEntry {
             session_id: "session-123".to_string(),
             direction: DataDirection::RX,
+            stream: None,
             data_mode: "text".to_string(),
             encoding: "utf-8".to_string(),
             payload: payload.to_vec(),
