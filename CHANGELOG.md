@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Embedded observability foundation** — introduces shared single-owner debug-probe attachment, immutable firmware-artifact loading and acquisition-time observation sequencing so RTT and future memory/trace tools can share target ownership without moving protocol semantics into the Kernel; RTT now separates automation Up sources, SendBar Down targets, history loss, automation loss and WebView presentation loss.
 - **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
-- **Virtual-port capability boundary** — isolates physical→virtual forwarding from per-endpoint readers, uses explicit external-peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, and versions the privileged-service handshake.
+- **Virtual-port capability boundary** — isolates the DataPlane subscription pump from per-endpoint reader/writer actors, gives every external peer an independent bounded byte budget, uses explicit peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, and versions the privileged-service handshake.
 - **Chronological log segment names** — System and Session log segments now start with their actual segment creation timestamp so filename sorting follows creation order across processes, sessions and rotations.
 
 ### Fixed
 - **Windows virtual-port bridge could stop while the external COM peer was closed** — com0com peer absence no longer backpressures the bounded DataPlane subscription; connected-stream failures remain fail-closed instead of being hidden by larger queues or silent overrun.
+- **Long-running virtual-port peers could overflow the DataPlane when an external reader stalled** — physical→virtual fan-out is now non-blocking and each external endpoint owns an isolated byte-bounded egress actor. A stalled peer is paused without stopping the parent Serial Session or sibling VPorts, and Windows recovery requires an explicit peer close/reopen before starting a fresh stream. Debug builds also select direct-UAC mode directly instead of probing the production service and logging an expected pipe rejection.
 
 ## [0.6.5] — 2026-09-11
 
