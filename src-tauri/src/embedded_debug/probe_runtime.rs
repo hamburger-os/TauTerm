@@ -1,7 +1,7 @@
 use probe_rs::probe::{list::Lister, DebugProbeSelector, WireProtocol};
 use probe_rs::{Permissions, Session};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DebugWireProtocol {
     Swd,
     Jtag,
@@ -45,11 +45,11 @@ pub enum DebugProbeOpenError {
     TargetAttach { target: String, detail: String },
 }
 
-/// Single-owner probe + target session.
+/// Probe + target session owned exclusively by the shared embedded-debug target worker.
 ///
-/// The value is deliberately not wrapped in shared mutable ownership. A concrete observation
-/// worker owns it on one thread and borrows Session only for short core operations. This gives
-/// RTT and future variable/trace producers the same ownership rule without a global probe registry.
+/// The value is deliberately not exposed through shared mutable ownership. `DebugTargetRuntime`
+/// keeps it on one thread and observation services submit short operations through the bounded
+/// scheduler, so RTT and future memory/trace producers cannot concurrently borrow the probe.
 pub struct DebugProbeRuntime {
     session: Session,
     target: String,
