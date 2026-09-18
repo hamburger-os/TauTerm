@@ -8,6 +8,7 @@
 //! 端口/bus 冲突检测，绝不能被当作 TauTerm 残留资源删除。
 
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -390,15 +391,19 @@ impl VirtualPortManager {
             }
         };
 
-        let temporary = path.with_extension("json.tmp");
-        if let Err(error) = std::fs::write(&temporary, &json) {
-            log::warn!("Failed to write virtual-port state temp file: {error}");
+        let mut file = match atomic_write_file::AtomicWriteFile::open(&path) {
+            Ok(file) => file,
+            Err(error) => {
+                log::warn!("Failed to open virtual-port ownership state for atomic write: {error}");
+                return;
+            }
+        };
+        if let Err(error) = file.write_all(json.as_bytes()) {
+            log::warn!("Failed to write virtual-port ownership state: {error}");
             return;
         }
-        if let Err(error) = std::fs::rename(&temporary, &path) {
-            log::warn!("Failed to atomically replace virtual-port state: {error}");
-            let _ = std::fs::write(&path, json);
-            let _ = std::fs::remove_file(&temporary);
+        if let Err(error) = file.commit() {
+            log::warn!("Failed to atomically commit virtual-port ownership state: {error}");
         }
     }
 
