@@ -1048,7 +1048,7 @@
     "name": "名称",
     "size": "大小",
     "modified": "修改时间",
-    "saveChangesConfirm": "是否保存？",
+    "saveChangesConfirm": "确认保存",
     "unsavedChanges": "有未保存的修改",
     "accessed": "访问时间",
     "permissions": "权限",
