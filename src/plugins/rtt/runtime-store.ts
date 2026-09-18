@@ -16,7 +16,6 @@ const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
 export interface RttRuntimeSnapshot {
   snapshot: RttSnapshot | null;
   selectedChannel: number | null;
-  selectedSendChannel: number | null;
   viewModes: Readonly<Record<number, RttViewMode>>;
   buffers: Readonly<Record<number, readonly RttChunk[]>>;
   error: string | null;
@@ -25,7 +24,6 @@ export interface RttRuntimeSnapshot {
 const EMPTY: RttRuntimeSnapshot = Object.freeze({
   snapshot: null,
   selectedChannel: null,
-  selectedSendChannel: null,
   viewModes: Object.freeze({}),
   buffers: Object.freeze({}),
   error: null,
@@ -68,7 +66,6 @@ function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   publish(sessionId, {
     snapshot,
     selectedChannel,
-    selectedSendChannel: snapshot.send_channel ?? null,
     viewModes: prev.viewModes,
     buffers: generationChanged ? Object.freeze({}) : prev.buffers,
     error: snapshot.last_error?.message ?? null,
@@ -307,7 +304,7 @@ async function ensureSendChannel(sessionId: string): Promise<number> {
     await refreshRttRuntime(sessionId);
     state = current(sessionId);
   }
-  const channelIndex = state.selectedSendChannel;
+  const channelIndex = state.snapshot?.send_channel ?? null;
   if (channelIndex == null) throw new Error("当前 RTT 会话没有可写 Down Channel");
   return channelIndex;
 }
