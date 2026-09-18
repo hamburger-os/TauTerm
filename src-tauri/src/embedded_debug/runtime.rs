@@ -496,8 +496,9 @@ impl EmbeddedDebugManager {
                 Ok(runtime)
             }
             Err(error) => {
-                let late_open_still_running = matches!(error, DebugTargetRuntimeError::StartupTimeout)
-                    && !worker_exited.load(Ordering::Acquire);
+                let late_open_still_running =
+                    matches!(&error, DebugTargetRuntimeError::StartupTimeout)
+                        && !worker_exited.load(Ordering::Acquire);
                 if !late_open_still_running {
                     *runtime_slot = TargetSlotState::Vacant;
                 }
