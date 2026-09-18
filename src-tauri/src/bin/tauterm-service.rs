@@ -122,21 +122,21 @@ mod service {
         }
     }
 
-    fn verify_client(pipe: HANDLE) -> bool {
+    fn verify_client(pipe: HANDLE) -> Option<u32> {
         let mut pid = 0u32;
         if unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) } == 0 {
-            return false;
+            return None;
         }
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if process.is_null() {
-            return false;
+            return None;
         }
         let mut buf = [0u16; 1024];
         let mut size = buf.len() as u32;
         let ok = unsafe { QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut size) };
         unsafe { CloseHandle(process) };
         if ok == 0 {
-            return false;
+            return None;
         }
         let path = String::from_utf16_lossy(&buf[..size as usize]);
         let client_path = std::path::Path::new(&path);
@@ -146,7 +146,7 @@ mod service {
             .unwrap_or("")
             .to_lowercase();
         if file_name != EXPECTED_CLIENT_EXE {
-            return false;
+            return None;
         }
         // 仅校验文件名可被轻易绕过（把任意程序改名成 tauterm.exe 即可冒充）。
         // 客户端 exe 必须与服务自身位于同一目录（安装目录）：安装目录普通用户
@@ -158,16 +158,16 @@ mod service {
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_lowercase()));
         match (client_dir, service_dir) {
-            (Some(c), Some(s)) if c == s => true,
+            (Some(c), Some(s)) if c == s => Some(pid),
             (Some(c), Some(s)) => {
                 log::warn!(
                     "pipe client rejected: dir mismatch (client={}, service={})",
                     c,
                     s
                 );
-                false
+                None
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -309,7 +309,7 @@ mod service {
                     enabled: count > 0,
                     count,
                 };
-                match vpm.ensure_endpoints(&config) {
+                match vpm.ensure_endpoints_for_owner(&config, client_pid) {
                     Ok(pairs) => {
                         let entry = clients.entry(req.client_id.clone()).or_default();
                         for p in &pairs {
@@ -370,7 +370,12 @@ mod service {
         }
     }
 
-    fn handle_client(pipe: HANDLE, vpm: &Mutex<VirtualPortManager>, clients: &Mutex<Clients>) {
+    fn handle_client(
+        pipe: HANDLE,
+        vpm: &Mutex<VirtualPortManager>,
+        clients: &Mutex<Clients>,
+        client_pid: u32,
+    ) {
         let mut client_id: Option<String> = None;
         while let Some(frame) = read_frame(pipe) {
             let req: Request = match serde_json::from_slice(&frame) {
@@ -383,7 +388,7 @@ mod service {
             let resp = {
                 let mut v = vpm.lock().unwrap();
                 let mut c = clients.lock().unwrap();
-                dispatch(&mut v, &mut c, &req)
+                dispatch(&mut v, &mut c, &req, client_pid)
             };
             let body = serde_json::to_vec(&resp).unwrap_or_default();
             if !write_frame(pipe, &body) {
@@ -506,15 +511,15 @@ mod service {
                 break;
             }
 
-            if !verify_client(pipe) {
+            let Some(client_pid) = verify_client(pipe) else {
                 unsafe {
                     DisconnectNamedPipe(pipe);
                     CloseHandle(pipe);
                 }
                 continue;
-            }
+            };
 
-            handle_client(pipe, &vpm, &clients);
+            handle_client(pipe, &vpm, &clients, client_pid);
             unsafe {
                 DisconnectNamedPipe(pipe);
                 CloseHandle(pipe);
