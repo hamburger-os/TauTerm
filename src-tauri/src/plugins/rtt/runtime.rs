@@ -696,7 +696,9 @@ mod tests {
                 RttChannelInfo {
                     index: 1,
                     name: Some("up-only".to_string()),
-                    up: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                    }),
                     down: None,
                     metadata_complete: true,
                 },
@@ -704,7 +706,9 @@ mod tests {
                     index: 2,
                     name: Some("down-only".to_string()),
                     up: None,
-                    down: Some(RttChannelDirectionInfo { buffer_size: Some(64) }),
+                    down: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                    }),
                     metadata_complete: true,
                 },
             ],
