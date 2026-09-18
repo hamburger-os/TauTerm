@@ -189,7 +189,7 @@ mod tests {
     fn channel_selection_uses_segger_telnet_config_string() {
         assert_eq!(
             jlink_telnet_channel_config(3),
-            "$SEGGER_TELNET_ConfigStr=RTTCh;3$"
+            "$$SEGGER_TELNET_ConfigStr=RTTCh;3$$"
         );
     }
 
