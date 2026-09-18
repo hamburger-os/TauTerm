@@ -813,7 +813,7 @@ impl SessionStore {
             }
             let subscription = io
                 .primary()
-                .map(|_| io.subscribe())
+                .map(|_| io.subscribe(format!("script:{session_id}")))
                 .transpose()
                 .map_err(|e| e.to_string())?;
             let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
@@ -845,7 +845,9 @@ impl SessionStore {
                 .map_err(|e| format!("发送脚本失败: {}", e));
         }
         let io = sub.io.clone();
-        let subscription = io.subscribe().map_err(|e| e.to_string())?;
+        let subscription = io
+            .subscribe(format!("script:{session_id}"))
+            .map_err(|e| e.to_string())?;
         let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread = spawn_script_thread(

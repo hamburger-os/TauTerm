@@ -1,8 +1,15 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginRuntimeStore } from "../../core/plugin-registry";
 
+export type SerialVirtualEndpointState = "ready" | "backpressured";
+
 export interface SerialVirtualEndpoint {
   external_path: string;
+  state: SerialVirtualEndpointState;
+  reason?: string;
+  queued_bytes?: number;
+  backlog_limit_bytes?: number;
+  stalled_for_ms?: number;
 }
 
 export interface SerialRuntimeSnapshot {
@@ -11,11 +18,22 @@ export interface SerialRuntimeSnapshot {
   errorKind?: string;
 }
 
+interface SerialVirtualPortHealthEvent {
+  session_id: string;
+  external_path: string;
+  state: SerialVirtualEndpointState;
+  reason?: string;
+  queued_bytes?: number;
+  backlog_limit_bytes?: number;
+  stalled_for_ms?: number;
+}
+
 const EMPTY: SerialRuntimeSnapshot = Object.freeze({
   endpoints: Object.freeze([]) as readonly SerialVirtualEndpoint[],
 });
 
 const sessions = new Map<string, SerialRuntimeSnapshot>();
+const pendingHealth = new Map<string, Map<string, SerialVirtualPortHealthEvent>>();
 const listeners = new Set<() => void>();
 let revision = 0;
 let listenerReady: Promise<void> | null = null;
@@ -31,30 +49,93 @@ function publish(sessionId: string, snapshot: SerialRuntimeSnapshot): void {
   listeners.forEach(listener => listener());
 }
 
+function endpointFromHealth(
+  endpoint: SerialVirtualEndpoint,
+  event: SerialVirtualPortHealthEvent,
+): SerialVirtualEndpoint {
+  return {
+    external_path: endpoint.external_path,
+    state: event.state,
+    reason: event.state === "backpressured" ? event.reason : undefined,
+    queued_bytes: event.state === "backpressured" ? event.queued_bytes : undefined,
+    backlog_limit_bytes:
+      event.state === "backpressured" ? event.backlog_limit_bytes : undefined,
+    stalled_for_ms: event.state === "backpressured" ? event.stalled_for_ms : undefined,
+  };
+}
+
+function rememberPendingHealth(event: SerialVirtualPortHealthEvent): void {
+  let byEndpoint = pendingHealth.get(event.session_id);
+  if (!byEndpoint) {
+    byEndpoint = new Map();
+    pendingHealth.set(event.session_id, byEndpoint);
+  }
+  byEndpoint.set(event.external_path, event);
+}
+
+function applyEndpointHealth(event: SerialVirtualPortHealthEvent): void {
+  const snapshot = current(event.session_id);
+  let matched = false;
+  const endpoints = snapshot.endpoints.map(endpoint => {
+    if (endpoint.external_path !== event.external_path) return endpoint;
+    matched = true;
+    return endpointFromHealth(endpoint, event);
+  });
+  if (!matched) {
+    rememberPendingHealth(event);
+    return;
+  }
+  pendingHealth.get(event.session_id)?.delete(event.external_path);
+  publish(event.session_id, { ...snapshot, endpoints });
+}
+
+function publishCreated(
+  sessionId: string,
+  endpoints: SerialVirtualEndpoint[],
+): void {
+  const pending = pendingHealth.get(sessionId);
+  const resolved = endpoints.map(endpoint => {
+    const event = pending?.get(endpoint.external_path);
+    return event ? endpointFromHealth(endpoint, event) : endpoint;
+  });
+  pendingHealth.delete(sessionId);
+  publish(sessionId, {
+    endpoints: resolved,
+    error: undefined,
+    errorKind: undefined,
+  });
+}
+
 function ensureListeners(): Promise<void> {
   if (listenerReady) return listenerReady;
   listenerReady = (async () => {
     const registered: UnlistenFn[] = [];
     registered.push(await listen<{ session_id: string; endpoints: SerialVirtualEndpoint[] }>(
       "virtual-port-created",
-      event => publish(event.payload.session_id, {
-        endpoints: event.payload.endpoints,
-        error: undefined,
-        errorKind: undefined,
-      }),
+      event => publishCreated(event.payload.session_id, event.payload.endpoints),
+    ));
+    registered.push(await listen<SerialVirtualPortHealthEvent>(
+      "virtual-port-health",
+      event => applyEndpointHealth(event.payload),
     ));
     registered.push(await listen<{ session_id: string; kind?: string; reason: string }>(
       "virtual-port-failed",
-      event => publish(event.payload.session_id, {
-        endpoints: [],
-        error: event.payload.reason,
-        errorKind: event.payload.kind,
-      }),
+      event => {
+        pendingHealth.delete(event.payload.session_id);
+        publish(event.payload.session_id, {
+          endpoints: [],
+          error: event.payload.reason,
+          errorKind: event.payload.kind,
+        });
+      },
     ));
     registered.push(await listen("virtual-port-driver-ready", () => {
       let changed = false;
       for (const [sessionId, snapshot] of sessions) {
-        if (!snapshot.error) continue;
+        const driverError = snapshot.errorKind === "files_missing"
+          || snapshot.errorKind === "permission"
+          || snapshot.errorKind === "driver_missing";
+        if (!snapshot.error || !driverError) continue;
         sessions.set(sessionId, { ...snapshot, error: undefined, errorKind: undefined });
         changed = true;
       }
@@ -64,6 +145,7 @@ function ensureListeners(): Promise<void> {
       }
     }));
     registered.push(await listen<{ session_id: string }>("session-disconnected", event => {
+      pendingHealth.delete(event.payload.session_id);
       if (sessions.has(event.payload.session_id)) publish(event.payload.session_id, EMPTY);
     }));
     unlisteners = registered;
@@ -88,6 +170,7 @@ export const serialRuntimeStore: PluginRuntimeStore = {
   },
   revision: () => revision,
   release(sessionId) {
+    pendingHealth.delete(sessionId);
     if (!sessions.delete(sessionId)) return;
     revision += 1;
     listeners.forEach(listener => listener());

@@ -38,6 +38,18 @@ export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarConte
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
   const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
   const endpoints = runtime.endpoints ?? [];
+  const backpressuredEndpoints = endpoints.filter(endpoint => endpoint.state === "backpressured");
+  const backpressureTitle = backpressuredEndpoints
+    .map(endpoint => {
+      const queue = endpoint.queued_bytes !== undefined && endpoint.backlog_limit_bytes !== undefined
+        ? ` ${endpoint.queued_bytes}/${endpoint.backlog_limit_bytes} B`
+        : "";
+      const stalled = endpoint.stalled_for_ms !== undefined
+        ? ` · ${endpoint.stalled_for_ms} ms`
+        : "";
+      return `${endpoint.external_path}: ${endpoint.reason ?? "backpressured"}${queue}${stalled}`;
+    })
+    .join("\n");
   const error = connected ? runtime.error : undefined;
   const driverError = runtime.errorKind === "files_missing"
     || runtime.errorKind === "permission"
@@ -48,6 +60,15 @@ export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarConte
       {connected && endpoints.length > 0 ? (
         <StatusBarText>
           VPort: {endpoints.map(endpoint => endpoint.external_path).filter(Boolean).join(", ")}
+        </StatusBarText>
+      ) : null}
+
+      {connected && backpressuredEndpoints.length > 0 ? (
+        <StatusBarText tone="warning" title={backpressureTitle}>
+          <Icon name="warning" size="xs" />{" "}
+          {t("serial.virtualPortBackpressured", {
+            ports: backpressuredEndpoints.map(endpoint => endpoint.external_path).join(", "),
+          })}
         </StatusBarText>
       ) : null}
 

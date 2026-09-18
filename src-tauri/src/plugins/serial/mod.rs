@@ -15,7 +15,7 @@ use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
 use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::{is_internal_endpoint_path, VirtualEndpoint, VirtualPortConfig};
-use crate::virtual_port::bridge::VirtualPortBridge;
+use crate::virtual_port::bridge::{VirtualPortBridge, VirtualPortBridgeEvent};
 use crate::AppState;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -170,21 +170,53 @@ impl SerialRuntime {
             .map_err(|error| error.to_string())?
             .get_io_for(session_id)
             .ok_or_else(|| "串口会话缺少共享 I/O capability".to_string())?;
-        let error_app = app.clone();
-        let error_session_id = session_id.to_string();
+        let bridge_app = app.clone();
+        let bridge_session_id = session_id.to_string();
         let bridge = match VirtualPortBridge::spawn(
             endpoints.clone(),
             baud_rate,
             io,
-            Box::new(move |reason| {
-                let _ = error_app.emit(
-                    "virtual-port-failed",
-                    serde_json::json!({
-                        "session_id": error_session_id,
-                        "kind": "bridge_failed",
-                        "reason": reason,
-                    }),
-                );
+            Box::new(move |event| match event {
+                VirtualPortBridgeEvent::EndpointBackpressured {
+                    external_path,
+                    reason,
+                    queued_bytes,
+                    backlog_limit_bytes,
+                    stalled_for_ms,
+                } => {
+                    let _ = bridge_app.emit(
+                        "virtual-port-health",
+                        serde_json::json!({
+                            "session_id": bridge_session_id.as_str(),
+                            "external_path": external_path,
+                            "state": "backpressured",
+                            "reason": reason,
+                            "queued_bytes": queued_bytes,
+                            "backlog_limit_bytes": backlog_limit_bytes,
+                            "stalled_for_ms": stalled_for_ms,
+                        }),
+                    );
+                }
+                VirtualPortBridgeEvent::EndpointRecovered { external_path } => {
+                    let _ = bridge_app.emit(
+                        "virtual-port-health",
+                        serde_json::json!({
+                            "session_id": bridge_session_id.as_str(),
+                            "external_path": external_path,
+                            "state": "ready",
+                        }),
+                    );
+                }
+                VirtualPortBridgeEvent::Fatal { reason } => {
+                    let _ = bridge_app.emit(
+                        "virtual-port-failed",
+                        serde_json::json!({
+                            "session_id": bridge_session_id.as_str(),
+                            "kind": "bridge_failed",
+                            "reason": reason,
+                        }),
+                    );
+                }
             }),
         ) {
             Ok(bridge) => bridge,
@@ -211,7 +243,12 @@ impl SerialRuntime {
         }
         let payload = endpoints
             .iter()
-            .map(|endpoint| serde_json::json!({ "external_path": endpoint.external_path }))
+            .map(|endpoint| {
+                serde_json::json!({
+                    "external_path": endpoint.external_path,
+                    "state": "ready",
+                })
+            })
             .collect::<Vec<_>>();
         let _ = app.emit(
             "virtual-port-created",

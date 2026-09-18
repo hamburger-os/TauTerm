@@ -52,18 +52,20 @@ Serial 运行时只调用统一的 `ensure_endpoints` capability，并消费强�
 典型数据流：
 
 ```text
-物理 COM6 ⇄ Serial DataPlane ⇄ DataPlaneSubscription ⇄ VirtualPortBridge ⇄ internal endpoint ⇄ external endpoint
-                                      ↑
-                                  SessionIo confirmed write
+物理 COM6 → Serial DataPlane → named bounded subscription → VPort fan-out pump
+                                                        ├→ bounded egress → COM21 writer → internal → external COM21
+                                                        └→ bounded egress → COM23 writer → internal → external COM23
+
+external COM21/COM23 → per-endpoint reader → SessionIo confirmed write → 物理 COM6
 ```
 
-桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**，并由专用转发 worker 持续消费；每个 external endpoint 的虚拟 → 物理读取由独立 reader worker 承担，再通过 `Arc<SessionIo>` 做确认式写入。这样 external 端口的空闲读超时、暂时缺席或某个 reader 的调度不会占用 DataPlane subscription 的消费时间预算。订阅者若持续落后导致有界 backlog 满，DataPlane 仍会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。
+桥接不挂在 UI `on_data` 回调。物理 → 虚拟方向只有一个**有界 DataPlane subscription pump**，它只负责接收与非阻塞 fan-out，绝不执行可能阻塞的虚拟端口 I/O。每个 external endpoint 独占自己的 writer actor 和按字节计量的有界 egress backlog；预算随串口线速给出有限抖动窗口并设置硬上限，因此一个外部工具停止读取时只能耗尽自己的预算，不能拖慢 DataPlane subscription，也不能阻塞其它虚拟端口。多个 endpoint 共享物理数据块的不可变引用，fan-out 不为每个端口复制整块数据。
 
-多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在 Bridge 注册到 SessionStore 之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。
+每个 external endpoint 的虚拟 → 物理读取仍由独立 reader worker 承担，再通过 `Arc<SessionIo>` 做确认式写入。多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在 Bridge 注册到 SessionStore 之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。
 
-X/Y/ZModem 获得 Exclusive lease 时 Bridge 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。DataPlane subscription 溢出/断开或 virtual → physical 的确认写失败意味着已连接流无法继续保证完整性，Bridge 必须 fail-closed 并暴露错误。
+X/Y/ZModem 获得 Exclusive lease 时 Bridge 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。DataPlane subscription 自身若溢出/断开，或 virtual → physical 的确认写失败，说明共享数据面已经失去完整性，属于整个 Bridge 的明确失败。单个 external endpoint 的写入/读取持续无进展则只把该 endpoint 标记为 backpressured，暂停它的双向镜像并保留父 Serial Session、其它 endpoint 与 bridge supervisor。
 
-external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Bridge 因而可以在写入前区分“external endpoint 尚未打开”和“已连接 peer 出现真实 I/O 故障”。peer 缺席时不会建立历史 backlog，也不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具连接/重连。peer 已连接后发生写入、读取或 DataPlane 完整性失败则继续 fail-closed。没有实际 peer 时不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。
+external peer 的存在是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Bridge 因而可以区分“external endpoint 尚未打开”和“已打开 peer 长时间不消费”。peer 缺席时不会建立历史 backlog，也不会关闭 Bridge。Windows 上一个已连接 peer 触发 backpressure 后，必须先观察到该 peer 关闭、再重新打开，才能把 endpoint 恢复为 fresh stream；发生完整性缺口后的旧数据不会补发，也不会在同一 peer 连接上偷偷恢复。没有实际 peer 时不存在可保证投递的外部消费者，这与“已连接消费者因过载而静默丢字节”是不同语义。
 
 桥接只保证字节流转发，不模拟真实 UART 电气特性、调制解调器控制线或所有波特率行为。当前没有 actor-owned 的 DTR/RTS/CTS/DSR 能力，因此状态栏不得显示虚假的 `--` 占位；未来只有在 DataPlane/driver 提供真实控制线 capability 后才能暴露这些状态与控制。
 
@@ -119,8 +121,8 @@ flowchart LR
 - Serial transport 只解析真正消费的链路字段；终端展示与虚拟端口策略不得重新进入串口 driver 配置。
 - 串口链路配置错误必须 fail-fast，禁止以默认值掩盖损坏配置。
 - Transport open 不承担自动重试和清空输入缓冲等 Session 策略；设备 open 后产生的字节必须进入统一接收链路。
-- DataPlane subscriber 必须有界；透明桥接消费者一旦无法跟上必须明确失败，禁止静默丢字节或无界增长内存。
-- external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。
+- DataPlane subscriber 必须有界且带 consumer identity；VPort subscription pump 不执行 endpoint I/O，单个 peer 的慢消费只能触发自己的有界 egress backpressure，禁止扩散成 DataPlane overflow、静默丢字节或无界增长内存。
+- external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。Windows 已连接 peer 一旦发生数据完整性缺口，必须经过 close → reopen 才能以 fresh stream 恢复。
 - 虚拟串口创建/桥接启动失败不能让主串口连接的状态变成错误真相，并必须回滚本次不可用端点资源。
 - 平台提权逻辑不得进入普通 Serial UI/协议语义；Windows 直连 fallback 只在明确动作中按需 UAC，普通启动不得为了诊断/清理调用需要提升的 `setupc`。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。

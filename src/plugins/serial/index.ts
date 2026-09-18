@@ -99,6 +99,7 @@ export const serialPlugin = definePlugin({
       "noPorts": "未检测到串口",
       "refresh": "刷新端口列表",
       "virtualPortBridgeFailed": "虚拟串口桥接已停止，请查看日志详情",
+      "virtualPortBackpressured": "VPort {{ports}} 消费停滞，已暂停镜像；关闭并重新打开外部端口后恢复",
     },
     "en-US": {
       "port": "Port",
@@ -112,6 +113,7 @@ export const serialPlugin = definePlugin({
       "noPorts": "No serial ports detected",
       "refresh": "Refresh port list",
       "virtualPortBridgeFailed": "Virtual-port bridge stopped; see logs for details",
+      "virtualPortBackpressured": "VPort {{ports}} is stalled; mirroring is paused until the external peer is reopened",
     },
   },
 });

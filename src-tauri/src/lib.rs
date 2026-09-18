@@ -318,25 +318,39 @@ pub fn run() {
                             );
                         }
 
-                        let service_backend = virtual_port::service_backend::ServiceBackend::new();
-                        match service_backend.connect() {
-                            Ok(()) => {
-                                log::info!("虚拟串口管理后端: privileged-service");
-                                *vpm = Box::new(service_backend);
-                                let orphan_count = vpm.cleanup_orphans();
-                                if orphan_count > 0 {
-                                    log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                        #[cfg(debug_assertions)]
+                        {
+                            // Development binaries are not accepted by the installed privileged
+                            // service identity boundary. Select the documented direct-UAC backend
+                            // immediately instead of generating an expected pipe-handshake warning.
+                            log::info!(
+                                "虚拟串口管理后端: development-direct-uac（debug build）"
+                            );
+                            *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            let service_backend =
+                                virtual_port::service_backend::ServiceBackend::new();
+                            match service_backend.connect() {
+                                Ok(()) => {
+                                    log::info!("虚拟串口管理后端: privileged-service");
+                                    *vpm = Box::new(service_backend);
+                                    let orphan_count = vpm.cleanup_orphans();
+                                    if orphan_count > 0 {
+                                        log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                                    }
                                 }
-                            }
-                            Err(error) => {
-                                log::warn!(
-                                    "虚拟串口管理后端: direct-uac-on-demand（特权服务不可用: {}）",
-                                    error
-                                );
-                                // 直连回退的定义就是“显式动作时按需 UAC”。普通启动阶段
-                                // 不执行 setupc 枚举/清理，避免在未提权进程里触发 740；
-                                // ownership 仍持久化，后续创建/手动清理会在明确操作中处理。
-                                *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                                Err(error) => {
+                                    log::warn!(
+                                        "虚拟串口管理后端: direct-uac-on-demand（特权服务不可用: {}）",
+                                        error
+                                    );
+                                    // Release/portable fallback remains explicit-action UAC only:
+                                    // ordinary startup never enumerates or cleans setupc resources.
+                                    *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                                }
                             }
                         }
 

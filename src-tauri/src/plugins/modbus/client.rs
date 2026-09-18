@@ -172,7 +172,7 @@ impl ModbusClient {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if events_guard.is_none() {
-            match handle.subscribe() {
+            match handle.subscribe("modbus-client") {
                 Ok(events) => *events_guard = Some(events),
                 Err(error) => {
                     let result = self.failure(TransactionFailure {
@@ -445,7 +445,7 @@ impl ModbusClient {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         if events_guard.is_none() {
-            match handle.subscribe() {
+            match handle.subscribe("modbus-client") {
                 Ok(receiver) => *events_guard = Some(receiver),
                 Err(error) => {
                     return self.failure(TransactionFailure {
