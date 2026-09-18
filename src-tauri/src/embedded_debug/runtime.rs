@@ -39,6 +39,8 @@ pub(crate) enum DebugTargetRuntimeError {
     ServiceBusy { service: String },
     #[error("调试探针 {probe} 的目标连接仍在建立中")]
     TargetOpening { probe: String },
+    #[error("调试探针 {probe} 的上一目标 worker 仍在退出")]
+    TargetClosing { probe: String },
     #[error("调试探针 {probe} 已连接到不同目标配置")]
     TargetConfigConflict { probe: String },
 }
@@ -177,6 +179,7 @@ impl TargetScheduler {
 pub(crate) struct DebugTargetRuntime {
     scheduler: Arc<TargetScheduler>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    worker_exited: Arc<AtomicBool>,
     connection_config: DebugProbeConfig,
     descriptor: DebugTargetDescriptor,
     active_services: Mutex<HashSet<String>>,
@@ -190,11 +193,12 @@ impl DebugTargetRuntime {
         let connection_config = config.connection_config();
         let scheduler = Arc::new(TargetScheduler::new());
         let worker_scheduler = Arc::clone(&scheduler);
+        let worker_exit_signal = Arc::clone(&worker_exited);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("embedded-debug-target".to_string())
             .spawn(move || {
-                let _exit_guard = WorkerExitGuard(Arc::clone(&worker_exited));
+                let _exit_guard = WorkerExitGuard(worker_exit_signal);
                 let mut probe = match DebugProbeRuntime::open_resolved(&config) {
                     Ok(probe) => probe,
                     Err(error) => {
@@ -243,6 +247,7 @@ impl DebugTargetRuntime {
         Ok(Arc::new(Self {
             scheduler,
             worker: Mutex::new(Some(handle)),
+            worker_exited,
             connection_config,
             descriptor,
             active_services: Mutex::new(HashSet::new()),
@@ -265,6 +270,9 @@ impl DebugTargetRuntime {
         E: Send + 'static,
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
+        if self.worker_exited.load(Ordering::Acquire) {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
         let deadline = Instant::now() + timeout;
         let started = Arc::new(AtomicBool::new(false));
         let operation_started = Arc::clone(&started);
@@ -368,10 +376,17 @@ struct OpeningTarget {
     worker_exited: Arc<AtomicBool>,
 }
 
+struct ActiveTarget {
+    runtime: Weak<DebugTargetRuntime>,
+    connection_config: DebugProbeConfig,
+    worker_exited: Arc<AtomicBool>,
+    probe_label: String,
+}
+
 enum TargetSlotState {
     Vacant,
     Opening(OpeningTarget),
-    Active(Weak<DebugTargetRuntime>),
+    Active(ActiveTarget),
 }
 
 type TargetSlot = Arc<Mutex<TargetSlotState>>;
@@ -417,13 +432,23 @@ impl EmbeddedDebugManager {
             .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
         loop {
             match &*runtime_slot {
-                TargetSlotState::Active(runtime) => {
-                    if let Some(runtime) = runtime.upgrade() {
+                TargetSlotState::Active(active) => {
+                    if let Some(runtime) = active.runtime.upgrade() {
                         if runtime.connection_config == resolved.connection_config() {
                             return Ok(runtime);
                         }
                         return Err(DebugTargetRuntimeError::TargetConfigConflict {
                             probe: runtime.descriptor.probe_label.clone(),
+                        });
+                    }
+                    if !active.worker_exited.load(Ordering::Acquire) {
+                        if active.connection_config != resolved.connection_config() {
+                            return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                                probe: active.probe_label.clone(),
+                            });
+                        }
+                        return Err(DebugTargetRuntimeError::TargetClosing {
+                            probe: active.probe_label.clone(),
                         });
                     }
                     *runtime_slot = TargetSlotState::Vacant;
@@ -455,7 +480,12 @@ impl EmbeddedDebugManager {
 
         match DebugTargetRuntime::open(resolved, Arc::clone(&worker_exited)) {
             Ok(runtime) => {
-                *runtime_slot = TargetSlotState::Active(Arc::downgrade(&runtime));
+                *runtime_slot = TargetSlotState::Active(ActiveTarget {
+                    runtime: Arc::downgrade(&runtime),
+                    connection_config: runtime.connection_config.clone(),
+                    worker_exited: Arc::clone(&runtime.worker_exited),
+                    probe_label: runtime.descriptor.probe_label.clone(),
+                });
                 Ok(runtime)
             }
             Err(error) => {
