@@ -152,6 +152,11 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           {t("rtt.historyDropped", { count: snapshot?.dropped_history_chunks })}
         </div>
       )}
+      {(snapshot?.dropped_automation_chunks ?? 0) > 0 && (
+        <div className={styles.warningBanner}>
+          {t("rtt.automationDropped", { count: snapshot?.dropped_automation_chunks })}
+        </div>
+      )}
       {(snapshot?.dropped_presentation_chunks ?? 0) > 0 && (
         <div className={styles.warningBanner}>
           {t("rtt.presentationDropped", { count: snapshot?.dropped_presentation_chunks })}
