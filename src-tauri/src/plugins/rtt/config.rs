@@ -84,8 +84,8 @@ impl RttConfig {
             }
         };
         let speed_khz = match object.get("speed_khz").and_then(Value::as_u64) {
-            None | Some(0) => None,
-            Some(value) if value <= 50_000 => Some(value as u32),
+            None => None,
+            Some(value) if (1..=50_000).contains(&value) => Some(value as u32),
             Some(_) => return Err(RttError::invalid_config("调试接口速度必须在 1..50000 kHz")),
         };
         let core_index = bounded_u64(object.get("core_index"), 0, 0, 31, "CPU Core")? as usize;
@@ -282,6 +282,16 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(config.locator, RttLocator::Ranges(ref values) if values.len() == 2));
+    }
+
+    #[test]
+    fn zero_speed_is_not_a_legacy_auto_sentinel() {
+        let error = RttConfig::from_params(&json!({
+            "target": "nRF52840_xxAA",
+            "speed_khz": 0
+        }))
+        .unwrap_err();
+        assert!(error.message.contains("1..50000"));
     }
 
     #[test]
