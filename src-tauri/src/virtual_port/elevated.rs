@@ -7,12 +7,13 @@
 //! typed virtual-port operations.
 
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
 use std::ffi::OsString;
+use std::io::{Read, Write};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use windows_sys::core::{GUID, PWSTR};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_CANCELLED, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
 };
@@ -27,7 +28,6 @@ use windows_sys::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS,
     SHELLEXECUTEINFOW,
 };
-use windows_sys::core::{GUID, PWSTR};
 
 use super::backend::{VirtualEndpoint, VirtualPortConfig};
 use super::manager::VirtualPortManager;
@@ -368,7 +368,9 @@ fn validate_resource_dir(path: &Path) -> Result<PathBuf, String> {
     {
         let program_files = known_folder(&FOLDERID_ProgramFiles)
             .map(|path| normalize_path(&path))
-            .ok_or_else(|| "failed to resolve the Windows Program Files known folder".to_string())?;
+            .ok_or_else(|| {
+                "failed to resolve the Windows Program Files known folder".to_string()
+            })?;
         if !executable_dir.starts_with(&program_files) {
             return Err(format!(
                 "direct-UAC virtual-port management is disabled outside Program Files: {}",
