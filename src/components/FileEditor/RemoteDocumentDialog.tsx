@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { SftpEntry } from "../FileManager/types";
-import GlassButton from "../common/GlassButton";
+import ConfirmDialog from "../common/ConfirmDialog";
 import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import { REMOTE_DOCUMENT_ENCODINGS } from "./documentCodec";
@@ -35,33 +35,18 @@ export default function RemoteDocumentDialog({
 }: RemoteDocumentDialogProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const closeConfirmRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorColumn, setCursorColumn] = useState(1);
   const doc = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
   const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
 
-  const dismissCloseConfirm = useCallback(() => {
-    setConfirmClose(false);
-    const previous = restoreFocusRef.current;
-    restoreFocusRef.current = null;
-    requestAnimationFrame(() => {
-      if (previous?.isConnected) previous.focus();
-    });
-  }, []);
-
   const requestClose = useCallback(() => {
     // The SFTP document save is a transactional backend operation. Keep the editor mounted until
-    // it resolves so "close without saving" can never race an already-started remote commit.
+    // it resolves so closing can never race an already-started remote commit.
     if (doc.saving) return;
     if (doc.dirty) {
-      const active = document.activeElement;
-      restoreFocusRef.current = active instanceof HTMLElement && dialogRef.current?.contains(active)
-        ? active
-        : null;
       setConfirmClose(true);
       return;
     }
@@ -98,33 +83,23 @@ export default function RemoteDocumentDialog({
   }, [visible]);
 
   useEffect(() => {
-    if (!visible || !confirmClose) return;
-    const frame = requestAnimationFrame(() => {
-      closeConfirmRef.current
-        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]:not(:disabled)')
-        ?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [confirmClose, visible]);
-
-  useEffect(() => {
     if (!visible) return;
     const handler = (event: KeyboardEvent) => {
       // Let focused child widgets own keys they deliberately consume. In particular,
       // TextEditor uses Tab for indentation and Ctrl/Cmd+S for save without losing caret focus.
       if (event.defaultPrevented) return;
+      if (confirmCloseStateRef.current) return;
 
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         if (savingStateRef.current) return;
-        if (confirmCloseStateRef.current) dismissCloseConfirm();
-        else requestCloseRef.current();
+        requestCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
 
-      const focusRoot = confirmCloseStateRef.current ? closeConfirmRef.current : dialogRef.current;
+      const focusRoot = dialogRef.current;
       const focusable = Array.from(
         focusRoot?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
@@ -154,7 +129,7 @@ export default function RemoteDocumentDialog({
     // Bubble-phase handling lets component-level keyboard semantics run first.
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [dismissCloseConfirm, visible]);
+  }, [visible]);
 
   if (!visible) return null;
 
@@ -184,7 +159,7 @@ export default function RemoteDocumentDialog({
           <div className={styles.titleBlock}>
             <div className={styles.titleRow}>
               <span id="remote-document-title" className={styles.title}>{entry.name}</span>
-              {doc.dirty && <span className={styles.dirtyDot} aria-label={t("fileManager.modified")}>●</span>}
+              {doc.dirty && <span className={styles.dirtyDot} aria-label={t("fileManager.unsavedChanges")}>●</span>}
             </div>
             <div className={styles.path} title={entry.path}>{entry.path}</div>
           </div>
@@ -411,65 +386,22 @@ export default function RemoteDocumentDialog({
           </div>
         )}
 
-        {confirmClose && (
-          <div className={styles.confirmLayer} role="presentation">
-            <div
-              ref={closeConfirmRef}
-              className={`${styles.confirmCard} liquid-glass`}
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="remote-document-close-confirm-title"
-              aria-describedby="remote-document-close-confirm-message"
-              tabIndex={-1}
-            >
-              <div id="remote-document-close-confirm-title" className={styles.confirmTitle}>
-                {t("fileManager.modified")}
-              </div>
-              <div id="remote-document-close-confirm-message" className={styles.confirmMessage}>{entry.name}</div>
-              <div className={styles.confirmChoices}>
-                <GlassButton
-                  type="button"
-                  variant="danger"
-                  size="md"
-                  className={styles.confirmAction}
-                  disabled={doc.saving}
-                  onClick={onClose}
-                >
-                  {t("common.close")}
-                </GlassButton>
-                <GlassButton
-                  type="button"
-                  variant="primary"
-                  size="md"
-                  className={styles.confirmAction}
-                  disabled={saveDisabled}
-                  loading={doc.saving}
-                  onClick={async () => {
-                    if (await doc.save(false)) {
-                      onClose();
-                    } else {
-                      dismissCloseConfirm();
-                    }
-                  }}
-                >
-                  {t("common.save")}
-                </GlassButton>
-              </div>
-              <div className={styles.confirmFooter}>
-                <GlassButton
-                  type="button"
-                  variant="ghost"
-                  size="md"
-                  data-action="cancel"
-                  disabled={doc.saving}
-                  onClick={dismissCloseConfirm}
-                >
-                  {t("common.cancel")}
-                </GlassButton>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={confirmClose}
+          title={t("fileManager.saveChangesConfirm")}
+          message={entry.name}
+          busy={doc.saving}
+          onCancel={() => setConfirmClose(false)}
+          onConfirm={() => {
+            void doc.save(false).then((saved) => {
+              if (saved) {
+                onClose();
+              } else {
+                setConfirmClose(false);
+              }
+            });
+          }}
+        />
       </div>
     </div>,
     document.body,
