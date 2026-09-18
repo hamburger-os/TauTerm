@@ -75,11 +75,11 @@ struct ElevatedReply {
     error: Option<String>,
 }
 
-pub fn ensure_driver(resource_dir: &Path) -> Result<(), String> {
+pub(crate) fn ensure_driver(resource_dir: &Path) -> Result<(), String> {
     invoke(resource_dir, ElevatedOperation::EnsureDriver).map(|_| ())
 }
 
-pub fn ensure_endpoints(
+pub(crate) fn ensure_endpoints(
     resource_dir: &Path,
     count: u32,
     cleanup: Vec<VirtualEndpoint>,
@@ -90,7 +90,7 @@ pub fn ensure_endpoints(
     )
 }
 
-pub fn cleanup_endpoints(
+pub(crate) fn cleanup_endpoints(
     resource_dir: &Path,
     endpoints: Vec<VirtualEndpoint>,
 ) -> Result<Vec<VirtualEndpoint>, String> {
