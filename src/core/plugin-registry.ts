@@ -235,8 +235,13 @@ function validatePlugin(registration: PluginDefinition): void {
   if (!id || id !== id.trim() || id !== id.toLowerCase()) {
     throw new Error(`[PluginRegistry] 插件 ID 必须是非空、trim 后的小写值: "${id}"`);
   }
-  if (registration.manifest.capabilities.includes("connection") && !registration.connectForm) {
-    throw new Error(`[PluginRegistry] 连接插件 "${id}" 必须注册 connectForm`);
+  if (registration.manifest.capabilities.includes("connection")) {
+    if (!registration.connectForm) {
+      throw new Error(`[PluginRegistry] 连接插件 "${id}" 必须注册 connectForm`);
+    }
+    if (!registration.sessionPresentation?.defaultName) {
+      throw new Error(`[PluginRegistry] 连接插件 "${id}" 必须注册 sessionPresentation.defaultName`);
+    }
   }
 
   const statusIds = new Set<string>();
