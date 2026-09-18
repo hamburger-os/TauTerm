@@ -1,5 +1,6 @@
 use super::probe_runtime::{
-    DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime, DebugWireProtocol,
+    resolve_probe_config, DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime,
+    ResolvedDebugProbeConfig,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex, Weak};
@@ -9,25 +10,6 @@ use std::time::{Duration, Instant};
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DebugTargetKey {
-    selector: Option<String>,
-    target: String,
-    wire_protocol: DebugWireProtocol,
-    speed_khz: Option<u32>,
-}
-
-impl From<&DebugProbeConfig> for DebugTargetKey {
-    fn from(config: &DebugProbeConfig) -> Self {
-        Self {
-            selector: config.selector.clone(),
-            target: config.target.clone(),
-            wire_protocol: config.wire_protocol,
-            speed_khz: config.speed_khz,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct DebugTargetDescriptor {
@@ -49,6 +31,8 @@ pub(crate) enum DebugTargetRuntimeError {
     Timeout,
     #[error("调试目标服务 {service} 已被占用")]
     ServiceBusy { service: String },
+    #[error("调试探针 {probe} 已连接到不同目标配置")]
+    TargetConfigConflict { probe: String },
 }
 
 type TargetOperation = Box<dyn FnOnce(&mut DebugProbeRuntime) + Send + 'static>;
@@ -65,18 +49,19 @@ enum TargetCommand {
 pub(crate) struct DebugTargetRuntime {
     command_tx: mpsc::SyncSender<TargetCommand>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    connection_config: DebugProbeConfig,
     descriptor: DebugTargetDescriptor,
     active_services: Mutex<HashSet<String>>,
 }
 
 impl DebugTargetRuntime {
-    fn open(config: DebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
+    fn open(config: ResolvedDebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("embedded-debug-target".to_string())
             .spawn(move || {
-                let mut probe = match DebugProbeRuntime::open(&config) {
+                let mut probe = match DebugProbeRuntime::open_resolved(&config) {
                     Ok(probe) => probe,
                     Err(error) => {
                         let _ = startup_tx.send(Err(error));
@@ -119,6 +104,7 @@ impl DebugTargetRuntime {
         Ok(Arc::new(Self {
             command_tx,
             worker: Mutex::new(Some(handle)),
+            connection_config: config.connection_config(),
             descriptor,
             active_services: Mutex::new(HashSet::new()),
         }))
@@ -240,8 +226,10 @@ impl Drop for DebugServiceLease {
 /// A target is keyed by the connection properties that determine probe/target ownership. Different
 /// observation services can share the same target worker while an individual service kind (for
 /// example RTT acquisition) is protected by a service lease.
+type TargetSlot = Arc<Mutex<Weak<DebugTargetRuntime>>>;
+
 pub(crate) struct EmbeddedDebugManager {
-    targets: Mutex<HashMap<DebugTargetKey, Weak<DebugTargetRuntime>>>,
+    targets: Mutex<HashMap<String, TargetSlot>>,
 }
 
 impl EmbeddedDebugManager {
@@ -255,19 +243,34 @@ impl EmbeddedDebugManager {
         &self,
         config: &DebugProbeConfig,
     ) -> Result<Arc<DebugTargetRuntime>, DebugTargetRuntimeError> {
-        let key = DebugTargetKey::from(config);
-        let mut targets = self
-            .targets
+        let resolved = resolve_probe_config(config)?;
+        let selector = resolved.selector.clone();
+
+        let slot = {
+            let mut targets = self
+                .targets
+                .lock()
+                .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
+            targets
+                .entry(selector)
+                .or_insert_with(|| Arc::new(Mutex::new(Weak::new())))
+                .clone()
+        };
+
+        let mut runtime_slot = slot
             .lock()
             .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
-
-        if let Some(runtime) = targets.get(&key).and_then(Weak::upgrade) {
-            return Ok(runtime);
+        if let Some(runtime) = runtime_slot.upgrade() {
+            if runtime.connection_config == resolved.connection_config() {
+                return Ok(runtime);
+            }
+            return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                probe: runtime.descriptor.probe_label.clone(),
+            });
         }
 
-        targets.retain(|_, runtime| runtime.strong_count() > 0);
-        let runtime = DebugTargetRuntime::open(config.clone())?;
-        targets.insert(key, Arc::downgrade(&runtime));
+        let runtime = DebugTargetRuntime::open(resolved)?;
+        *runtime_slot = Arc::downgrade(&runtime);
         Ok(runtime)
     }
 }
@@ -283,17 +286,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn target_key_keeps_transport_identity_fields() {
+    fn target_connection_config_distinguishes_session_settings_not_service_kind() {
         let config = DebugProbeConfig {
             selector: Some("probe".to_string()),
             target: "chip".to_string(),
-            wire_protocol: DebugWireProtocol::Swd,
+            wire_protocol: super::super::probe_runtime::DebugWireProtocol::Swd,
             speed_khz: Some(4_000),
         };
-        let key = DebugTargetKey::from(&config);
-        assert_eq!(key.selector.as_deref(), Some("probe"));
-        assert_eq!(key.target, "chip");
-        assert_eq!(key.wire_protocol, DebugWireProtocol::Swd);
-        assert_eq!(key.speed_khz, Some(4_000));
+        let same = config.clone();
+        let mut different = config.clone();
+        different.speed_khz = Some(2_000);
+
+        assert_eq!(config, same);
+        assert_ne!(config, different);
     }
 }
