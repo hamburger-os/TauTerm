@@ -4,6 +4,7 @@ mod probe_rs;
 use super::config::{RttBackendKind, RttConfig};
 use super::error::RttError;
 use super::model::{RttBackendDescriptor, RttChannelInfo, RttProbeInfo, RttReadChunk};
+use crate::embedded_debug::runtime::EmbeddedDebugManager;
 
 pub trait RttBackend {
     fn descriptor(&self) -> RttBackendDescriptor;
@@ -14,9 +15,15 @@ pub trait RttBackend {
     fn shutdown(&mut self) {}
 }
 
-pub fn open_backend(config: &RttConfig) -> Result<Box<dyn RttBackend>, RttError> {
+pub fn open_backend(
+    config: &RttConfig,
+    embedded_debug: &EmbeddedDebugManager,
+) -> Result<Box<dyn RttBackend>, RttError> {
     match config.backend {
-        RttBackendKind::ProbeRs => Ok(Box::new(probe_rs::ProbeRsRttBackend::open(config)?)),
+        RttBackendKind::ProbeRs => Ok(Box::new(probe_rs::ProbeRsRttBackend::open(
+            config,
+            embedded_debug,
+        )?)),
         RttBackendKind::JlinkExisting => Ok(Box::new(
             jlink_existing::JlinkExistingRttBackend::open(config)?,
         )),
