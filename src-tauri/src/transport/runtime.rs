@@ -914,9 +914,7 @@ fn handle_command(
             CommandOutcome::Continue
         }
         RuntimeCommand::Unsubscribe { id } => {
-            state
-                .subscribers
-                .retain(|subscriber| subscriber.id != id);
+            state.subscribers.retain(|subscriber| subscriber.id != id);
             CommandOutcome::Continue
         }
         RuntimeCommand::AcquireExclusive {
