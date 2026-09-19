@@ -48,6 +48,8 @@ export interface RttSnapshot {
   phase: "idle" | "opening_backend" | "running" | "faulted" | "stopping";
   backend?: RttBackendDescriptor | null;
   channels: RttChannelInfo[];
+  automation_source_channel: number | null;
+  send_channel: number | null;
   rx_bytes: number;
   tx_bytes: number;
   dropped_history_bytes: number;
@@ -56,6 +58,7 @@ export interface RttSnapshot {
   dropped_automation_chunks: number;
   dropped_presentation_bytes: number;
   dropped_presentation_chunks: number;
+  runtime_pressure_events: number;
   last_error?: RttErrorSnapshot | null;
 }
 

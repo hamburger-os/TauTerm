@@ -13,9 +13,10 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
 
   if (writable.length === 0) return null;
 
-  const selected = runtime.selectedSendChannel != null
-    && writable.some(channel => channel.index === runtime.selectedSendChannel)
-    ? runtime.selectedSendChannel
+  const runtimeSelected = runtime.snapshot?.send_channel ?? null;
+  const selected = runtimeSelected != null
+    && writable.some(channel => channel.index === runtimeSelected)
+    ? runtimeSelected
     : writable[0].index;
 
   return (

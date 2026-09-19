@@ -50,6 +50,10 @@ pub struct RttSnapshot {
     pub phase: RttPhase,
     pub backend: Option<RttBackendDescriptor>,
     pub channels: Vec<RttChannelInfo>,
+    /// Runtime-authoritative Up Channel used when new automation consumers subscribe.
+    pub automation_source_channel: Option<u32>,
+    /// Runtime-authoritative Down Channel used by shared SendBar/AutomationIo.
+    pub send_channel: Option<u32>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub dropped_history_bytes: u64,
@@ -60,6 +64,8 @@ pub struct RttSnapshot {
     /// Loss in the best-effort WebView presentation queue only. History/recording are independent.
     pub dropped_presentation_bytes: u64,
     pub dropped_presentation_chunks: u64,
+    /// Retryable shared-target scheduler pressure observed while the session stayed connected.
+    pub runtime_pressure_events: u64,
     pub last_error: Option<RttError>,
 }
 
@@ -70,6 +76,8 @@ impl Default for RttSnapshot {
             phase: RttPhase::Idle,
             backend: None,
             channels: Vec::new(),
+            automation_source_channel: None,
+            send_channel: None,
             rx_bytes: 0,
             tx_bytes: 0,
             dropped_history_bytes: 0,
@@ -78,6 +86,7 @@ impl Default for RttSnapshot {
             dropped_automation_chunks: 0,
             dropped_presentation_bytes: 0,
             dropped_presentation_chunks: 0,
+            runtime_pressure_events: 0,
             last_error: None,
         }
     }

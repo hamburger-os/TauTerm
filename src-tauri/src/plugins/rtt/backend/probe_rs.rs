@@ -313,15 +313,24 @@ fn map_target_runtime_error(error: DebugTargetRuntimeError) -> RttError {
     match error {
         DebugTargetRuntimeError::Open(error) => map_probe_open_error(error),
         DebugTargetRuntimeError::ServiceBusy { .. }
+        | DebugTargetRuntimeError::TargetOpening { .. }
+        | DebugTargetRuntimeError::TargetClosing { .. }
         | DebugTargetRuntimeError::TargetConfigConflict { .. } => {
             RttError::new(RttErrorCode::ProbeBusy, error.to_string())
         }
-        DebugTargetRuntimeError::Timeout => {
-            RttError::new(RttErrorCode::ProbeDisconnected, error.to_string())
+        DebugTargetRuntimeError::StartupTimeout => {
+            RttError::new(RttErrorCode::TargetAttachFailed, error.to_string())
         }
-        DebugTargetRuntimeError::QueueFull
-        | DebugTargetRuntimeError::WorkerStopped
-        | DebugTargetRuntimeError::WorkerStart(_) => {
+        DebugTargetRuntimeError::Timeout => {
+            RttError::new(RttErrorCode::OperationTimeout, error.to_string())
+        }
+        DebugTargetRuntimeError::InFlightTimeout => {
+            RttError::new(RttErrorCode::OperationOutcomeUnknown, error.to_string())
+        }
+        DebugTargetRuntimeError::QueueFull => {
+            RttError::new(RttErrorCode::SchedulerBusy, error.to_string())
+        }
+        DebugTargetRuntimeError::WorkerStopped | DebugTargetRuntimeError::WorkerStart(_) => {
             RttError::new(RttErrorCode::BackendFault, error.to_string())
         }
     }

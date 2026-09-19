@@ -145,8 +145,12 @@ pub(super) fn run(
 
         let mut reads = Vec::<RttReadChunk>::new();
         if let Err(error) = backend.poll(&mut reads) {
-            fatal_error = Some(error);
-            break;
+            if error.is_transient_runtime_pressure() {
+                shared.record_runtime_pressure();
+            } else {
+                fatal_error = Some(error);
+                break;
+            }
         }
         for read in reads {
             let chunk = shared.record_rx(read.channel_index, read.data);
@@ -171,18 +175,22 @@ pub(super) fn run(
             }
         }
 
-        service_one_write(
+        if let Some(error) = service_one_write(
             backend.as_mut(),
             &shared,
             &mut writes,
             log_tx.as_ref(),
             &session_id,
-        );
+        ) {
+            fatal_error = Some(error);
+            break;
+        }
 
         if !presentation.is_empty() && last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL {
             emit_presentation_batch(
                 &app,
                 &session_id,
+                &shared,
                 &mut presentation,
                 &mut presentation_bytes,
             );
@@ -199,6 +207,7 @@ pub(super) fn run(
     emit_presentation_batch(
         &app,
         &session_id,
+        &shared,
         &mut presentation,
         &mut presentation_bytes,
     );
@@ -224,14 +233,12 @@ fn service_one_write(
     writes: &mut VecDeque<PendingWrite>,
     log_tx: Option<&mpsc::SyncSender<LogEntry>>,
     session_id: &str,
-) {
-    let Some(mut pending) = writes.pop_front() else {
-        return;
-    };
+) -> Option<RttError> {
+    let mut pending = writes.pop_front()?;
 
     if Instant::now() >= pending.deadline {
         let _ = pending.reply.send(Err(write_timeout(&pending)));
-        return;
+        return None;
     }
 
     let end = pending
@@ -265,9 +272,14 @@ fn service_one_write(
             }
         }
         Err(error) => {
-            let _ = pending.reply.send(Err(error));
+            let fatal = error.has_indeterminate_outcome();
+            let _ = pending.reply.send(Err(error.clone()));
+            if fatal {
+                return Some(error);
+            }
         }
     }
+    None
 }
 
 fn write_timeout(pending: &PendingWrite) -> RttError {
@@ -324,27 +336,35 @@ fn log_rtt_data(
 fn emit_presentation_batch(
     app: &AppHandle,
     session_id: &str,
+    shared: &Arc<RttShared>,
     presentation: &mut VecDeque<StoredRttChunk>,
     presentation_bytes: &mut usize,
 ) {
     if presentation.is_empty() {
         return;
     }
+    let batch_chunks = presentation.len();
+    let batch_bytes = *presentation_bytes;
     let chunks = presentation
         .drain(..)
         .map(|chunk| RttChunkDto::from_stored(&chunk))
         .collect::<Vec<_>>();
     *presentation_bytes = 0;
     let generation = chunks.first().map_or(0, |chunk| chunk.generation);
-    let _ = app.emit(
-        "rtt-event",
-        json!({
-            "kind": "batch",
-            "session_id": session_id,
-            "generation": generation,
-            "chunks": chunks,
-        }),
-    );
+    if app
+        .emit(
+            "rtt-event",
+            json!({
+                "kind": "batch",
+                "session_id": session_id,
+                "generation": generation,
+                "chunks": chunks,
+            }),
+        )
+        .is_err()
+    {
+        shared.record_presentation_drop_batch(batch_chunks, batch_bytes);
+    }
 }
 
 fn emit_snapshot(app: &AppHandle, session_id: &str, shared: &Arc<RttShared>) -> Result<(), ()> {
@@ -445,7 +465,7 @@ mod tests {
         }]);
 
         while !writes.is_empty() {
-            service_one_write(&mut backend, &shared, &mut writes, None, "test");
+            assert!(service_one_write(&mut backend, &shared, &mut writes, None, "test").is_none());
         }
 
         assert_eq!(reply_rx.recv().unwrap().unwrap(), payload.len());

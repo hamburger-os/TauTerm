@@ -25,6 +25,9 @@ pub enum RttErrorCode {
     JlinkChannelConfigFailed,
     TargetDisconnected,
     ProbeDisconnected,
+    SchedulerBusy,
+    OperationTimeout,
+    OperationOutcomeUnknown,
     InvalidConfig,
     BackendFault,
     Cancelled,
@@ -55,6 +58,9 @@ impl RttErrorCode {
             Self::JlinkChannelConfigFailed => "jlink_channel_config_failed",
             Self::TargetDisconnected => "target_disconnected",
             Self::ProbeDisconnected => "probe_disconnected",
+            Self::SchedulerBusy => "scheduler_busy",
+            Self::OperationTimeout => "operation_timeout",
+            Self::OperationOutcomeUnknown => "operation_outcome_unknown",
             Self::InvalidConfig => "invalid_config",
             Self::BackendFault => "backend_fault",
             Self::Cancelled => "cancelled",
@@ -83,6 +89,17 @@ impl RttError {
 
     pub fn backend(message: impl Into<String>) -> Self {
         Self::new(RttErrorCode::BackendFault, message)
+    }
+
+    pub fn is_transient_runtime_pressure(&self) -> bool {
+        matches!(
+            self.code,
+            RttErrorCode::SchedulerBusy | RttErrorCode::OperationTimeout
+        )
+    }
+
+    pub fn has_indeterminate_outcome(&self) -> bool {
+        self.code == RttErrorCode::OperationOutcomeUnknown
     }
 }
 

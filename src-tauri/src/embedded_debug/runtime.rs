@@ -2,12 +2,14 @@ use super::probe_runtime::{
     resolve_probe_config, DebugProbeConfig, DebugProbeOpenError, DebugProbeRuntime,
     ResolvedDebugProbeConfig,
 };
-use std::collections::{HashMap, HashSet};
-use std::sync::{mpsc, Arc, Mutex, Weak};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const SERVICE_QUEUE_CAPACITY: usize = 16;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -27,19 +29,147 @@ pub(crate) enum DebugTargetRuntimeError {
     QueueFull,
     #[error("嵌入式调试目标 worker 已停止")]
     WorkerStopped,
-    #[error("等待嵌入式调试目标操作完成超时")]
+    #[error("等待嵌入式调试目标打开超时")]
+    StartupTimeout,
+    #[error("嵌入式调试目标操作在调度前超时")]
     Timeout,
+    #[error("嵌入式调试目标操作执行中超时，结果状态未知")]
+    InFlightTimeout,
     #[error("调试目标服务 {service} 已被占用")]
     ServiceBusy { service: String },
+    #[error("调试探针 {probe} 的目标连接仍在建立中")]
+    TargetOpening { probe: String },
+    #[error("调试探针 {probe} 的上一目标 worker 仍在退出")]
+    TargetClosing { probe: String },
     #[error("调试探针 {probe} 已连接到不同目标配置")]
     TargetConfigConflict { probe: String },
 }
 
 type TargetOperation = Box<dyn FnOnce(&mut DebugProbeRuntime) + Send + 'static>;
 
-enum TargetCommand {
-    Execute(TargetOperation),
-    Shutdown(mpsc::SyncSender<()>),
+struct WorkerExitGuard(Arc<AtomicBool>);
+
+impl Drop for WorkerExitGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+struct ScheduledTargetOperation {
+    service: String,
+    operation: TargetOperation,
+}
+
+#[derive(Default)]
+struct TargetSchedulerState {
+    queues: HashMap<String, VecDeque<TargetOperation>>,
+    service_order: VecDeque<String>,
+    total_pending: usize,
+    closed: bool,
+    shutdown_reply: Option<mpsc::SyncSender<()>>,
+}
+
+struct TargetScheduler {
+    state: Mutex<TargetSchedulerState>,
+    ready: Condvar,
+}
+
+enum ScheduledWork {
+    Operation(ScheduledTargetOperation),
+    Shutdown(Option<mpsc::SyncSender<()>>),
+}
+
+impl TargetScheduler {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(TargetSchedulerState::default()),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn try_enqueue(
+        &self,
+        service: &str,
+        operation: TargetOperation,
+    ) -> Result<(), DebugTargetRuntimeError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
+        if state.closed {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
+        if state.total_pending >= COMMAND_QUEUE_CAPACITY {
+            return Err(DebugTargetRuntimeError::QueueFull);
+        }
+
+        let queue = state.queues.entry(service.to_string()).or_default();
+        if queue.len() >= SERVICE_QUEUE_CAPACITY {
+            return Err(DebugTargetRuntimeError::QueueFull);
+        }
+        let was_empty = queue.is_empty();
+        queue.push_back(operation);
+        state.total_pending += 1;
+        if was_empty {
+            state.service_order.push_back(service.to_string());
+        }
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn request_shutdown(&self, reply: mpsc::SyncSender<()>) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                let _ = reply.send(());
+                return;
+            }
+            state.closed = true;
+            state.queues.clear();
+            state.service_order.clear();
+            state.total_pending = 0;
+            state.shutdown_reply = Some(reply);
+            self.ready.notify_all();
+        } else {
+            // A poisoned scheduler cannot safely acknowledge shutdown. Dropping the reply keeps
+            // DebugTargetRuntime::drop on the bounded detach path instead of joining a worker
+            // whose scheduler state could no longer be closed.
+            drop(reply);
+        }
+    }
+
+    fn next(&self) -> ScheduledWork {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        loop {
+            if state.closed {
+                return ScheduledWork::Shutdown(state.shutdown_reply.take());
+            }
+
+            if let Some(service) = state.service_order.pop_front() {
+                let (operation, remove_queue) = {
+                    let queue = state
+                        .queues
+                        .get_mut(&service)
+                        .expect("scheduled service queue must exist");
+                    let operation = queue
+                        .pop_front()
+                        .expect("scheduled service queue must not be empty");
+                    (operation, queue.is_empty())
+                };
+                state.total_pending = state.total_pending.saturating_sub(1);
+                if remove_queue {
+                    state.queues.remove(&service);
+                } else {
+                    state.service_order.push_back(service.clone());
+                }
+                return ScheduledWork::Operation(ScheduledTargetOperation { service, operation });
+            }
+
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+    }
 }
 
 /// Single-owner debug-target worker shared by RTT and future observation services.
@@ -47,21 +177,28 @@ enum TargetCommand {
 /// The probe-rs Session never leaves this worker thread. Protocol/observation services submit
 /// short operations and keep their own protocol state outside the target worker.
 pub(crate) struct DebugTargetRuntime {
-    command_tx: mpsc::SyncSender<TargetCommand>,
+    scheduler: Arc<TargetScheduler>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    worker_exited: Arc<AtomicBool>,
     connection_config: DebugProbeConfig,
     descriptor: DebugTargetDescriptor,
     active_services: Mutex<HashSet<String>>,
 }
 
 impl DebugTargetRuntime {
-    fn open(config: ResolvedDebugProbeConfig) -> Result<Arc<Self>, DebugTargetRuntimeError> {
+    fn open(
+        config: ResolvedDebugProbeConfig,
+        worker_exited: Arc<AtomicBool>,
+    ) -> Result<Arc<Self>, DebugTargetRuntimeError> {
         let connection_config = config.connection_config();
-        let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+        let scheduler = Arc::new(TargetScheduler::new());
+        let worker_scheduler = Arc::clone(&scheduler);
+        let worker_exit_signal = Arc::clone(&worker_exited);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("embedded-debug-target".to_string())
             .spawn(move || {
+                let _exit_guard = WorkerExitGuard(worker_exit_signal);
                 let mut probe = match DebugProbeRuntime::open_resolved(&config) {
                     Ok(probe) => probe,
                     Err(error) => {
@@ -77,11 +214,16 @@ impl DebugTargetRuntime {
                     return;
                 }
 
-                while let Ok(command) = command_rx.recv() {
-                    match command {
-                        TargetCommand::Execute(operation) => operation(&mut probe),
-                        TargetCommand::Shutdown(reply) => {
-                            let _ = reply.send(());
+                loop {
+                    match worker_scheduler.next() {
+                        ScheduledWork::Operation(operation) => {
+                            debug_assert!(!operation.service.is_empty());
+                            (operation.operation)(&mut probe);
+                        }
+                        ScheduledWork::Shutdown(reply) => {
+                            if let Some(reply) = reply {
+                                let _ = reply.send(());
+                            }
                             break;
                         }
                     }
@@ -95,16 +237,20 @@ impl DebugTargetRuntime {
                 let _ = handle.join();
                 return Err(DebugTargetRuntimeError::Open(error));
             }
-            Err(_) => {
-                // Dropping command_tx lets a late-starting worker exit as soon as probe open returns.
-                drop(command_tx);
-                return Err(DebugTargetRuntimeError::Timeout);
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // The worker still owns config/probe open. A late startup observes the dropped
+                // startup receiver and exits without accepting target work.
+                return Err(DebugTargetRuntimeError::StartupTimeout);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(DebugTargetRuntimeError::WorkerStopped);
             }
         };
 
         Ok(Arc::new(Self {
-            command_tx,
+            scheduler,
             worker: Mutex::new(Some(handle)),
+            worker_exited,
             connection_config,
             descriptor,
             active_services: Mutex::new(HashSet::new()),
@@ -113,11 +259,12 @@ impl DebugTargetRuntime {
 
     /// Execute one short operation on the single owner of the probe-rs Session.
     ///
-    /// A command that waited in the shared queue until its caller deadline is discarded before
+    /// A command that waited in its service queue until the caller deadline is discarded before
     /// touching the target. This prevents a timed-out write/read request from producing a late
     /// target-side effect after another service temporarily occupied the worker.
     fn execute<T, E, F>(
         &self,
+        service: &str,
         timeout: Duration,
         operation: F,
     ) -> Result<Result<T, E>, DebugTargetRuntimeError>
@@ -126,24 +273,31 @@ impl DebugTargetRuntime {
         E: Send + 'static,
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
+        if self.worker_exited.load(Ordering::Acquire) {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
         let deadline = Instant::now() + timeout;
+        let started = Arc::new(AtomicBool::new(false));
+        let operation_started = Arc::clone(&started);
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.command_tx
-            .try_send(TargetCommand::Execute(Box::new(move |probe| {
+        self.scheduler.try_enqueue(
+            service,
+            Box::new(move |probe| {
                 if Instant::now() >= deadline {
                     let _ = reply_tx.send(Err(DebugTargetRuntimeError::Timeout));
                     return;
                 }
+                operation_started.store(true, Ordering::Release);
                 let _ = reply_tx.send(Ok(operation(probe)));
-            })))
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => DebugTargetRuntimeError::QueueFull,
-                mpsc::TrySendError::Disconnected(_) => DebugTargetRuntimeError::WorkerStopped,
-            })?;
+            }),
+        )?;
 
         reply_rx
             .recv_timeout(timeout)
             .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout if started.load(Ordering::Acquire) => {
+                    DebugTargetRuntimeError::InFlightTimeout
+                }
                 mpsc::RecvTimeoutError::Timeout => DebugTargetRuntimeError::Timeout,
                 mpsc::RecvTimeoutError::Disconnected => DebugTargetRuntimeError::WorkerStopped,
             })?
@@ -153,6 +307,9 @@ impl DebugTargetRuntime {
         self: &Arc<Self>,
         service: impl Into<String>,
     ) -> Result<DebugServiceLease, DebugTargetRuntimeError> {
+        if self.worker_exited.load(Ordering::Acquire) {
+            return Err(DebugTargetRuntimeError::WorkerStopped);
+        }
         let service = service.into();
         let mut active = self
             .active_services
@@ -171,11 +328,8 @@ impl DebugTargetRuntime {
 impl Drop for DebugTargetRuntime {
     fn drop(&mut self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        let join_safe = match self.command_tx.try_send(TargetCommand::Shutdown(reply_tx)) {
-            Ok(()) => reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok(),
-            Err(mpsc::TrySendError::Disconnected(_)) => true,
-            Err(mpsc::TrySendError::Full(_)) => false,
-        };
+        self.scheduler.request_shutdown(reply_tx);
+        let join_safe = reply_rx.recv_timeout(SHUTDOWN_TIMEOUT).is_ok();
 
         if let Ok(worker) = self.worker.get_mut() {
             if let Some(handle) = worker.take() {
@@ -185,8 +339,7 @@ impl Drop for DebugTargetRuntime {
                 }
                 // A stuck probe operation cannot safely be cancelled. If the bounded shutdown
                 // handshake did not complete, dropping JoinHandle deliberately detaches the
-                // worker; dropping command_tx at the end of this destructor disconnects its
-                // queue so it exits once the in-flight operation eventually returns.
+                // worker; the scheduler is already closed, so no new operation can reach it.
             }
         }
     }
@@ -212,7 +365,7 @@ impl DebugServiceLease {
         E: Send + 'static,
         F: FnOnce(&mut DebugProbeRuntime) -> Result<T, E> + Send + 'static,
     {
-        self.runtime.execute(timeout, operation)
+        self.runtime.execute(&self.service, timeout, operation)
     }
 }
 
@@ -224,7 +377,25 @@ impl Drop for DebugServiceLease {
     }
 }
 
-type TargetSlot = Arc<Mutex<Weak<DebugTargetRuntime>>>;
+struct OpeningTarget {
+    connection_config: DebugProbeConfig,
+    worker_exited: Arc<AtomicBool>,
+}
+
+struct ActiveTarget {
+    runtime: Weak<DebugTargetRuntime>,
+    connection_config: DebugProbeConfig,
+    worker_exited: Arc<AtomicBool>,
+    probe_label: String,
+}
+
+enum TargetSlotState {
+    Vacant,
+    Opening(OpeningTarget),
+    Active(ActiveTarget),
+}
+
+type TargetSlot = Arc<Mutex<TargetSlotState>>;
 
 /// Process-local registry for physical debug probes.
 ///
@@ -257,26 +428,86 @@ impl EmbeddedDebugManager {
                 .lock()
                 .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
             targets
-                .entry(selector)
-                .or_insert_with(|| Arc::new(Mutex::new(Weak::new())))
+                .entry(selector.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(TargetSlotState::Vacant)))
                 .clone()
         };
 
         let mut runtime_slot = slot
             .lock()
             .map_err(|_| DebugTargetRuntimeError::WorkerStopped)?;
-        if let Some(runtime) = runtime_slot.upgrade() {
-            if runtime.connection_config == resolved.connection_config() {
-                return Ok(runtime);
+        loop {
+            match &*runtime_slot {
+                TargetSlotState::Active(active) => {
+                    if let Some(runtime) = active.runtime.upgrade() {
+                        if runtime.worker_exited.load(Ordering::Acquire) {
+                            *runtime_slot = TargetSlotState::Vacant;
+                            continue;
+                        }
+                        if runtime.connection_config == resolved.connection_config() {
+                            return Ok(runtime);
+                        }
+                        return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                            probe: runtime.descriptor.probe_label.clone(),
+                        });
+                    }
+                    if !active.worker_exited.load(Ordering::Acquire) {
+                        if active.connection_config != resolved.connection_config() {
+                            return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                                probe: active.probe_label.clone(),
+                            });
+                        }
+                        return Err(DebugTargetRuntimeError::TargetClosing {
+                            probe: active.probe_label.clone(),
+                        });
+                    }
+                    *runtime_slot = TargetSlotState::Vacant;
+                }
+                TargetSlotState::Opening(opening) => {
+                    if opening.worker_exited.load(Ordering::Acquire) {
+                        *runtime_slot = TargetSlotState::Vacant;
+                        continue;
+                    }
+                    if opening.connection_config != resolved.connection_config() {
+                        return Err(DebugTargetRuntimeError::TargetConfigConflict {
+                            probe: selector.clone(),
+                        });
+                    }
+                    return Err(DebugTargetRuntimeError::TargetOpening {
+                        probe: selector.clone(),
+                    });
+                }
+                TargetSlotState::Vacant => break,
             }
-            return Err(DebugTargetRuntimeError::TargetConfigConflict {
-                probe: runtime.descriptor.probe_label.clone(),
-            });
         }
 
-        let runtime = DebugTargetRuntime::open(resolved)?;
-        *runtime_slot = Arc::downgrade(&runtime);
-        Ok(runtime)
+        let connection_config = resolved.connection_config();
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        *runtime_slot = TargetSlotState::Opening(OpeningTarget {
+            connection_config,
+            worker_exited: Arc::clone(&worker_exited),
+        });
+
+        match DebugTargetRuntime::open(resolved, Arc::clone(&worker_exited)) {
+            Ok(runtime) => {
+                *runtime_slot = TargetSlotState::Active(ActiveTarget {
+                    runtime: Arc::downgrade(&runtime),
+                    connection_config: runtime.connection_config.clone(),
+                    worker_exited: Arc::clone(&runtime.worker_exited),
+                    probe_label: runtime.descriptor.probe_label.clone(),
+                });
+                Ok(runtime)
+            }
+            Err(error) => {
+                let late_open_still_running =
+                    matches!(&error, DebugTargetRuntimeError::StartupTimeout)
+                        && !worker_exited.load(Ordering::Acquire);
+                if !late_open_still_running {
+                    *runtime_slot = TargetSlotState::Vacant;
+                }
+                Err(error)
+            }
+        }
     }
 }
 
@@ -289,6 +520,34 @@ impl Default for EmbeddedDebugManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduler_round_robins_services_and_bounds_each_service() {
+        let scheduler = TargetScheduler::new();
+        for _ in 0..SERVICE_QUEUE_CAPACITY {
+            scheduler.try_enqueue("rtt", Box::new(|_| {})).unwrap();
+        }
+        assert!(matches!(
+            scheduler.try_enqueue("rtt", Box::new(|_| {})),
+            Err(DebugTargetRuntimeError::QueueFull)
+        ));
+        scheduler
+            .try_enqueue("superwatch", Box::new(|_| {}))
+            .unwrap();
+
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "rtt"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "superwatch"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
+        match scheduler.next() {
+            ScheduledWork::Operation(operation) => assert_eq!(operation.service, "rtt"),
+            ScheduledWork::Shutdown(_) => panic!("unexpected shutdown"),
+        }
+    }
 
     #[test]
     fn target_connection_config_distinguishes_session_settings_not_service_kind() {

@@ -2,7 +2,9 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
 use super::worker::{self, WorkerCommand, WorkerContext};
-use crate::embedded_debug::observation::ObservationSequencer;
+use crate::embedded_debug::observation::{
+    ObservationSequencer, ObservationSource, ObservationSubscription,
+};
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
@@ -17,8 +19,9 @@ const HISTORY_PER_CHANNEL_BYTES: usize = 256 * 1024;
 const HISTORY_PER_SESSION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_HISTORY_RESPONSE_CHUNKS: usize = 512;
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const AUTOMATION_SUBSCRIPTION_CAPACITY: usize = 1024;
-const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(3);
+const RAW_OBSERVATION_SUBSCRIPTION_CAPACITY: usize = 1024;
+const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_REPLY_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -137,19 +140,14 @@ impl HistoryStore {
     }
 }
 
-struct RttAutomationSubscriber {
-    source_channel: u32,
-    sender: mpsc::SyncSender<Vec<u8>>,
-}
-
 pub(super) struct RttShared {
     snapshot: Mutex<RttSnapshot>,
     history: Mutex<HistoryStore>,
     sequencer: ObservationSequencer,
+    raw_source: ObservationSource<StoredRttChunk>,
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
-    automation_subscribers: Mutex<Vec<RttAutomationSubscriber>>,
 }
 
 impl RttShared {
@@ -163,10 +161,10 @@ impl RttShared {
             }),
             history: Mutex::new(HistoryStore::default()),
             sequencer,
+            raw_source: ObservationSource::new(RAW_OBSERVATION_SUBSCRIPTION_CAPACITY),
             channel_offsets: Mutex::new(BTreeMap::new()),
             automation_source_channel: Mutex::new(None),
             send_channel: Mutex::new(None),
-            automation_subscribers: Mutex::new(Vec::new()),
         }
     }
 
@@ -185,21 +183,26 @@ impl RttShared {
         descriptor: super::model::RttBackendDescriptor,
         channels: Vec<super::model::RttChannelInfo>,
     ) {
-        if let Ok(mut selected) = self.automation_source_channel.lock() {
-            let still_readable = selected.is_some_and(|index| {
-                channels
-                    .iter()
-                    .any(|channel| channel.index == index && channel.up.is_some())
-            });
-            if !still_readable {
-                *selected = channels
-                    .iter()
-                    .find(|channel| channel.index == 0 && channel.up.is_some())
-                    .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
-                    .map(|channel| channel.index);
-            }
-        }
-        if let Ok(mut selected) = self.send_channel.lock() {
+        let automation_source_channel =
+            self.automation_source_channel
+                .lock()
+                .ok()
+                .and_then(|mut selected| {
+                    let still_readable = selected.is_some_and(|index| {
+                        channels
+                            .iter()
+                            .any(|channel| channel.index == index && channel.up.is_some())
+                    });
+                    if !still_readable {
+                        *selected = channels
+                            .iter()
+                            .find(|channel| channel.index == 0 && channel.up.is_some())
+                            .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                            .map(|channel| channel.index);
+                    }
+                    *selected
+                });
+        let send_channel = self.send_channel.lock().ok().and_then(|mut selected| {
             let still_writable = selected.is_some_and(|index| {
                 channels
                     .iter()
@@ -212,11 +215,14 @@ impl RttShared {
                     .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
                     .map(|channel| channel.index);
             }
-        }
+            *selected
+        });
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.phase = RttPhase::Running;
             snapshot.backend = Some(descriptor);
             snapshot.channels = channels;
+            snapshot.automation_source_channel = automation_source_channel;
+            snapshot.send_channel = send_channel;
             snapshot.last_error = None;
         }
     }
@@ -251,30 +257,8 @@ impl RttShared {
             snapshot.dropped_history_chunks = loss.0;
             snapshot.dropped_history_bytes = loss.1;
         }
-        self.publish_automation(&chunk);
+        let _ = self.raw_source.publish(&chunk);
         chunk
-    }
-
-    fn publish_automation(&self, chunk: &StoredRttChunk) {
-        let mut dropped = false;
-        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.retain(|subscriber| {
-                if subscriber.source_channel != chunk.channel_index {
-                    return true;
-                }
-                match subscriber.sender.try_send(chunk.data.clone()) {
-                    Ok(()) => true,
-                    Err(mpsc::TrySendError::Full(_)) => {
-                        dropped = true;
-                        true
-                    }
-                    Err(mpsc::TrySendError::Disconnected(_)) => false,
-                }
-            });
-        }
-        if dropped {
-            self.record_automation_drop(chunk.data.len());
-        }
     }
 
     pub(super) fn record_tx(&self, bytes: usize) {
@@ -294,12 +278,23 @@ impl RttShared {
     }
 
     pub(super) fn record_presentation_drop(&self, bytes: usize) {
+        self.record_presentation_drop_batch(1, bytes);
+    }
+
+    pub(super) fn record_presentation_drop_batch(&self, chunks: usize, bytes: usize) {
         if let Ok(mut snapshot) = self.snapshot.lock() {
-            snapshot.dropped_presentation_chunks =
-                snapshot.dropped_presentation_chunks.saturating_add(1);
+            snapshot.dropped_presentation_chunks = snapshot
+                .dropped_presentation_chunks
+                .saturating_add(chunks as u64);
             snapshot.dropped_presentation_bytes = snapshot
                 .dropped_presentation_bytes
                 .saturating_add(bytes as u64);
+        }
+    }
+
+    pub(super) fn record_runtime_pressure(&self) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.runtime_pressure_events = snapshot.runtime_pressure_events.saturating_add(1);
         }
     }
 
@@ -371,6 +366,9 @@ impl RttShared {
             .automation_source_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.automation_source_channel = Some(channel_index);
+        }
         Ok(())
     }
 
@@ -380,6 +378,9 @@ impl RttShared {
             .send_channel
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(channel_index);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.send_channel = Some(channel_index);
+        }
         Ok(())
     }
 
@@ -395,7 +396,10 @@ impl RttShared {
             })
     }
 
-    fn subscribe_automation(&self, _consumer: &str) -> Result<RttAutomationRx, SessionIoError> {
+    fn subscribe_automation(
+        self: &Arc<Self>,
+        _consumer: &str,
+    ) -> Result<RttAutomationRx, SessionIoError> {
         // Capture the source at subscription time. A running Auto Reply/Lua execution therefore
         // keeps an immutable Up Channel even if the user later browses another RTT channel.
         let source_channel = self
@@ -403,21 +407,16 @@ impl RttShared {
             .lock()
             .map_err(|error| SessionIoError::Send(error.to_string()))?
             .ok_or(SessionIoError::AutomationReceiveUnsupported)?;
-        let (tx, rx) = mpsc::sync_channel(AUTOMATION_SUBSCRIPTION_CAPACITY);
-        self.automation_subscribers
-            .lock()
-            .map_err(|error| SessionIoError::Send(error.to_string()))?
-            .push(RttAutomationSubscriber {
-                source_channel,
-                sender: tx,
-            });
-        Ok(RttAutomationRx { receiver: rx })
-    }
-
-    fn close_automation(&self) {
-        if let Ok(mut subscribers) = self.automation_subscribers.lock() {
-            subscribers.clear();
-        }
+        let weak = Arc::downgrade(self);
+        let subscription = self.raw_source.subscribe_filtered(
+            move |chunk| chunk.channel_index == source_channel,
+            move |chunk| {
+                if let Some(shared) = weak.upgrade() {
+                    shared.record_automation_drop(chunk.data.len());
+                }
+            },
+        );
+        Ok(RttAutomationRx { subscription })
     }
 }
 
@@ -475,10 +474,13 @@ impl RttRuntime {
             .worker
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))? = Some(handle);
+        // Native startup may first spend up to the shared target-open deadline before RTT attach
+        // begins. Keep the outer lifecycle budget strictly larger than all nested startup stages
+        // so a valid slow probe open is not misreported as an RTT attach timeout.
         let startup_timeout = self
             .config
             .attach_timeout
-            .saturating_add(Duration::from_secs(5));
+            .saturating_add(Duration::from_secs(15));
         match startup_rx.recv_timeout(startup_timeout) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -537,11 +539,7 @@ impl RttRuntime {
             }
         })?;
         reply_rx
-            .recv_timeout(
-                self.config
-                    .write_timeout
-                    .saturating_add(Duration::from_secs(1)),
-            )
+            .recv_timeout(self.config.write_timeout.saturating_add(WRITE_REPLY_GRACE))
             .map_err(|_| RttError::new(RttErrorCode::RttWriteTimeout, "等待 RTT 写入结果超时"))?
     }
 
@@ -593,7 +591,7 @@ impl RttRuntime {
                 }
             }
         }
-        self.shared.close_automation();
+        self.shared.raw_source.close();
         if !preserve_faulted {
             self.shared.set_phase(RttPhase::Idle);
         }
@@ -601,12 +599,14 @@ impl RttRuntime {
 }
 
 struct RttAutomationRx {
-    receiver: mpsc::Receiver<Vec<u8>>,
+    subscription: ObservationSubscription<StoredRttChunk>,
 }
 
 impl AutomationRx for RttAutomationRx {
     fn try_recv(&mut self) -> Result<AutomationRxEvent, mpsc::TryRecvError> {
-        self.receiver.try_recv().map(AutomationRxEvent::Data)
+        self.subscription
+            .try_recv()
+            .map(|chunk| AutomationRxEvent::Data(chunk.data))
     }
 }
 
@@ -749,7 +749,7 @@ mod tests {
     fn automation_subscription_keeps_its_startup_source_channel() {
         use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
 
-        let shared = RttShared::new();
+        let shared = Arc::new(RttShared::new());
         shared.set_running(
             backend_descriptor(),
             vec![
@@ -788,6 +788,20 @@ mod tests {
             subscription.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn canonical_rtt_observations_are_published_once_from_acquisition() {
+        let shared = RttShared::new();
+        let observations = shared.raw_source.subscribe_filtered(|_| true, |_| {});
+        let chunk = shared.record_rx(3, b"trace".to_vec());
+
+        let observed = observations.try_recv().unwrap();
+        assert_eq!(observed.generation, chunk.generation);
+        assert_eq!(observed.sequence, chunk.sequence);
+        assert_eq!(observed.channel_index, 3);
+        assert_eq!(observed.channel_offset, 0);
+        assert_eq!(observed.data, b"trace");
     }
 
     #[test]

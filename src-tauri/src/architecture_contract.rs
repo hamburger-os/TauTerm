@@ -471,6 +471,38 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
         runtime.contains("TargetConfigConflict"),
         "one physical probe must reject a second incompatible target configuration"
     );
+    assert!(
+        runtime.contains("TargetSlotState::Opening")
+            && runtime.contains("struct ActiveTarget")
+            && runtime.contains("TargetClosing")
+            && runtime.contains("worker_exited: Arc<AtomicBool>"),
+        "probe ownership must remain reserved while startup or detached shutdown workers are still exiting"
+    );
+    assert!(
+        runtime.contains("SERVICE_QUEUE_CAPACITY")
+            && runtime.contains("service_order: VecDeque<String>")
+            && runtime.contains("state.service_order.push_back"),
+        "shared target scheduling must keep bounded per-service queues with round-robin order"
+    );
+
+    let observation = read_source("embedded_debug/observation.rs");
+    assert!(
+        observation.contains("pub struct ObservationSource")
+            && observation.contains("mpsc::sync_channel")
+            && observation.contains("subscriber.sender.try_send")
+            && observation.contains("subscribe_filtered")
+            && observation.contains("on_drop(value)"),
+        "embedded observation consumers must share a typed bounded source instead of starting duplicate hardware readers"
+    );
+
+    let rtt_runtime = read_source("plugins/rtt/runtime.rs");
+    assert!(
+        rtt_runtime.contains("raw_source: ObservationSource<StoredRttChunk>")
+            && rtt_runtime.contains("self.raw_source.publish(&chunk)")
+            && rtt_runtime.contains("self.raw_source.subscribe_filtered")
+            && !rtt_runtime.contains("automation_subscribers"),
+        "RTT acquisition must publish canonical frames to the shared typed observation source"
+    );
 }
 
 #[test]
