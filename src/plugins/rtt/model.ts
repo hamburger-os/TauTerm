@@ -38,7 +38,8 @@ export function rttChannelIssues(channel: RttChannelInfo): string[] {
 }
 
 export function hasUsableRttDownChannel(snapshot: RttSnapshot | null | undefined): boolean {
-  return snapshot?.channels.some(channel => isUsableRttDirection(channel.down)) ?? false;
+  return snapshot?.phase === "running"
+    && snapshot.channels.some(channel => isUsableRttDirection(channel.down));
 }
 
 export interface RttBackendCapabilities {
