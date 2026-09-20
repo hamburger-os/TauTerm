@@ -177,15 +177,22 @@ fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegio
             Ok(ScanRegion::Exact(*address))
         }
         RttLocator::Ranges(ranges) => {
-            let summary = ranges
+            const MAX_LOGGED_RANGES: usize = 16;
+            let mut entries = ranges
                 .iter()
+                .take(MAX_LOGGED_RANGES)
                 .map(|range| format!("0x{:X}-0x{:X}", range.start, range.end))
-                .collect::<Vec<_>>()
-                .join(",");
+                .collect::<Vec<_>>();
+            if ranges.len() > MAX_LOGGED_RANGES {
+                entries.push(format!(
+                    "...(+{})",
+                    ranges.len().saturating_sub(MAX_LOGGED_RANGES)
+                ));
+            }
             log::info!(
                 "RTT locator resolved: session={}, source=user_ranges, ranges={}",
                 session_id,
-                summary
+                entries.join(",")
             );
             Ok(ScanRegion::Ranges(ranges.clone()))
         }
