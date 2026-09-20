@@ -520,8 +520,12 @@ fn rtt_connection_diagnostics_remain_observable() {
             && backend.contains("RTT attach succeeded:")
             && backend.contains("RTT diagnostic header:")
             && backend.contains("RTT diagnostic descriptor:")
-            && backend.contains("static_fields_block_single_consistent="),
-        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, and corruption metadata evidence"
+            && backend.contains("static_fields_block_single_consistent=")
+            && backend.contains("RTT exact address diagnostic:")
+            && backend.contains("read8_read32_consistent=")
+            && backend.contains("read8_word32_consistent=")
+            && backend.contains("read32_word32_consistent="),
+        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, corruption metadata evidence, and exact-address memory-read evidence"
     );
 
     let plugin = read_source("plugins/rtt/mod.rs");

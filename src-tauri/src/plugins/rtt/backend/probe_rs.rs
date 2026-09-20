@@ -28,6 +28,7 @@ const MAX_DIAGNOSTIC_CHANNELS: usize = 16;
 
 pub struct ProbeRsRttBackend {
     service: DebugServiceLease,
+    session_id: String,
     rtt: Arc<Mutex<Rtt>>,
     control_block_address: u64,
     core_index: usize,
@@ -105,20 +106,12 @@ impl ProbeRsRttBackend {
                             format!("无法打开 CPU Core {core_index}: {error}"),
                         )
                     })?;
-                    let mut rtt = match try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
-                    {
-                        Ok(rtt) => rtt,
-                        Err(error) => {
-                            if matches!(error, ProbeRttError::ControlBlockCorrupted(_)) {
-                                log_control_block_snapshot(
-                                    &mut core,
-                                    &attach_region,
-                                    &diagnostic_session_id,
-                                );
-                            }
-                            return Err(map_rtt_attach_error(error));
-                        }
-                    };
+                    let mut rtt = attach_rtt_with_diagnostics(
+                        &mut core,
+                        attach_timeout,
+                        &attach_region,
+                        &diagnostic_session_id,
+                    )?;
                     drop(core);
                     let channels = collect_channels(&mut rtt)?;
                     Ok((rtt, channels))
@@ -136,6 +129,7 @@ impl ProbeRsRttBackend {
 
         Ok(Self {
             service,
+            session_id: session_id.to_string(),
             rtt: Arc::new(Mutex::new(rtt)),
             control_block_address,
             core_index,
@@ -212,6 +206,146 @@ fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegio
             Ok(ScanRegion::Ranges(ranges.clone()))
         }
     }
+}
+
+fn attach_rtt_with_diagnostics(
+    core: &mut probe_rs::Core<'_>,
+    timeout: Duration,
+    region: &ScanRegion,
+    session_id: &str,
+) -> Result<Rtt, RttError> {
+    match try_attach_to_rtt(core, timeout, region) {
+        Ok(rtt) => Ok(rtt),
+        Err(error) => {
+            match &error {
+                ProbeRttError::ControlBlockCorrupted(_) => {
+                    log_control_block_snapshot(core, region, session_id);
+                }
+                ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => {
+                    if let ScanRegion::Exact(address) = region {
+                        log_exact_address_snapshot(core, *address, session_id);
+                    }
+                }
+                _ => {}
+            }
+            Err(map_rtt_attach_error(error))
+        }
+    }
+}
+
+fn bytes_as_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|value| format!("{value:02X}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn words_as_hex(words: &[u32]) -> String {
+    words
+        .iter()
+        .map(|value| format!("0x{value:08X}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn words_as_le_bytes(words: &[u32]) -> Vec<u8> {
+    words
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>()
+}
+
+fn option_bool_label(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unavailable",
+    }
+}
+
+fn log_exact_address_snapshot(core: &mut probe_rs::Core<'_>, address: u64, session_id: &str) {
+    let mut bytes = [0u8; 16];
+    let byte_error = core
+        .read_8(address, &mut bytes)
+        .err()
+        .map(|error| error.to_string());
+
+    let mut block_words = [0u32; 4];
+    let block_error = core
+        .read_32(address, &mut block_words)
+        .err()
+        .map(|error| error.to_string());
+
+    let mut single_words = Vec::with_capacity(4);
+    let mut single_error = None;
+    for word_index in 0..4 {
+        match core.read_word_32(address + (word_index * 4) as u64) {
+            Ok(value) => single_words.push(value),
+            Err(error) => {
+                single_error = Some(error.to_string());
+                break;
+            }
+        }
+    }
+
+    let byte_ok = byte_error.is_none();
+    let block_ok = block_error.is_none();
+    let single_ok = single_error.is_none() && single_words.len() == 4;
+
+    let block_bytes = block_ok.then(|| words_as_le_bytes(&block_words));
+    let single_bytes = single_ok.then(|| words_as_le_bytes(&single_words));
+
+    let magic_match_read8 = byte_ok.then_some(bytes == Rtt::RTT_ID);
+    let magic_match_read32 = block_bytes
+        .as_deref()
+        .map(|value| value == &Rtt::RTT_ID[..]);
+    let magic_match_word32 = single_bytes
+        .as_deref()
+        .map(|value| value == &Rtt::RTT_ID[..]);
+    let read8_read32_consistent = match (byte_ok, block_bytes.as_deref()) {
+        (true, Some(block)) => Some(block == &bytes[..]),
+        _ => None,
+    };
+    let read8_word32_consistent = match (byte_ok, single_bytes.as_deref()) {
+        (true, Some(single)) => Some(single == &bytes[..]),
+        _ => None,
+    };
+    let read32_word32_consistent = match (block_bytes.as_deref(), single_bytes.as_deref()) {
+        (Some(block), Some(single)) => Some(block == single),
+        _ => None,
+    };
+
+    log::warn!(
+        "RTT exact address diagnostic: session={}, address=0x{:X}, expected_magic_hex={}, read8_hex={}, read32_words={}, word32_words={}, magic_match_read8={}, magic_match_read32={}, magic_match_word32={}, read8_read32_consistent={}, read8_word32_consistent={}, read32_word32_consistent={}, read8_error={}, read32_error={}, word32_error={}",
+        session_id,
+        address,
+        bytes_as_hex(&Rtt::RTT_ID),
+        if byte_ok {
+            bytes_as_hex(&bytes)
+        } else {
+            "-".to_string()
+        },
+        if block_ok {
+            words_as_hex(&block_words)
+        } else {
+            "-".to_string()
+        },
+        if single_ok {
+            words_as_hex(&single_words)
+        } else {
+            "-".to_string()
+        },
+        option_bool_label(magic_match_read8),
+        option_bool_label(magic_match_read32),
+        option_bool_label(magic_match_word32),
+        option_bool_label(read8_read32_consistent),
+        option_bool_label(read8_word32_consistent),
+        option_bool_label(read32_word32_consistent),
+        byte_error.as_deref().unwrap_or("-"),
+        block_error.as_deref().unwrap_or("-"),
+        single_error.as_deref().unwrap_or("-")
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -558,6 +692,7 @@ impl RttBackend for ProbeRsRttBackend {
         let core_index = self.core_index;
         let refresh_timeout = self.refresh_timeout;
         let region = self.region.clone();
+        let diagnostic_session_id = self.session_id.clone();
         let (channels, control_block_address) = self
             .service
             .execute(
@@ -569,8 +704,12 @@ impl RttBackend for ProbeRsRttBackend {
                             format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
                         )
                     })?;
-                    let mut refreshed = try_attach_to_rtt(&mut core, refresh_timeout, &region)
-                        .map_err(map_rtt_attach_error)?;
+                    let mut refreshed = attach_rtt_with_diagnostics(
+                        &mut core,
+                        refresh_timeout,
+                        &region,
+                        &diagnostic_session_id,
+                    )?;
                     drop(core);
                     let channels = collect_channels(&mut refreshed)?;
                     let control_block_address = refreshed.ptr();
@@ -679,6 +818,32 @@ mod tests {
         assert_eq!(error.code, RttErrorCode::RttInvalidControlBlock);
         assert!(error.message.contains("无效或尚未完成初始化"));
         assert!(error.message.contains("bad descriptor"));
+    }
+
+    #[test]
+    fn rtt_magic_serialization_is_stable() {
+        assert_eq!(
+            bytes_as_hex(&Rtt::RTT_ID),
+            "53454747455220525454000000000000"
+        );
+        let words = [
+            u32::from_le_bytes(Rtt::RTT_ID[0..4].try_into().unwrap()),
+            u32::from_le_bytes(Rtt::RTT_ID[4..8].try_into().unwrap()),
+            u32::from_le_bytes(Rtt::RTT_ID[8..12].try_into().unwrap()),
+            u32::from_le_bytes(Rtt::RTT_ID[12..16].try_into().unwrap()),
+        ];
+        assert_eq!(words_as_le_bytes(&words), Rtt::RTT_ID);
+        assert_eq!(
+            words_as_hex(&words),
+            "0x47474553:0x52205245:0x00005454:0x00000000"
+        );
+    }
+
+    #[test]
+    fn optional_boolean_diagnostic_labels_are_explicit() {
+        assert_eq!(option_bool_label(Some(true)), "true");
+        assert_eq!(option_bool_label(Some(false)), "false");
+        assert_eq!(option_bool_label(None), "unavailable");
     }
 
     #[test]
