@@ -17,6 +17,7 @@ import {
   canSyncNetworkSendTarget,
   isNetworkSendTargetVisible,
 } from "../src/plugins/network/send-target.ts";
+import { hasUsableRttDownChannel } from "../src/plugins/rtt/model.ts";
 import {
   clampSendBarBodyHeight,
   getSendBarHostHeightCss,
@@ -127,6 +128,43 @@ assert.equal(canSyncNetworkSendTarget("connecting", tcpServerParams), false);
 assert.equal(canSyncNetworkSendTarget("connected", tcpServerParams), true);
 assert.equal(canSyncNetworkSendTarget("connected", udpServerParams), true);
 assert.equal(canSyncNetworkSendTarget("connected", { transport: "tcp", role: "client" }), false);
+
+// RTT target-row visibility is runtime authoritative: disconnected/faulted sessions and
+// sessions without a healthy Down direction must not reserve target-bar height.
+const rttDirection = { buffer_size: 64, usable: true, issue: null };
+const rttSnapshot = {
+  generation: 1,
+  phase: "running",
+  backend: null,
+  channels: [{
+    index: 0,
+    name: "Terminal",
+    up: rttDirection,
+    down: rttDirection,
+    metadata_complete: true,
+  }],
+  automation_source_channel: 0,
+  send_channel: 0,
+  rx_bytes: 0,
+  tx_bytes: 0,
+  dropped_history_bytes: 0,
+  dropped_history_chunks: 0,
+  dropped_automation_bytes: 0,
+  dropped_automation_chunks: 0,
+  dropped_presentation_bytes: 0,
+  dropped_presentation_chunks: 0,
+  runtime_pressure_events: 0,
+  last_error: null,
+};
+assert.equal(hasUsableRttDownChannel(rttSnapshot), true);
+assert.equal(hasUsableRttDownChannel({ ...rttSnapshot, phase: "faulted" }), false);
+assert.equal(hasUsableRttDownChannel({
+  ...rttSnapshot,
+  channels: [{
+    ...rttSnapshot.channels[0],
+    down: { buffer_size: 64, usable: false, issue: "invalid descriptor" },
+  }],
+}), false);
 
 // SendBar splitter geometry is exact in pixel space. Returning to the minimum must
 // produce the same canonical body height regardless of container size or plugin send target.
