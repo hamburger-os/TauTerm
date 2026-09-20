@@ -7,6 +7,7 @@ import RttSendTarget from "./RttSendTarget";
 import RttSessionView from "./RttSessionView";
 import {
   defaultRttParams,
+  hasUsableRttDownChannel,
   normalizeRttParams,
   rttDefaultSessionName,
   rttSubtitle,
@@ -62,7 +63,10 @@ export const rttPlugin = definePlugin({
   runtimeStore: rttRuntimeStore,
   sendData: sendRttData,
   sendTarget: RttSendTarget,
-  sendTargetVisible: () => true,
+  sendTargetVisible: ({ runtimeSnapshot }) => {
+    const runtime = runtimeSnapshot as RttRuntimeSnapshot | undefined;
+    return hasUsableRttDownChannel(runtime?.snapshot);
+  },
   customView: RttSessionView,
   formatSessionError: error => {
     if (error && typeof error === "object" && "message" in error) {
