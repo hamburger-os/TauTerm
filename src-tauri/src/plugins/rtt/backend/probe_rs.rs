@@ -264,11 +264,7 @@ fn option_bool_label(value: Option<bool>) -> &'static str {
     }
 }
 
-fn log_exact_address_snapshot(
-    core: &mut probe_rs::Core<'_>,
-    address: u64,
-    session_id: &str,
-) {
+fn log_exact_address_snapshot(core: &mut probe_rs::Core<'_>, address: u64, session_id: &str) {
     let mut bytes = [0u8; 16];
     let byte_error = core
         .read_8(address, &mut bytes)
@@ -826,7 +822,10 @@ mod tests {
 
     #[test]
     fn rtt_magic_serialization_is_stable() {
-        assert_eq!(bytes_as_hex(&Rtt::RTT_ID), "53454747455220525454000000000000");
+        assert_eq!(
+            bytes_as_hex(&Rtt::RTT_ID),
+            "53454747455220525454000000000000"
+        );
         let words = [
             u32::from_le_bytes(Rtt::RTT_ID[0..4].try_into().unwrap()),
             u32::from_le_bytes(Rtt::RTT_ID[4..8].try_into().unwrap()),
