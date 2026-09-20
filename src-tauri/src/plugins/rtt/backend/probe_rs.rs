@@ -28,6 +28,7 @@ const MAX_DIAGNOSTIC_CHANNELS: usize = 16;
 
 pub struct ProbeRsRttBackend {
     service: DebugServiceLease,
+    session_id: String,
     rtt: Arc<Mutex<Rtt>>,
     control_block_address: u64,
     core_index: usize,
@@ -105,33 +106,12 @@ impl ProbeRsRttBackend {
                             format!("无法打开 CPU Core {core_index}: {error}"),
                         )
                     })?;
-                    let mut rtt = match try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
-                    {
-                        Ok(rtt) => rtt,
-                        Err(error) => {
-                            match &error {
-                                ProbeRttError::ControlBlockCorrupted(_) => {
-                                    log_control_block_snapshot(
-                                        &mut core,
-                                        &attach_region,
-                                        &diagnostic_session_id,
-                                    );
-                                }
-                                ProbeRttError::ControlBlockNotFound
-                                | ProbeRttError::NoControlBlockLocation => {
-                                    if let ScanRegion::Exact(address) = &attach_region {
-                                        log_exact_address_snapshot(
-                                            &mut core,
-                                            *address,
-                                            &diagnostic_session_id,
-                                        );
-                                    }
-                                }
-                                _ => {}
-                            }
-                            return Err(map_rtt_attach_error(error));
-                        }
-                    };
+                    let mut rtt = attach_rtt_with_diagnostics(
+                        &mut core,
+                        attach_timeout,
+                        &attach_region,
+                        &diagnostic_session_id,
+                    )?;
                     drop(core);
                     let channels = collect_channels(&mut rtt)?;
                     Ok((rtt, channels))
@@ -149,6 +129,7 @@ impl ProbeRsRttBackend {
 
         Ok(Self {
             service,
+            session_id: session_id.to_string(),
             rtt: Arc::new(Mutex::new(rtt)),
             control_block_address,
             core_index,
@@ -227,6 +208,31 @@ fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegio
     }
 }
 
+fn attach_rtt_with_diagnostics(
+    core: &mut probe_rs::Core<'_>,
+    timeout: Duration,
+    region: &ScanRegion,
+    session_id: &str,
+) -> Result<Rtt, RttError> {
+    match try_attach_to_rtt(core, timeout, region) {
+        Ok(rtt) => Ok(rtt),
+        Err(error) => {
+            match &error {
+                ProbeRttError::ControlBlockCorrupted(_) => {
+                    log_control_block_snapshot(core, region, session_id);
+                }
+                ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => {
+                    if let ScanRegion::Exact(address) = region {
+                        log_exact_address_snapshot(core, *address, session_id);
+                    }
+                }
+                _ => {}
+            }
+            Err(map_rtt_attach_error(error))
+        }
+    }
+}
+
 fn bytes_as_hex(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -264,7 +270,10 @@ fn log_exact_address_snapshot(
     session_id: &str,
 ) {
     let mut bytes = [0u8; 16];
-    let byte_error = core.read(address, &mut bytes).err().map(|error| error.to_string());
+    let byte_error = core
+        .read_8(address, &mut bytes)
+        .err()
+        .map(|error| error.to_string());
 
     let mut block_words = [0u32; 4];
     let block_error = core
@@ -294,11 +303,13 @@ fn log_exact_address_snapshot(
     let magic_match_read8 = byte_ok.then_some(bytes == Rtt::RTT_ID);
     let magic_match_read32 = block_bytes
         .as_deref()
-        .map(|value| value == Rtt::RTT_ID.as_slice());
+        .map(|value| value == &Rtt::RTT_ID[..]);
     let magic_match_word32 = single_bytes
         .as_deref()
-        .map(|value| value == Rtt::RTT_ID.as_slice());
-    let read8_read32_consistent = block_bytes.as_deref().map(|value| value == bytes);
+        .map(|value| value == &Rtt::RTT_ID[..]);
+    let read8_read32_consistent = block_bytes
+        .as_deref()
+        .map(|value| value == &bytes[..]);
     let read32_word32_consistent = match (block_bytes.as_deref(), single_bytes.as_deref()) {
         (Some(block), Some(single)) => Some(block == single),
         _ => None,
@@ -679,6 +690,7 @@ impl RttBackend for ProbeRsRttBackend {
         let core_index = self.core_index;
         let refresh_timeout = self.refresh_timeout;
         let region = self.region.clone();
+        let diagnostic_session_id = self.session_id.clone();
         let (channels, control_block_address) = self
             .service
             .execute(
@@ -690,8 +702,12 @@ impl RttBackend for ProbeRsRttBackend {
                             format!("刷新 RTT Channel 时无法访问 CPU Core: {error}"),
                         )
                     })?;
-                    let mut refreshed = try_attach_to_rtt(&mut core, refresh_timeout, &region)
-                        .map_err(map_rtt_attach_error)?;
+                    let mut refreshed = attach_rtt_with_diagnostics(
+                        &mut core,
+                        refresh_timeout,
+                        &region,
+                        &diagnostic_session_id,
+                    )?;
                     drop(core);
                     let channels = collect_channels(&mut refreshed)?;
                     let control_block_address = refreshed.ptr();
