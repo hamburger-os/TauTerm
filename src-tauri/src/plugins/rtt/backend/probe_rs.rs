@@ -542,15 +542,16 @@ impl DegradedRtt {
                 usable,
                 issue: issue.clone(),
             };
+            let trusted_name = usable.then_some(name.clone()).flatten();
             let entry = entries.entry(index).or_insert_with(|| RttChannelInfo {
                 index,
-                name: name.clone(),
+                name: trusted_name.clone(),
                 up: None,
                 down: None,
                 metadata_complete: issue.is_none(),
             });
             if entry.name.is_none() {
-                entry.name = name;
+                entry.name = trusted_name;
             }
             if issue.is_some() {
                 entry.metadata_complete = false;
