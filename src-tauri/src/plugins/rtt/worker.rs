@@ -90,12 +90,6 @@ pub(super) fn run(
     let mut backend = match open_backend(&config, &embedded_debug, &session_id) {
         Ok(backend) => backend,
         Err(error) => {
-            log::error!(
-                "RTT connect failed: session={}, code={}, message={}",
-                session_id,
-                error.code.as_str(),
-                error.message
-            );
             shared.set_error(error.clone());
             worker_exited.store(true, Ordering::Release);
             let _ = startup_tx.send(Err(error));
