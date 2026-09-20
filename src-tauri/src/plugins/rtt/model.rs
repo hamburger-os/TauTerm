@@ -32,6 +32,11 @@ pub struct RttBackendDescriptor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RttChannelDirectionInfo {
     pub buffer_size: Option<usize>,
+    /// Whether this direction is safe for runtime I/O. Invalid descriptors stay visible for
+    /// diagnostics but are never selected as automation/send targets.
+    pub usable: bool,
+    /// Direction-local validation or metadata warning. None means the descriptor is healthy.
+    pub issue: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
