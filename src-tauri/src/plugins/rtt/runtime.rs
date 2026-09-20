@@ -757,6 +757,60 @@ mod tests {
     }
 
     #[test]
+    fn degraded_channels_are_never_selected_for_runtime_io() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![
+                RttChannelInfo {
+                    index: 0,
+                    name: Some("broken".to_string()),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: false,
+                        issue: Some("bad up descriptor".to_string()),
+                    }),
+                    down: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: false,
+                        issue: Some("bad down descriptor".to_string()),
+                    }),
+                    metadata_complete: false,
+                },
+                RttChannelInfo {
+                    index: 1,
+                    name: Some("healthy".to_string()),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
+                    }),
+                    down: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
+                    }),
+                    metadata_complete: true,
+                },
+            ],
+        );
+
+        let snapshot = shared.snapshot();
+        assert_eq!(snapshot.automation_source_channel, Some(1));
+        assert_eq!(snapshot.send_channel, Some(1));
+        assert_eq!(
+            shared.set_automation_source_channel(0).unwrap_err().code,
+            RttErrorCode::RttInvalidControlBlock
+        );
+        assert_eq!(
+            shared.set_send_channel(0).unwrap_err().code,
+            RttErrorCode::RttInvalidControlBlock
+        );
+    }
+
+    #[test]
     fn automation_subscription_keeps_its_startup_source_channel() {
         use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
 
