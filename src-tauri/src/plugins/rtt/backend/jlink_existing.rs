@@ -63,8 +63,8 @@ impl JlinkExistingRttBackend {
             .map(|index| RttChannelInfo {
                 index: *index,
                 name: None,
-                up: Some(RttChannelDirectionInfo { buffer_size: None }),
-                down: Some(RttChannelDirectionInfo { buffer_size: None }),
+                up: Some(RttChannelDirectionInfo { buffer_size: None, usable: true, issue: None }),
+                down: Some(RttChannelDirectionInfo { buffer_size: None, usable: true, issue: None }),
                 metadata_complete: false,
             })
             .collect();
