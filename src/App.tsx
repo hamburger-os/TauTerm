@@ -52,7 +52,7 @@ function AppInner() {
   const [rightSidebarWidth, setRightSidebarWidth] = useState(RIGHT_SIDEBAR_DEFAULT);
   const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
-  const pluginRuntimeRevision = usePluginRuntimeRevision();
+  usePluginRuntimeRevision();
   const activeTabForBar = sessionState.tabs.find(tab => tab.id === sessionState.activeTabId);
   const activeShowSendBar = activeTabForBar
     ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
@@ -63,7 +63,6 @@ function AppInner() {
       activeTabForBar.id,
       activeTabForBar.params ?? {},
     );
-  void pluginRuntimeRevision;
   const {
     isResizing: isResizingSendBar,
     hostStyle: sendBarHostStyle,
