@@ -254,10 +254,6 @@ pub(super) fn run(
     );
     cancel_pending_writes(&mut writes);
     backend.shutdown();
-    worker_exited.store(true, Ordering::Release);
-    if let Some(reply) = shutdown_reply {
-        let _ = reply.send(());
-    }
 
     if let Some(error) = fatal_error {
         log::error!(
@@ -275,6 +271,11 @@ pub(super) fn run(
         shared.set_stopped();
         let _ = emit_snapshot(&app, &session_id, &shared);
         log::info!("RTT worker stopped: session={}", session_id);
+    }
+
+    worker_exited.store(true, Ordering::Release);
+    if let Some(reply) = shutdown_reply {
+        let _ = reply.send(());
     }
 }
 
