@@ -19,8 +19,8 @@ export function usePluginRuntime<T = unknown>(pluginId: string, sessionId: strin
 }
 
 /**
- * 聚合订阅全部插件 runtime。主要供 SessionSidebar 这类跨 Session 容器使用；
- * 具体协议字段仍通过各插件 `sessionTree` contribution 解释。
+ * 订阅当前插件 runtime，但只把派生后的目标栏可见性布尔值暴露给布局层。
+ * 高频数据事件仍会触发 snapshot 检查；只要布尔值未变化，React 不会重渲染 App Shell。
  */
 export function usePluginSendTargetVisible(
   pluginId: string,
