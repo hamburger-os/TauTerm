@@ -73,6 +73,18 @@ Channel 刷新通过共享 target worker 使用当前 Session/Core 与原定位�
 
 该 backend 按显式 Channel 列表建立 loopback 连接，并遵循 SEGGER RTT TELNET Channel 选择协议。它只报告真实可用能力，不声称支持 probe 枚举、Control Block 定位、完整 Channel metadata 或直接目标控制。
 
+## 连接诊断与系统日志
+
+RTT 的连接建立不是黑盒操作。System Log 必须记录足够的结构化阶段信息，使现场问题能够区分“探针/目标 attach”“RTT 定位”“Control Block/Channel 校验”和“运行期 I/O”：
+
+- 启动阶段记录 Session、backend、probe selector、target、wire、speed/core、固件符号文件与定位策略；
+- Native backend 明确记录定位来源：ELF/AXF 的 `_SEGGER_RTT`、用户精确地址、用户范围或 RAM 扫描回退；ELF 符号命中时同时记录解析出的 Control Block 地址；
+- 成功 attach 后记录实际 Control Block 地址、Channel 数量和各 Channel 的 Up/Down buffer size 摘要；
+- startup、Channel refresh 与运行期 fatal error 都以稳定的 RTT error code + message 进入 System Log；底层库技术详情可以保留，但用户提示必须先给出 TauTerm 语义；
+- 诊断日志不记录 RTT payload，也不把 Session Data Log 的数据内容复制到 System Log。
+
+连接失败仍保持“backend 完成 attach/定位并取得初始 Channel metadata 后才发布 Connected”的边界。补充诊断日志不能改变连接成功语义，也不能用日志副作用掩盖真实错误。
+
 ## Channel、发送与自动化
 
 RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同时具有 Up/Down。
