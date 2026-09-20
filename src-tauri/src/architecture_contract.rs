@@ -520,7 +520,7 @@ fn rtt_connection_diagnostics_remain_observable() {
             && backend.contains("RTT attach succeeded:")
             && backend.contains("RTT diagnostic header:")
             && backend.contains("RTT diagnostic descriptor:")
-            && backend.contains("block_single_consistent="),
+            && backend.contains("static_fields_block_single_consistent="),
         "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, and corruption metadata evidence"
     );
 
