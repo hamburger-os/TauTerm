@@ -48,6 +48,16 @@ pub struct RttChannelInfo {
     pub metadata_complete: bool,
 }
 
+impl RttChannelInfo {
+    pub fn has_usable_up(&self) -> bool {
+        self.up.as_ref().is_some_and(|direction| direction.usable)
+    }
+
+    pub fn has_usable_down(&self) -> bool {
+        self.down.as_ref().is_some_and(|direction| direction.usable)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RttSnapshot {
     /// Monotonic process-local runtime identity. Every reconnect gets a new generation.
