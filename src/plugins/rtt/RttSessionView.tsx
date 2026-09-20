@@ -8,6 +8,7 @@ import RttTerminalView from "./RttTerminalView";
 import {
   base64ToBytes,
   formatBytes,
+  hasRttChannelIssues,
   isUsableRttDirection,
   rttChannelIssues,
   type RttChannelInfo,
@@ -197,7 +198,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               <span className={styles.direction}>
                 {isUsableRttDirection(item.up) ? "↑" : ""}
                 {isUsableRttDirection(item.down) ? "↓" : ""}
-                {!item.metadata_complete ? <span className={styles.channelWarning}>⚠</span> : null}
+                {hasRttChannelIssues(item) ? <span className={styles.channelWarning}>⚠</span> : null}
               </span>
             </button>
           ))}
@@ -213,7 +214,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     {usableUp ? "Up" : ""}
                     {usableUp && usableDown ? " / " : ""}
                     {usableDown ? "Down" : ""}
-                    {!channel.metadata_complete ? ` · ${t("rtt.channelDegraded")}` : ""}
+                    {channelIssues.length > 0 ? ` · ${t("rtt.channelDegraded")}` : ""}
                   </span>
                 </div>
                 <div className={`${styles.modeTabs} liquid-selector-strip`}>
