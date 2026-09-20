@@ -343,17 +343,24 @@ impl RttShared {
                     format!("RTT Channel {channel_index} 不存在"),
                 )
             })?;
-        let available = if require_up {
-            channel.has_usable_up()
+        let direction = if require_up {
+            channel.up.as_ref()
         } else {
-            channel.has_usable_down()
+            channel.down.as_ref()
         };
-        if !available {
+        let direction_name = if require_up { "Up" } else { "Down" };
+        let Some(direction) = direction else {
             return Err(RttError::new(
                 RttErrorCode::RttChannelNotFound,
+                format!("RTT Channel {channel_index} 没有 {direction_name} 方向"),
+            ));
+        };
+        if !direction.usable {
+            return Err(RttError::new(
+                RttErrorCode::RttInvalidControlBlock,
                 format!(
-                    "RTT Channel {channel_index} 没有 {} 方向",
-                    if require_up { "Up" } else { "Down" }
+                    "RTT Channel {channel_index} {direction_name} 方向不可用: {}",
+                    direction.issue.as_deref().unwrap_or("descriptor 无效")
                 ),
             ));
         }
