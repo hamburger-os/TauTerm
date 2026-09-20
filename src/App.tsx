@@ -27,6 +27,7 @@ import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { pluginRegistry } from "./core/plugin-registry";
+import { usePluginRuntimeRevision } from "./core/usePluginRuntime";
 import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
@@ -51,12 +52,18 @@ function AppInner() {
   const [rightSidebarWidth, setRightSidebarWidth] = useState(RIGHT_SIDEBAR_DEFAULT);
   const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  const pluginRuntimeRevision = usePluginRuntimeRevision();
   const activeTabForBar = sessionState.tabs.find(tab => tab.id === sessionState.activeTabId);
   const activeShowSendBar = activeTabForBar
     ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
     : false;
   const activeShowTargetBar = activeShowSendBar && !!activeTabForBar
-    && (pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible?.(activeTabForBar.params ?? {}) ?? false);
+    && pluginRegistry.resolveSendTargetVisible(
+      activeTabForBar.pluginId,
+      activeTabForBar.id,
+      activeTabForBar.params ?? {},
+    );
+  void pluginRuntimeRevision;
   const {
     isResizing: isResizingSendBar,
     hostStyle: sendBarHostStyle,
@@ -339,7 +346,10 @@ function AppInner() {
                     ? sendBarHostStyle
                     : { display: "none" }
                   }>
-                    <SendBar containerId={tab.id} />
+                    <SendBar
+                      containerId={tab.id}
+                      showTargetBar={isActive && activeShowTargetBar}
+                    />
                   </div>
                 )}
               </React.Fragment>
