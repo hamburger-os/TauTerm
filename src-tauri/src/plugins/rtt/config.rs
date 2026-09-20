@@ -13,10 +13,28 @@ pub enum RttBackendKind {
     JlinkExisting,
 }
 
+impl RttBackendKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProbeRs => "probe_rs",
+            Self::JlinkExisting => "jlink_existing",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RttWireProtocol {
     Swd,
     Jtag,
+}
+
+impl RttWireProtocol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Swd => "swd",
+            Self::Jtag => "jtag",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +43,16 @@ pub enum RttLocator {
     Auto,
     Exact(u64),
     Ranges(Vec<Range<u64>>),
+}
+
+impl RttLocator {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Exact(_) => "exact",
+            Self::Ranges(_) => "ranges",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
