@@ -157,6 +157,12 @@ async fn connect_session(
             .map_err(|error| format!("RTT worker 启动任务失败: {error}"))?;
 
     if let Err(error) = start_result {
+        log::error!(
+            "RTT connect failed: session={}, code={}, message={}",
+            new_session_id,
+            error.code.as_str(),
+            error.message
+        );
         cleanup_failed_session(app.clone(), new_session_id.clone()).await;
         return Err(format_rtt_connect_error(error));
     }
