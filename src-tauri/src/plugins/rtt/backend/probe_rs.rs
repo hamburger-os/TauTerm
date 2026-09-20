@@ -452,8 +452,7 @@ fn attach_degraded_rtt(
     let invalid_directions = rtt
         .channels
         .iter()
-        .flat_map(|channel| [channel.up.as_ref(), channel.down.as_ref()])
-        .flatten()
+        .flat_map(|channel| channel.up.iter().chain(channel.down.iter()))
         .filter(|direction| !direction.usable)
         .count();
     if usable_up + usable_down == 0 {
@@ -542,7 +541,7 @@ impl DegradedRtt {
                 usable,
                 issue: issue.clone(),
             };
-            let trusted_name = usable.then_some(name.clone()).flatten();
+            let trusted_name = if usable { name.clone() } else { None };
             let entry = entries.entry(index).or_insert_with(|| RttChannelInfo {
                 index,
                 name: trusted_name.clone(),
@@ -816,8 +815,8 @@ impl DirectRttChannel {
         if total > 0 {
             core.write_word_32(self.read_offset_address, read)
                 .map_err(|error| rtt_memory_error("更新 RTT Up read offset 失败", error))?;
-            self.last_read_offset = Some(read);
         }
+        self.last_read_offset = Some(read);
         Ok(total)
     }
 
@@ -851,10 +850,8 @@ impl DirectRttChannel {
                 write = 0;
             }
         }
-        if total > 0 {
-            core.write_word_32(self.write_offset_address, write)
-                .map_err(|error| rtt_memory_error("更新 RTT Down write offset 失败", error))?;
-        }
+        core.write_word_32(self.write_offset_address, write)
+            .map_err(|error| rtt_memory_error("更新 RTT Down write offset 失败", error))?;
         Ok(total)
     }
 }
