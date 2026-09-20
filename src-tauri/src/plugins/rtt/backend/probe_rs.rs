@@ -76,12 +76,12 @@ impl ProbeRsRttBackend {
 
         let descriptor = service.descriptor();
         log::info!(
-            "RTT native target ready: session={}, probe={}, target={}, core={}, wire={:?}, speed_khz={}",
+            "RTT native target ready: session={}, probe={}, target={}, core={}, wire={}, speed_khz={}",
             session_id,
             descriptor.probe_label,
             descriptor.target,
             config.core_index,
-            config.wire_protocol,
+            config.wire_protocol.as_str(),
             config
                 .speed_khz
                 .map(|value| value.to_string())
