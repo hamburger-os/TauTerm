@@ -635,10 +635,7 @@ fn merged_ram_ranges(core: &probe_rs::Core<'_>) -> Vec<(u64, u64)> {
     merged
 }
 
-fn validate_degraded_descriptor(
-    core: &probe_rs::Core<'_>,
-    descriptor: &RttDescriptorSnapshot,
-) -> Option<String> {
+fn validate_descriptor_shape(descriptor: &RttDescriptorSnapshot) -> Option<String> {
     if descriptor.size < 2 {
         return Some(format!("buffer size {} 小于 RTT ring buffer 最小值 2", descriptor.size));
     }
@@ -656,6 +653,16 @@ fn validate_degraded_descriptor(
     }
     if descriptor.flags & 0x3 == 0x3 {
         return Some(format!("RTT Channel mode flags 无效: 0x{:X}", descriptor.flags));
+    }
+    None
+}
+
+fn validate_degraded_descriptor(
+    core: &probe_rs::Core<'_>,
+    descriptor: &RttDescriptorSnapshot,
+) -> Option<String> {
+    if let Some(issue) = validate_descriptor_shape(descriptor) {
+        return Some(issue);
     }
 
     let Some(end) = descriptor
