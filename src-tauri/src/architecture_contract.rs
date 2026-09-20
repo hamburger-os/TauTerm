@@ -517,8 +517,11 @@ fn rtt_connection_diagnostics_remain_observable() {
     assert!(
         backend.contains("RTT locator resolved:")
             && backend.contains("symbol=_SEGGER_RTT")
-            && backend.contains("RTT attach succeeded:"),
-        "native RTT diagnostics must preserve locator provenance and resolved Control Block visibility"
+            && backend.contains("RTT attach succeeded:")
+            && backend.contains("RTT diagnostic header:")
+            && backend.contains("RTT diagnostic descriptor:")
+            && backend.contains("block_single_consistent="),
+        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, and corruption metadata evidence"
     );
 
     let plugin = read_source("plugins/rtt/mod.rs");
