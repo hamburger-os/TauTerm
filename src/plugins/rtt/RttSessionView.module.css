@@ -169,6 +169,28 @@
   overflow-wrap: anywhere;
 }
 
+.channelWarning {
+  margin-left: 3px;
+  color: var(--color-warning);
+}
+
+.issuePanel {
+  margin: auto;
+  max-width: min(640px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--spacing-md);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+}
+
+.issueRow {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 .empty { color: var(--text-muted); font-size: var(--text-xs); padding: var(--spacing-sm); }
 .emptyCenter { margin: auto; color: var(--text-muted); }
 
