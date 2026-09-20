@@ -12,6 +12,8 @@ export interface RttProbeInfo {
 
 export interface RttChannelDirectionInfo {
   buffer_size?: number | null;
+  usable: boolean;
+  issue?: string | null;
 }
 
 export interface RttChannelInfo {
@@ -20,6 +22,23 @@ export interface RttChannelInfo {
   up?: RttChannelDirectionInfo | null;
   down?: RttChannelDirectionInfo | null;
   metadata_complete: boolean;
+}
+
+export function isUsableRttDirection(
+  direction: RttChannelDirectionInfo | null | undefined,
+): direction is RttChannelDirectionInfo {
+  return direction?.usable === true;
+}
+
+export function rttChannelIssues(channel: RttChannelInfo): string[] {
+  const issues: string[] = [];
+  if (channel.up?.issue) issues.push(`Up: ${channel.up.issue}`);
+  if (channel.down?.issue) issues.push(`Down: ${channel.down.issue}`);
+  return issues;
+}
+
+export function hasUsableRttDownChannel(snapshot: RttSnapshot | null | undefined): boolean {
+  return snapshot?.channels.some(channel => isUsableRttDirection(channel.down)) ?? false;
 }
 
 export interface RttBackendCapabilities {
