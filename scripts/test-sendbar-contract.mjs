@@ -163,7 +163,8 @@ assert.ok(sendBar.includes("pluginRegistry.get(tab.pluginId)?.sendTarget"));
 assert.ok(!sendBar.includes("NetworkSendTarget"), "common SendBar must not import a built-in target implementation");
 assert.ok(!sendBar.includes("set_network_send_target"), "common SendBar must not own Network synchronization");
 const app = source("src/App.tsx");
-assert.ok(app.includes("pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible"));
+assert.ok(app.includes("pluginRegistry.resolveSendTargetVisible"));
+assert.ok(app.includes("usePluginRuntimeRevision"));
 assert.ok(!app.includes("networkSendTarget"), "app shell must not own Network target rules");
 const networkTarget = source("src/plugins/network/NetworkSendTarget.tsx");
 assert.ok(networkTarget.includes('invoke("set_network_send_target"'));
@@ -173,12 +174,13 @@ assert.ok(networkTarget.includes("if (!active) return;"), "stale target-sync fai
 assert.ok(!networkTarget.includes("catch(() =>"), "current target sync failures must not be swallowed");
 const networkPlugin = source("src/plugins/network/index.tsx");
 assert.ok(networkPlugin.includes("sendTarget: NetworkSendTarget"));
-assert.ok(networkPlugin.includes("sendTargetVisible: params => isNetworkSendTargetVisible(params)"));
+assert.ok(networkPlugin.includes("sendTargetVisible: ({ params }) => isNetworkSendTargetVisible(params)"));
 
 const rttPlugin = source("src/plugins/rtt/index.tsx");
 const rttTarget = source("src/plugins/rtt/RttSendTarget.tsx");
 const rttRuntime = source("src/plugins/rtt/runtime-store.ts");
 assert.ok(rttPlugin.includes("sendTarget: RttSendTarget"));
+assert.ok(rttPlugin.includes("hasUsableRttDownChannel"));
 assert.ok(rttPlugin.includes("sendData: sendRttData"));
 assert.ok(rttPlugin.includes("sendBarEnabled: true"));
 assert.ok(rttTarget.includes("selectRttSendChannel"));
@@ -217,9 +219,14 @@ assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
+assert.ok(sendBar.includes("showTargetBar && SendTarget"));
 assert.ok(
   sendBar.includes("<SendTarget sessionId={containerId} disabled={executionMode !== null} />"),
   "plugin target controls must lock with the current SendBar execution snapshot",
+);
+assert.ok(
+  app.includes("showTargetBar={isActive && activeShowTargetBar}"),
+  "SendBar host geometry and rendered target row must share one visibility decision",
 );
 assert.ok(networkTarget.includes("disabled={disabled}"));
 assert.ok(rttTarget.includes("disabled={disabled}"));
