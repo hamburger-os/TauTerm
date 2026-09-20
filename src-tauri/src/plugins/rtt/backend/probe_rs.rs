@@ -439,6 +439,413 @@ fn parse_descriptor_words(words: &[u32], is_64_bit: bool) -> Option<RttDescripto
     }
 }
 
+
+fn attach_degraded_rtt(
+    core: &mut probe_rs::Core<'_>,
+    region: &ScanRegion,
+    session_id: &str,
+) -> Result<DegradedRtt, RttError> {
+    let address = match region {
+        ScanRegion::Exact(address) => *address,
+        _ => Rtt::find_control_block(core, region).map_err(map_rtt_attach_error)?,
+    };
+    let rtt = DegradedRtt::attach_at(core, address)?;
+    let usable_up = rtt.up_channels.len();
+    let usable_down = rtt.down_channels.len();
+    let invalid_directions = rtt
+        .channels
+        .iter()
+        .flat_map(|channel| [channel.up.as_ref(), channel.down.as_ref()])
+        .flatten()
+        .filter(|direction| !direction.usable)
+        .count();
+    if usable_up + usable_down == 0 {
+        return Err(RttError::new(
+            RttErrorCode::RttInvalidControlBlock,
+            "RTT Control Block 没有任何可安全使用的 Channel",
+        ));
+    }
+    log::warn!(
+        "RTT degraded attach accepted: session={}, control_block=0x{:X}, usable_up={}, usable_down={}, invalid_directions={}",
+        session_id,
+        address,
+        usable_up,
+        usable_down,
+        invalid_directions
+    );
+    Ok(rtt)
+}
+
+impl DegradedRtt {
+    fn attach_at(core: &mut probe_rs::Core<'_>, ptr: u64) -> Result<Self, RttError> {
+        let mut id = [0u8; 16];
+        core.read_8(ptr, &mut id)
+            .map_err(|error| rtt_memory_error("读取 RTT Control Block 标识失败", error))?;
+        if id != Rtt::RTT_ID {
+            return Err(RttError::new(
+                RttErrorCode::RttControlBlockNotFound,
+                format!("地址 0x{ptr:X} 未找到有效 RTT Control Block"),
+            ));
+        }
+
+        let mut counts = [0u32; 2];
+        core.read_32(ptr + 16, &mut counts)
+            .map_err(|error| rtt_memory_error("读取 RTT Channel 数量失败", error))?;
+        let max_up = counts[0] as usize;
+        let max_down = counts[1] as usize;
+        if max_up > 255 || max_down > 255 {
+            return Err(RttError::new(
+                RttErrorCode::RttInvalidControlBlock,
+                format!("RTT Channel 数量异常: up={max_up}, down={max_down}"),
+            ));
+        }
+
+        let is_64_bit = core.is_64_bit();
+        let descriptor_words = if is_64_bit { 8 } else { 6 };
+        let descriptor_size = (descriptor_words * std::mem::size_of::<u32>()) as u64;
+        let total = max_up.saturating_add(max_down);
+        let mut entries: BTreeMap<u32, RttChannelInfo> = BTreeMap::new();
+        let mut up_channels = Vec::new();
+        let mut down_channels = Vec::new();
+
+        for flat_index in 0..total {
+            let metadata_address = ptr + 24 + descriptor_size * flat_index as u64;
+            let mut words = vec![0u32; descriptor_words];
+            core.read_32(metadata_address, &mut words).map_err(|error| {
+                rtt_memory_error(
+                    &format!("读取 RTT Channel metadata 0x{metadata_address:X} 失败"),
+                    error,
+                )
+            })?;
+            let snapshot = parse_descriptor_words(&words, is_64_bit).ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttInvalidControlBlock,
+                    format!("RTT Channel metadata 0x{metadata_address:X} 长度无效"),
+                )
+            })?;
+
+            let (is_up, channel_index) = if flat_index < max_up {
+                (true, flat_index)
+            } else {
+                (false, flat_index - max_up)
+            };
+            if snapshot.buffer_pointer == 0 {
+                continue;
+            }
+
+            let index = u32::try_from(channel_index)
+                .map_err(|_| RttError::backend("RTT Channel index 超出 u32"))?;
+            let (name, name_issue) = read_degraded_channel_name(core, snapshot.name_pointer);
+            let validation_issue = validate_degraded_descriptor(core, &snapshot);
+            let issue = validation_issue.or(name_issue);
+            let usable = validation_issue.is_none();
+            let direction = RttChannelDirectionInfo {
+                buffer_size: usize::try_from(snapshot.size).ok(),
+                usable,
+                issue: issue.clone(),
+            };
+            let entry = entries.entry(index).or_insert_with(|| RttChannelInfo {
+                index,
+                name: name.clone(),
+                up: None,
+                down: None,
+                metadata_complete: issue.is_none(),
+            });
+            if entry.name.is_none() {
+                entry.name = name;
+            }
+            if issue.is_some() {
+                entry.metadata_complete = false;
+            }
+
+            if is_up {
+                entry.up = Some(direction);
+            } else {
+                entry.down = Some(direction);
+            }
+
+            if !usable {
+                log::warn!(
+                    "RTT channel direction quarantined: direction={}, channel={}, metadata=0x{:X}, buffer=0x{:X}, size={}, issue={}",
+                    if is_up { "up" } else { "down" },
+                    channel_index,
+                    metadata_address,
+                    snapshot.buffer_pointer,
+                    snapshot.size,
+                    issue.as_deref().unwrap_or("invalid descriptor")
+                );
+                continue;
+            }
+
+            let (write_offset_address, read_offset_address) = if is_64_bit {
+                (metadata_address + 20, metadata_address + 24)
+            } else {
+                (metadata_address + 12, metadata_address + 16)
+            };
+            let channel = DirectRttChannel {
+                index,
+                metadata_address,
+                buffer_address: snapshot.buffer_pointer,
+                buffer_size: snapshot.size,
+                write_offset_address,
+                read_offset_address,
+                last_read_offset: None,
+            };
+            if is_up {
+                up_channels.push(channel);
+            } else {
+                down_channels.push(channel);
+            }
+        }
+
+        Ok(Self {
+            ptr,
+            up_channels,
+            down_channels,
+            channels: entries.into_values().collect(),
+        })
+    }
+}
+
+fn rtt_memory_error(context: &str, error: probe_rs::Error) -> RttError {
+    RttError::new(
+        RttErrorCode::ProbeDisconnected,
+        format!("{context}: {error}"),
+    )
+}
+
+fn merged_ram_ranges(core: &probe_rs::Core<'_>) -> Vec<(u64, u64)> {
+    let mut ranges = core
+        .memory_regions()
+        .filter(|region| region.is_ram())
+        .map(|region| {
+            let range = region.address_range();
+            (range.start, range.end)
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_unstable_by_key(|range| range.0);
+    let mut merged: Vec<(u64, u64)> = Vec::new();
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged
+}
+
+fn validate_degraded_descriptor(
+    core: &probe_rs::Core<'_>,
+    descriptor: &RttDescriptorSnapshot,
+) -> Option<String> {
+    if descriptor.size < 2 {
+        return Some(format!("buffer size {} 小于 RTT ring buffer 最小值 2", descriptor.size));
+    }
+    if descriptor.write_offset >= descriptor.size {
+        return Some(format!(
+            "write offset 0x{:X} 超出 buffer size 0x{:X}",
+            descriptor.write_offset, descriptor.size
+        ));
+    }
+    if descriptor.read_offset >= descriptor.size {
+        return Some(format!(
+            "read offset 0x{:X} 超出 buffer size 0x{:X}",
+            descriptor.read_offset, descriptor.size
+        ));
+    }
+    if descriptor.flags & 0x3 == 0x3 {
+        return Some(format!("RTT Channel mode flags 无效: 0x{:X}", descriptor.flags));
+    }
+
+    let Some(end) = descriptor
+        .buffer_pointer
+        .checked_add(u64::from(descriptor.size))
+    else {
+        return Some("RTT buffer 地址溢出".to_string());
+    };
+    let ranges = merged_ram_ranges(core);
+    if !ranges.is_empty()
+        && !ranges
+            .iter()
+            .any(|(start, range_end)| descriptor.buffer_pointer >= *start && end <= *range_end)
+    {
+        return Some(format!(
+            "buffer 0x{:X}..0x{:X} 不在目标 RAM 范围内",
+            descriptor.buffer_pointer, end
+        ));
+    }
+    None
+}
+
+fn read_degraded_channel_name(
+    core: &mut probe_rs::Core<'_>,
+    pointer: u64,
+) -> (Option<String>, Option<String>) {
+    if pointer == 0 {
+        return (None, None);
+    }
+
+    let memory_range = core
+        .memory_regions()
+        .filter(|region| region.is_ram() || region.is_nvm())
+        .find_map(|region| {
+            let range = region.address_range();
+            (pointer >= range.start && pointer < range.end).then_some(range)
+        });
+
+    let mut bytes = if let Some(range) = memory_range {
+        let length = std::cmp::min(128, (range.end - pointer) as usize);
+        let mut bytes = vec![0u8; length];
+        if let Err(error) = core.read_8(pointer, &mut bytes) {
+            return (
+                None,
+                Some(format!("读取 Channel 名称 0x{pointer:X} 失败: {error}")),
+            );
+        }
+        bytes
+    } else if core.target().memory_map.is_empty() {
+        let mut bytes = Vec::with_capacity(128);
+        for offset in 0..128u64 {
+            match core.read_word_8(pointer + offset) {
+                Ok(value) => {
+                    bytes.push(value);
+                    if value == 0 {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    return (
+                        None,
+                        Some(format!("读取 Channel 名称 0x{pointer:X} 失败: {error}")),
+                    );
+                }
+            }
+        }
+        bytes
+    } else {
+        return (
+            None,
+            Some(format!("Channel 名称指针 0x{pointer:X} 不在 RAM/NVM 范围内")),
+        );
+    };
+
+    let Some(end) = bytes.iter().position(|byte| *byte == 0) else {
+        return (
+            None,
+            Some(format!("Channel 名称 0x{pointer:X} 在 128 bytes 内未终止")),
+        );
+    };
+    bytes.truncate(end);
+    (Some(String::from_utf8_lossy(&bytes).into_owned()), None)
+}
+
+impl DirectRttChannel {
+    fn read_offsets(&self, core: &mut probe_rs::Core<'_>) -> Result<(u32, u32), RttError> {
+        let mut offsets = [0u32; 2];
+        core.read_32(self.write_offset_address, &mut offsets)
+            .map_err(|error| rtt_memory_error("读取 RTT ring offsets 失败", error))?;
+        if offsets[0] >= self.buffer_size || offsets[1] >= self.buffer_size {
+            return Err(RttError::new(
+                RttErrorCode::RttInvalidControlBlock,
+                format!(
+                    "RTT Channel {} 运行期 offset 无效: write={}, read={}, size={}",
+                    self.index, offsets[0], offsets[1], self.buffer_size
+                ),
+            ));
+        }
+        Ok((offsets[0], offsets[1]))
+    }
+
+    fn read_up(
+        &mut self,
+        core: &mut probe_rs::Core<'_>,
+        buffer: &mut [u8],
+    ) -> Result<usize, RttError> {
+        let (write, mut read) = self.read_offsets(core)?;
+        if let Some(last_read) = self.last_read_offset {
+            if read != last_read {
+                return Err(RttError::new(
+                    RttErrorCode::RttInvalidControlBlock,
+                    format!(
+                        "RTT Up Channel {} read offset 被外部修改: expected={}, actual={}",
+                        self.index, last_read, read
+                    ),
+                ));
+            }
+        }
+
+        let mut total = 0usize;
+        while total < buffer.len() && read != write {
+            let available = if read < write {
+                write - read
+            } else {
+                self.buffer_size - read
+            } as usize;
+            let count = available.min(buffer.len() - total);
+            if count == 0 {
+                break;
+            }
+            core.read_8(
+                self.buffer_address + u64::from(read),
+                &mut buffer[total..total + count],
+            )
+            .map_err(|error| rtt_memory_error("读取 RTT Up buffer 失败", error))?;
+            total += count;
+            read += count as u32;
+            if read >= self.buffer_size {
+                read = 0;
+            }
+        }
+
+        if total > 0 {
+            core.write_word_32(self.read_offset_address, read)
+                .map_err(|error| rtt_memory_error("更新 RTT Up read offset 失败", error))?;
+            self.last_read_offset = Some(read);
+        }
+        Ok(total)
+    }
+
+    fn write_down(
+        &mut self,
+        core: &mut probe_rs::Core<'_>,
+        data: &[u8],
+    ) -> Result<usize, RttError> {
+        let (mut write, read) = self.read_offsets(core)?;
+        let mut total = 0usize;
+        while total < data.len() {
+            let available = if read > write {
+                read - write - 1
+            } else if read == 0 {
+                self.buffer_size - write - 1
+            } else {
+                self.buffer_size - write
+            } as usize;
+            let count = available.min(data.len() - total);
+            if count == 0 {
+                break;
+            }
+            core.write(
+                self.buffer_address + u64::from(write),
+                &data[total..total + count],
+            )
+            .map_err(|error| rtt_memory_error("写入 RTT Down buffer 失败", error))?;
+            total += count;
+            write += count as u32;
+            if write >= self.buffer_size {
+                write = 0;
+            }
+        }
+        if total > 0 {
+            core.write_word_32(self.write_offset_address, write)
+                .map_err(|error| rtt_memory_error("更新 RTT Down write offset 失败", error))?;
+        }
+        Ok(total)
+    }
+}
+
 fn log_control_block_snapshot(
     core: &mut probe_rs::Core<'_>,
     region: &ScanRegion,
