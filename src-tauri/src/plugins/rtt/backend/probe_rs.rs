@@ -307,16 +307,21 @@ fn log_exact_address_snapshot(
     let magic_match_word32 = single_bytes
         .as_deref()
         .map(|value| value == &Rtt::RTT_ID[..]);
-    let read8_read32_consistent = block_bytes
-        .as_deref()
-        .map(|value| value == &bytes[..]);
+    let read8_read32_consistent = match (byte_ok, block_bytes.as_deref()) {
+        (true, Some(block)) => Some(block == &bytes[..]),
+        _ => None,
+    };
+    let read8_word32_consistent = match (byte_ok, single_bytes.as_deref()) {
+        (true, Some(single)) => Some(single == &bytes[..]),
+        _ => None,
+    };
     let read32_word32_consistent = match (block_bytes.as_deref(), single_bytes.as_deref()) {
         (Some(block), Some(single)) => Some(block == single),
         _ => None,
     };
 
     log::warn!(
-        "RTT exact address diagnostic: session={}, address=0x{:X}, expected_magic_hex={}, read8_hex={}, read32_words={}, word32_words={}, magic_match_read8={}, magic_match_read32={}, magic_match_word32={}, read8_read32_consistent={}, read32_word32_consistent={}, read8_error={}, read32_error={}, word32_error={}",
+        "RTT exact address diagnostic: session={}, address=0x{:X}, expected_magic_hex={}, read8_hex={}, read32_words={}, word32_words={}, magic_match_read8={}, magic_match_read32={}, magic_match_word32={}, read8_read32_consistent={}, read8_word32_consistent={}, read32_word32_consistent={}, read8_error={}, read32_error={}, word32_error={}",
         session_id,
         address,
         bytes_as_hex(&Rtt::RTT_ID),
@@ -339,6 +344,7 @@ fn log_exact_address_snapshot(
         option_bool_label(magic_match_read32),
         option_bool_label(magic_match_word32),
         option_bool_label(read8_read32_consistent),
+        option_bool_label(read8_word32_consistent),
         option_bool_label(read32_word32_consistent),
         byte_error.as_deref().unwrap_or("-"),
         block_error.as_deref().unwrap_or("-"),
