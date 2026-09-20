@@ -193,8 +193,10 @@ fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegio
 }
 
 fn channel_summary(channels: &[RttChannelInfo]) -> String {
-    channels
+    const MAX_LOGGED_CHANNELS: usize = 16;
+    let mut entries = channels
         .iter()
+        .take(MAX_LOGGED_CHANNELS)
         .map(|channel| {
             let up = channel
                 .up
@@ -210,8 +212,14 @@ fn channel_summary(channels: &[RttChannelInfo]) -> String {
                 .unwrap_or_else(|| "-".to_string());
             format!("{}(up={},down={})", channel.index, up, down)
         })
-        .collect::<Vec<_>>()
-        .join(",")
+        .collect::<Vec<_>>();
+    if channels.len() > MAX_LOGGED_CHANNELS {
+        entries.push(format!(
+            "...(+{})",
+            channels.len().saturating_sub(MAX_LOGGED_CHANNELS)
+        ));
+    }
+    entries.join(",")
 }
 
 fn map_firmware_artifact_error(error: FirmwareArtifactError) -> RttError {
