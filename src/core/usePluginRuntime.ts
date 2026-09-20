@@ -22,6 +22,25 @@ export function usePluginRuntime<T = unknown>(pluginId: string, sessionId: strin
  * 聚合订阅全部插件 runtime。主要供 SessionSidebar 这类跨 Session 容器使用；
  * 具体协议字段仍通过各插件 `sessionTree` contribution 解释。
  */
+export function usePluginSendTargetVisible(
+  pluginId: string,
+  sessionId: string,
+  params: Record<string, unknown>,
+): boolean {
+  const store = pluginRegistry.get(pluginId)?.runtimeStore;
+  const getSnapshot = () => pluginRegistry.resolveSendTargetVisible(pluginId, sessionId, params);
+
+  return useSyncExternalStore(
+    store?.subscribe ?? (() => () => {}),
+    getSnapshot,
+    getSnapshot,
+  );
+}
+
+/**
+ * 聚合订阅全部插件 runtime。主要供 SessionSidebar 这类确实需要跨 Session
+ * runtime revision 的容器使用；不要用于只关心布尔派生状态的布局。
+ */
 export function usePluginRuntimeRevision(): number {
   const stores = pluginRegistry
     .getAll()
