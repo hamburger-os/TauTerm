@@ -1398,6 +1398,33 @@ mod tests {
     }
 
     #[test]
+    fn invalid_descriptor_offsets_are_rejected_before_memory_range_checks() {
+        let descriptor = RttDescriptorSnapshot {
+            name_pointer: 0,
+            buffer_pointer: 0x2000_0000,
+            size: 64,
+            write_offset: 64,
+            read_offset: 0,
+            flags: 0,
+        };
+        assert!(validate_descriptor_shape(&descriptor)
+            .is_some_and(|issue| issue.contains("write offset")));
+    }
+
+    #[test]
+    fn unused_descriptor_is_not_a_runtime_direction() {
+        let descriptor = RttDescriptorSnapshot {
+            name_pointer: 0,
+            buffer_pointer: 0,
+            size: 0,
+            write_offset: 0,
+            read_offset: 0,
+            flags: 0,
+        };
+        assert_eq!(descriptor.buffer_pointer, 0);
+    }
+
+    #[test]
     fn channel_summary_is_bounded() {
         let channels = (0..20)
             .map(|index| RttChannelInfo {
@@ -1405,6 +1432,8 @@ mod tests {
                 name: None,
                 up: Some(RttChannelDirectionInfo {
                     buffer_size: Some(1024),
+                    usable: true,
+                    issue: None,
                 }),
                 down: None,
                 metadata_complete: true,
