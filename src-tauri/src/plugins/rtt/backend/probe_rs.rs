@@ -336,7 +336,9 @@ fn log_control_block_snapshot(core: &mut probe_rs::Core<'_>, region: &ScanRegion
         } else {
             ("down", flat_index - max_up)
         };
-        let single_consistent = single_read_error.is_none() && single_words == block_words;
+        let static_word_count = if is_64_bit { 5 } else { 3 };
+        let static_fields_consistent = single_read_error.is_none()
+            && single_words.get(..static_word_count) == block_words.get(..static_word_count);
         let canonical_words = if single_read_error.is_none() {
             &single_words
         } else {
@@ -347,7 +349,7 @@ fn log_control_block_snapshot(core: &mut probe_rs::Core<'_>, region: &ScanRegion
         };
 
         log::warn!(
-            "RTT diagnostic descriptor: session={}, direction={}, channel={}, metadata=0x{:X}, name=0x{:X}, buffer=0x{:X}, size={}, write={}, read={}, flags=0x{:X}, block_single_consistent={}, single_read_error={}",
+            "RTT diagnostic descriptor: session={}, direction={}, channel={}, metadata=0x{:X}, name=0x{:X}, buffer=0x{:X}, size={}, write={}, read={}, flags=0x{:X}, static_fields_block_single_consistent={}, single_read_error={}",
             session_id,
             direction,
             channel_index,
@@ -358,7 +360,7 @@ fn log_control_block_snapshot(core: &mut probe_rs::Core<'_>, region: &ScanRegion
             snapshot.write_offset,
             snapshot.read_offset,
             snapshot.flags,
-            single_consistent,
+            static_fields_consistent,
             single_read_error.as_deref().unwrap_or("-")
         );
     }
