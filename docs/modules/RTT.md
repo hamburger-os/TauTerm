@@ -95,7 +95,6 @@ RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同�
 
 工作区中的当前观察 Channel 与 SendBar 的发送 Channel 是两个独立状态。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
 
-
 - **观察 / Automation source**：必须有 Up，用于 Terminal/Log/HEX 与 Auto Reply/Lua `on_data`；
 - **Send target**：必须有 Down，由公共 SendBar 顶部 `RttSendTarget` 选择；
 - Terminal 模式的键盘输入直接写当前 Terminal 对应的 Down Channel，这是终端交互，不是第二套发送栏。
