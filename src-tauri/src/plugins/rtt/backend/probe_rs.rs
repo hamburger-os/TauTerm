@@ -93,6 +93,7 @@ impl ProbeRsRttBackend {
         let core_index = config.core_index;
         let attach_timeout = config.attach_timeout;
         let attach_region = region.clone();
+        let diagnostic_session_id = session_id.to_string();
         let (rtt, channels) = service
             .execute(
                 attach_timeout.saturating_add(Duration::from_secs(1)),
@@ -111,7 +112,7 @@ impl ProbeRsRttBackend {
                                     log_control_block_snapshot(
                                         &mut core,
                                         &attach_region,
-                                        session_id,
+                                        &diagnostic_session_id,
                                     );
                                 }
                                 return Err(map_rtt_attach_error(error));
