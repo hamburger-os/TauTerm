@@ -67,6 +67,8 @@ attach timeout、poll cadence、write timeout 属于 Runtime 调度策略，不�
 
 Channel 刷新通过共享 target worker 使用当前 Session/Core 与原定位策略重新 attach RTT，成功后原子替换 RTT handle 与 Channel metadata；失败时保留原 runtime。RTT poll/write/refresh 都不能直接取得 probe-rs Session 所有权。
 
+原生 backend 保留 probe-rs 的严格 attach 作为健康目标的首选路径。若严格 attach 仅因单个 Channel descriptor 损坏而失败，TauTerm 会在同一已定位 Control Block 上做逐方向验证：未使用且 `pBuffer == 0` 的 descriptor 正常忽略；buffer/size/offset/flags 不合法的方向被隔离并保留诊断信息；只要仍存在至少一个可安全读写的方向，会话以 degraded 状态继续运行。RTT magic、Channel 数量或 Control Block 基础布局无效，或所有方向都不可用时仍整体拒绝。degraded 路径只对已验证方向执行 ring-buffer I/O，不修改目标 descriptor，也不通过 RAM 扫描掩盖错误。
+
 ### 已有 J-Link 调试会话
 
 兼容 backend 只连接 `127.0.0.1` 上现有 J-Link RTT TELNET 服务，用于与已经占用 J-Link 的 IDE/Debugger 共存。它不会打开 USB probe，也不会泛化成任意远程 TCP RTT 客户端。
@@ -91,13 +93,14 @@ RTT 的连接建立不是黑盒操作。System Log 必须记录足够的结构�
 
 RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同时具有 Up/Down。
 
-工作区中的当前观察 Channel 与 SendBar 的发送 Channel 是两个独立状态：
+工作区中的当前观察 Channel 与 SendBar 的发送 Channel 是两个独立状态。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
+
 
 - **观察 / Automation source**：必须有 Up，用于 Terminal/Log/HEX 与 Auto Reply/Lua `on_data`；
 - **Send target**：必须有 Down，由公共 SendBar 顶部 `RttSendTarget` 选择；
 - Terminal 模式的键盘输入直接写当前 Terminal 对应的 Down Channel，这是终端交互，不是第二套发送栏。
 
-RTT 启用 TauTerm 公共 SendBar。Basic/Command/Auto Reply/Script 继续使用统一 SendBar 产品体验；底层通过协议无关 `AutomationIo` 接入，而不是要求 RTT 根 Session 伪造 `DataPlane`。Lua 的 `send()` 使用当前 Down target，`send_to("rtt:<index>", ...)` 可显式指定 Channel；接收订阅来自当前 Up source。
+RTT 启用 TauTerm 公共 SendBar。Basic/Command/Auto Reply/Script 继续使用统一 SendBar 产品体验；底层通过协议无关 `AutomationIo` 接入，而不是要求 RTT 根 Session 伪造 `DataPlane`。Lua 的 `send()` 使用当前 Down target，`send_to("rtt:<index>", ...)` 可显式指定 Channel；接收订阅来自当前 Up source。Send target 行是否存在由插件运行态统一判定：只有实际存在可用 Down Channel 时才渲染并计入 SendBar 高度，断连、连接失败或没有可写方向时不预留隐藏目标栏空间。
 
 重连创建新 runtime generation 后，前端会重新同步当前 Up source 与 Down target，不能让前端保留选择和新 backend 默认值发生隐式漂移。
 
