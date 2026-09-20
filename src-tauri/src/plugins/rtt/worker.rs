@@ -272,6 +272,8 @@ pub(super) fn run(
             notify_unexpected_disconnect(app, session_id, error);
         }
     } else {
+        shared.set_stopped();
+        let _ = emit_snapshot(&app, &session_id, &shared);
         log::info!("RTT worker stopped: session={}", session_id);
     }
 }
