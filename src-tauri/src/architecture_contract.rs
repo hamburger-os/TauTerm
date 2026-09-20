@@ -509,10 +509,8 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
 fn rtt_connection_diagnostics_remain_observable() {
     let worker = read_source("plugins/rtt/worker.rs");
     assert!(
-        worker.contains("RTT connect start:")
-            && worker.contains("RTT connect failed:")
-            && worker.contains("RTT runtime fault:"),
-        "RTT lifecycle failures must remain visible in the System Log"
+        worker.contains("RTT connect start:") && worker.contains("RTT runtime fault:"),
+        "RTT worker lifecycle diagnostics must remain visible in the System Log"
     );
 
     let backend = read_source("plugins/rtt/backend/probe_rs.rs");
@@ -525,8 +523,8 @@ fn rtt_connection_diagnostics_remain_observable() {
 
     let plugin = read_source("plugins/rtt/mod.rs");
     assert!(
-        plugin.contains("RTT connect rejected:"),
-        "RTT configuration rejection must be logged before a runtime exists"
+        plugin.contains("RTT connect rejected:") && plugin.contains("RTT connect failed:"),
+        "RTT connector must log both pre-runtime rejection and final startup failure"
     );
 }
 
