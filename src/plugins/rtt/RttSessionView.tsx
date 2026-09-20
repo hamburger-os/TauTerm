@@ -8,6 +8,8 @@ import RttTerminalView from "./RttTerminalView";
 import {
   base64ToBytes,
   formatBytes,
+  isUsableRttDirection,
+  rttChannelIssues,
   type RttChannelInfo,
   type RttChunk,
   type RttViewMode,
@@ -88,6 +90,9 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const selectedChannel = runtime.selectedChannel;
   const channels = snapshot?.channels ?? [];
   const channel = channels.find(item => item.index === selectedChannel) ?? null;
+  const channelIssues = channel ? rttChannelIssues(channel) : [];
+  const usableUp = isUsableRttDirection(channel?.up);
+  const usableDown = isUsableRttDirection(channel?.down);
   const chunks = rttChannelChunks(runtime, selectedChannel);
   const mode: RttViewMode = selectedChannel == null
     ? "terminal"
@@ -190,8 +195,9 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                 {item.name || t("rtt.channel", { index: item.index })}
               </span>
               <span className={styles.direction}>
-                {item.up ? "↑" : ""}
-                {item.down ? "↓" : ""}
+                {isUsableRttDirection(item.up) ? "↑" : ""}
+                {isUsableRttDirection(item.down) ? "↓" : ""}
+                {!item.metadata_complete ? <span className={styles.channelWarning}>⚠</span> : null}
               </span>
             </button>
           ))}
@@ -204,9 +210,10 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                 <div>
                   <strong>{channel.name || t("rtt.channel", { index: channel.index })}</strong>
                   <span className={styles.directionDetail}>
-                    {channel.up ? "Up" : ""}
-                    {channel.up && channel.down ? " / " : ""}
-                    {channel.down ? "Down" : ""}
+                    {usableUp ? "Up" : ""}
+                    {usableUp && usableDown ? " / " : ""}
+                    {usableDown ? "Down" : ""}
+                    {!channel.metadata_complete ? ` · ${t("rtt.channelDegraded")}` : ""}
                   </span>
                 </div>
                 <div className={`${styles.modeTabs} liquid-selector-strip`}>
@@ -225,13 +232,22 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               </div>
 
               <div className={styles.viewerContent}>
-                {!channel.up ? (
-                  <div className={styles.empty}>{t("rtt.noUp")}</div>
+                {!usableUp ? (
+                  channelIssues.length > 0 ? (
+                    <div className={styles.issuePanel}>
+                      <strong>{t("rtt.channelUnavailable")}</strong>
+                      {channelIssues.map(issue => (
+                        <div key={issue} className={styles.issueRow}>{issue}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.empty}>{t("rtt.noUp")}</div>
+                  )
                 ) : mode === "terminal" ? (
                   <RttTerminalView
                     key={`${snapshot?.generation ?? 0}:${channel.index}`}
                     chunks={chunks}
-                    connected={connected && Boolean(channel.down)}
+                    connected={connected && usableDown}
                     onData={data => void sendRttTerminalData(sessionId, channel.index, data)}
                   />
                 ) : mode === "log" ? (
