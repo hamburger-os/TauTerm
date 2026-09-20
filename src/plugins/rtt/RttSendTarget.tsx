@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { usePluginRuntime } from "../../core/usePluginRuntime";
+import { isUsableRttDirection } from "./model";
 import {
   selectRttSendChannel,
   type RttRuntimeSnapshot,
@@ -9,7 +10,7 @@ import styles from "../../components/SendBar/TargetBar.module.css";
 export default function RttSendTarget({ sessionId, disabled = false }: { sessionId: string; disabled?: boolean }) {
   const { t } = useTranslation();
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
-  const writable = (runtime.snapshot?.channels ?? []).filter(channel => channel.down);
+  const writable = (runtime.snapshot?.channels ?? []).filter(channel => isUsableRttDirection(channel.down));
 
   if (writable.length === 0) return null;
 
