@@ -5,6 +5,7 @@ import {
   bytesToBase64,
   type RttChunk,
   type RttEvent,
+  isUsableRttDirection,
   type RttHistoryResponse,
   type RttSnapshot,
   type RttViewMode,
@@ -50,7 +51,7 @@ function chooseViewChannel(snapshot: RttSnapshot, previous: number | null): numb
   if (previous != null && snapshot.channels.some(channel => channel.index === previous)) {
     return previous;
   }
-  return snapshot.channels.find(channel => channel.up)?.index
+  return snapshot.channels.find(channel => isUsableRttDirection(channel.up))?.index
     ?? snapshot.channels[0]?.index
     ?? null;
 }
@@ -263,7 +264,7 @@ export async function selectRttChannel(sessionId: string, channelIndex: number):
   const prev = current(sessionId);
   const expectedGeneration = prev.snapshot?.generation ?? null;
   const channel = prev.snapshot?.channels.find(item => item.index === channelIndex);
-  if (!channel?.up) {
+  if (!isUsableRttDirection(channel?.up)) {
     if (prev.selectedChannel !== channelIndex) {
       publish(sessionId, { ...prev, selectedChannel: channelIndex });
     }

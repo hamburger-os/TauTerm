@@ -27,6 +27,7 @@ import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { pluginRegistry } from "./core/plugin-registry";
+import { usePluginSendTargetVisible } from "./core/usePluginRuntime";
 import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
@@ -55,8 +56,12 @@ function AppInner() {
   const activeShowSendBar = activeTabForBar
     ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
     : false;
-  const activeShowTargetBar = activeShowSendBar && !!activeTabForBar
-    && (pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible?.(activeTabForBar.params ?? {}) ?? false);
+  const activeTargetVisible = usePluginSendTargetVisible(
+    activeTabForBar?.pluginId ?? "",
+    activeTabForBar?.id ?? "",
+    activeTabForBar?.params ?? {},
+  );
+  const activeShowTargetBar = activeShowSendBar && activeTargetVisible;
   const {
     isResizing: isResizingSendBar,
     hostStyle: sendBarHostStyle,
@@ -339,7 +344,10 @@ function AppInner() {
                     ? sendBarHostStyle
                     : { display: "none" }
                   }>
-                    <SendBar containerId={tab.id} />
+                    <SendBar
+                      containerId={tab.id}
+                      showTargetBar={isActive && activeShowTargetBar}
+                    />
                   </div>
                 )}
               </React.Fragment>

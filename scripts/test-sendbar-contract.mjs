@@ -17,6 +17,7 @@ import {
   canSyncNetworkSendTarget,
   isNetworkSendTargetVisible,
 } from "../src/plugins/network/send-target.ts";
+import { hasUsableRttDownChannel } from "../src/plugins/rtt/model.ts";
 import {
   clampSendBarBodyHeight,
   getSendBarHostHeightCss,
@@ -128,6 +129,43 @@ assert.equal(canSyncNetworkSendTarget("connected", tcpServerParams), true);
 assert.equal(canSyncNetworkSendTarget("connected", udpServerParams), true);
 assert.equal(canSyncNetworkSendTarget("connected", { transport: "tcp", role: "client" }), false);
 
+// RTT target-row visibility is runtime authoritative: disconnected/faulted sessions and
+// sessions without a healthy Down direction must not reserve target-bar height.
+const rttDirection = { buffer_size: 64, usable: true, issue: null };
+const rttSnapshot = {
+  generation: 1,
+  phase: "running",
+  backend: null,
+  channels: [{
+    index: 0,
+    name: "Terminal",
+    up: rttDirection,
+    down: rttDirection,
+    metadata_complete: true,
+  }],
+  automation_source_channel: 0,
+  send_channel: 0,
+  rx_bytes: 0,
+  tx_bytes: 0,
+  dropped_history_bytes: 0,
+  dropped_history_chunks: 0,
+  dropped_automation_bytes: 0,
+  dropped_automation_chunks: 0,
+  dropped_presentation_bytes: 0,
+  dropped_presentation_chunks: 0,
+  runtime_pressure_events: 0,
+  last_error: null,
+};
+assert.equal(hasUsableRttDownChannel(rttSnapshot), true);
+assert.equal(hasUsableRttDownChannel({ ...rttSnapshot, phase: "faulted" }), false);
+assert.equal(hasUsableRttDownChannel({
+  ...rttSnapshot,
+  channels: [{
+    ...rttSnapshot.channels[0],
+    down: { buffer_size: 64, usable: false, issue: "invalid descriptor" },
+  }],
+}), false);
+
 // SendBar splitter geometry is exact in pixel space. Returning to the minimum must
 // produce the same canonical body height regardless of container size or plugin send target.
 const bodyMinHeight = 156;
@@ -163,7 +201,8 @@ assert.ok(sendBar.includes("pluginRegistry.get(tab.pluginId)?.sendTarget"));
 assert.ok(!sendBar.includes("NetworkSendTarget"), "common SendBar must not import a built-in target implementation");
 assert.ok(!sendBar.includes("set_network_send_target"), "common SendBar must not own Network synchronization");
 const app = source("src/App.tsx");
-assert.ok(app.includes("pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible"));
+assert.ok(app.includes("usePluginSendTargetVisible"));
+assert.ok(!app.includes("usePluginRuntimeRevision"));
 assert.ok(!app.includes("networkSendTarget"), "app shell must not own Network target rules");
 const networkTarget = source("src/plugins/network/NetworkSendTarget.tsx");
 assert.ok(networkTarget.includes('invoke("set_network_send_target"'));
@@ -173,12 +212,13 @@ assert.ok(networkTarget.includes("if (!active) return;"), "stale target-sync fai
 assert.ok(!networkTarget.includes("catch(() =>"), "current target sync failures must not be swallowed");
 const networkPlugin = source("src/plugins/network/index.tsx");
 assert.ok(networkPlugin.includes("sendTarget: NetworkSendTarget"));
-assert.ok(networkPlugin.includes("sendTargetVisible: params => isNetworkSendTargetVisible(params)"));
+assert.ok(networkPlugin.includes("sendTargetVisible: ({ params }) => isNetworkSendTargetVisible(params)"));
 
 const rttPlugin = source("src/plugins/rtt/index.tsx");
 const rttTarget = source("src/plugins/rtt/RttSendTarget.tsx");
 const rttRuntime = source("src/plugins/rtt/runtime-store.ts");
 assert.ok(rttPlugin.includes("sendTarget: RttSendTarget"));
+assert.ok(rttPlugin.includes("hasUsableRttDownChannel"));
 assert.ok(rttPlugin.includes("sendData: sendRttData"));
 assert.ok(rttPlugin.includes("sendBarEnabled: true"));
 assert.ok(rttTarget.includes("selectRttSendChannel"));
@@ -217,9 +257,14 @@ assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
+assert.ok(sendBar.includes("showTargetBar && SendTarget"));
 assert.ok(
   sendBar.includes("<SendTarget sessionId={containerId} disabled={executionMode !== null} />"),
   "plugin target controls must lock with the current SendBar execution snapshot",
+);
+assert.ok(
+  app.includes("showTargetBar={isActive && activeShowTargetBar}"),
+  "SendBar host geometry and rendered target row must share one visibility decision",
 );
 assert.ok(networkTarget.includes("disabled={disabled}"));
 assert.ok(rttTarget.includes("disabled={disabled}"));
@@ -227,6 +272,14 @@ assert.ok(rttTarget.includes("disabled={disabled}"));
 assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
 assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");
 assert.ok(!app.includes("SENDBAR_MIN_PCT"), "percentage minimum quantization must not return");
+const pluginRuntimeHook = source("src/core/usePluginRuntime.ts");
+assert.ok(pluginRuntimeHook.includes("usePluginSendTargetVisible"));
+assert.ok(pluginRuntimeHook.includes("resolveSendTargetVisible"));
+assert.ok(
+  pluginRuntimeHook.includes("return useSyncExternalStore("),
+  "send-target layout visibility must subscribe through a stable derived snapshot",
+);
+
 const sendBarLayoutHook = source("src/components/SendBar/useSendBarLayout.ts");
 assert.ok(sendBarLayoutHook.includes("clampSendBarBodyHeight"));
 assert.ok(sendBarLayoutHook.includes("new ResizeObserver(normalizeHeight)"));

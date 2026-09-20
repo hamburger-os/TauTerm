@@ -170,7 +170,7 @@ export const networkPlugin = definePlugin({
   runtimeStore: networkRuntimeStore,
   sendData: sendNetworkData,
   sendTarget: NetworkSendTarget,
-  sendTargetVisible: params => isNetworkSendTargetVisible(params),
+  sendTargetVisible: ({ params }) => isNetworkSendTargetVisible(params),
   sessionTree: {
     groupKey: (params, fallback) => {
       const transport = params.transport === "udp" ? "udp" : "tcp";

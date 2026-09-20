@@ -131,6 +131,12 @@ export interface PluginSendContext {
   sendDefault: (sessionId: string, data: string | Uint8Array) => Promise<void>;
 }
 
+export interface PluginSendTargetVisibilityContext {
+  sessionId: string;
+  params: Record<string, unknown>;
+  runtimeSnapshot: unknown;
+}
+
 export interface PluginSessionTreeMenuItem {
   id: string;
   label: string;
@@ -210,7 +216,7 @@ export interface PluginRegistration {
   sendData?: (context: PluginSendContext) => Promise<void>;
   sessionTree?: PluginSessionTreeContribution;
   sendTarget?: ComponentType<{ sessionId: string; disabled?: boolean }>;
-  sendTargetVisible?: (params: Record<string, unknown>) => boolean;
+  sendTargetVisible?: (context: PluginSendTargetVisibilityContext) => boolean;
   terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
   appOverlay?: ComponentType;
   rightSidebar?: PluginRightSidebarContribution;
@@ -357,6 +363,20 @@ class PluginRegistry {
 
   resolveSendBarEnabled(pluginId: string, requested?: boolean): boolean {
     return this.supportsSendBar(pluginId) && requested !== false;
+  }
+
+  resolveSendTargetVisible(
+    pluginId: string,
+    sessionId: string,
+    params: Record<string, unknown>,
+  ): boolean {
+    const plugin = this.get(pluginId);
+    if (!plugin?.sendTarget) return false;
+    return plugin.sendTargetVisible?.({
+      sessionId,
+      params,
+      runtimeSnapshot: plugin.runtimeStore?.getSnapshot(sessionId),
+    }) ?? true;
   }
 
   getToolbarItems(pluginId: string): ToolbarItem[] {

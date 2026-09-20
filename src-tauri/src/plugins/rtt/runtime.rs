@@ -191,13 +191,13 @@ impl RttShared {
                     let still_readable = selected.is_some_and(|index| {
                         channels
                             .iter()
-                            .any(|channel| channel.index == index && channel.up.is_some())
+                            .any(|channel| channel.index == index && channel.has_usable_up())
                     });
                     if !still_readable {
                         *selected = channels
                             .iter()
-                            .find(|channel| channel.index == 0 && channel.up.is_some())
-                            .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                            .find(|channel| channel.index == 0 && channel.has_usable_up())
+                            .or_else(|| channels.iter().find(|channel| channel.has_usable_up()))
                             .map(|channel| channel.index);
                     }
                     *selected
@@ -206,13 +206,13 @@ impl RttShared {
             let still_writable = selected.is_some_and(|index| {
                 channels
                     .iter()
-                    .any(|channel| channel.index == index && channel.down.is_some())
+                    .any(|channel| channel.index == index && channel.has_usable_down())
             });
             if !still_writable {
                 *selected = channels
                     .iter()
-                    .find(|channel| channel.index == 0 && channel.down.is_some())
-                    .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
+                    .find(|channel| channel.index == 0 && channel.has_usable_down())
+                    .or_else(|| channels.iter().find(|channel| channel.has_usable_down()))
                     .map(|channel| channel.index);
             }
             *selected
@@ -305,6 +305,20 @@ impl RttShared {
         }
     }
 
+    pub(super) fn set_stopped(&self) {
+        if let Ok(mut selected) = self.automation_source_channel.lock() {
+            *selected = None;
+        }
+        if let Ok(mut selected) = self.send_channel.lock() {
+            *selected = None;
+        }
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.phase = RttPhase::Idle;
+            snapshot.automation_source_channel = None;
+            snapshot.send_channel = None;
+        }
+    }
+
     pub(super) fn snapshot(&self) -> RttSnapshot {
         self.snapshot
             .lock()
@@ -343,17 +357,24 @@ impl RttShared {
                     format!("RTT Channel {channel_index} 不存在"),
                 )
             })?;
-        let available = if require_up {
-            channel.up.is_some()
+        let direction = if require_up {
+            channel.up.as_ref()
         } else {
-            channel.down.is_some()
+            channel.down.as_ref()
         };
-        if !available {
+        let direction_name = if require_up { "Up" } else { "Down" };
+        let Some(direction) = direction else {
             return Err(RttError::new(
                 RttErrorCode::RttChannelNotFound,
+                format!("RTT Channel {channel_index} 没有 {direction_name} 方向"),
+            ));
+        };
+        if !direction.usable {
+            return Err(RttError::new(
+                RttErrorCode::RttInvalidControlBlock,
                 format!(
-                    "RTT Channel {channel_index} 没有 {} 方向",
-                    if require_up { "Up" } else { "Down" }
+                    "RTT Channel {channel_index} {direction_name} 方向不可用: {}",
+                    direction.issue.as_deref().unwrap_or("descriptor 无效")
                 ),
             ));
         }
@@ -722,6 +743,8 @@ mod tests {
                     name: Some("up-only".to_string()),
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
@@ -732,6 +755,8 @@ mod tests {
                     up: None,
                     down: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     metadata_complete: true,
                 },
@@ -743,6 +768,92 @@ mod tests {
         assert!(shared.set_automation_source_channel(2).is_err());
         assert!(shared.set_send_channel(1).is_err());
         assert_eq!(shared.send_channel().unwrap(), 2);
+    }
+
+    #[test]
+    fn degraded_channels_are_never_selected_for_runtime_io() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![
+                RttChannelInfo {
+                    index: 0,
+                    name: Some("broken".to_string()),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: false,
+                        issue: Some("bad up descriptor".to_string()),
+                    }),
+                    down: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: false,
+                        issue: Some("bad down descriptor".to_string()),
+                    }),
+                    metadata_complete: false,
+                },
+                RttChannelInfo {
+                    index: 1,
+                    name: Some("healthy".to_string()),
+                    up: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
+                    }),
+                    down: Some(RttChannelDirectionInfo {
+                        buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
+                    }),
+                    metadata_complete: true,
+                },
+            ],
+        );
+
+        let snapshot = shared.snapshot();
+        assert_eq!(snapshot.automation_source_channel, Some(1));
+        assert_eq!(snapshot.send_channel, Some(1));
+        assert_eq!(
+            shared.set_automation_source_channel(0).unwrap_err().code,
+            RttErrorCode::RttInvalidControlBlock
+        );
+        assert_eq!(
+            shared.set_send_channel(0).unwrap_err().code,
+            RttErrorCode::RttInvalidControlBlock
+        );
+    }
+
+    #[test]
+    fn stopped_runtime_clears_active_channel_authorities_but_keeps_metadata() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![RttChannelInfo {
+                index: 0,
+                name: Some("Terminal".to_string()),
+                up: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(64),
+                    usable: true,
+                    issue: None,
+                }),
+                down: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(64),
+                    usable: true,
+                    issue: None,
+                }),
+                metadata_complete: true,
+            }],
+        );
+        shared.set_stopped();
+
+        let snapshot = shared.snapshot();
+        assert_eq!(snapshot.phase, RttPhase::Idle);
+        assert_eq!(snapshot.automation_source_channel, None);
+        assert_eq!(snapshot.send_channel, None);
+        assert_eq!(snapshot.channels.len(), 1);
     }
 
     #[test]
@@ -758,6 +869,8 @@ mod tests {
                     name: None,
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
@@ -767,6 +880,8 @@ mod tests {
                     name: None,
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
