@@ -100,7 +100,15 @@ async fn connect_session(
         session_id,
         ..
     } = request;
-    let config = config::RttConfig::from_params(&params).map_err(|error| error.to_string())?;
+    let config = config::RttConfig::from_params(&params).map_err(|error| {
+        log::error!(
+            "RTT connect rejected: session={}, code={}, message={}",
+            session_id.as_deref().unwrap_or("<new>"),
+            error.code.as_str(),
+            error.message
+        );
+        error.to_string()
+    })?;
     let backend = config.backend;
     let plugin = state.plugin::<RttPlugin>(PLUGIN_ID);
     let runtime = Arc::new(RttRuntime::new(config, Arc::clone(&state.embedded_debug)));
