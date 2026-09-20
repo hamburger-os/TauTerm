@@ -487,7 +487,6 @@ fn map_rtt_io_error(error: ProbeRttError) -> RttError {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
