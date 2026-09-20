@@ -293,7 +293,10 @@ mod tests {
         assert_eq!(RttWireProtocol::Jtag.as_str(), "jtag");
         assert_eq!(RttLocator::Auto.kind(), "auto");
         assert_eq!(RttLocator::Exact(0x2000_0000).kind(), "exact");
-        assert_eq!(RttLocator::Ranges(vec![0x2000_0000..0x2000_1000]).kind(), "ranges");
+        assert_eq!(
+            RttLocator::Ranges(vec![0x2000_0000..0x2000_1000]).kind(),
+            "ranges"
+        );
     }
 
     #[test]
