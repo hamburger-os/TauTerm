@@ -51,6 +51,7 @@ impl ProbeRsRttBackend {
     pub(super) fn open(
         config: &RttConfig,
         embedded_debug: &EmbeddedDebugManager,
+        session_id: &str,
     ) -> Result<Self, RttError> {
         let target_name = config
             .target
@@ -73,7 +74,21 @@ impl ProbeRsRttBackend {
             .map_err(map_target_runtime_error)?;
         drop(target);
 
-        let region = resolve_scan_region(config)?;
+        let descriptor = service.descriptor();
+        log::info!(
+            "RTT native target ready: session={}, probe={}, target={}, core={}, wire={:?}, speed_khz={}",
+            session_id,
+            descriptor.probe_label,
+            descriptor.target,
+            config.core_index,
+            config.wire_protocol,
+            config
+                .speed_khz
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "auto".to_string())
+        );
+
+        let region = resolve_scan_region(config, session_id)?;
         let core_index = config.core_index;
         let attach_timeout = config.attach_timeout;
         let attach_region = region.clone();
@@ -96,6 +111,13 @@ impl ProbeRsRttBackend {
             )
             .map_err(map_target_runtime_error)??;
         let control_block_address = rtt.ptr();
+        log::info!(
+            "RTT attach succeeded: session={}, control_block=0x{:X}, channels={}, metadata={}",
+            session_id,
+            control_block_address,
+            channels.len(),
+            channel_summary(&channels)
+        );
 
         Ok(Self {
             service,
@@ -110,10 +132,14 @@ impl ProbeRsRttBackend {
     }
 }
 
-fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
+fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegion, RttError> {
     match &config.locator {
         RttLocator::Auto => {
             let Some(path) = config.firmware_path.as_deref() else {
+                log::info!(
+                    "RTT locator resolved: session={}, source=ram_scan, reason=no_firmware_artifact",
+                    session_id
+                );
                 return Ok(ScanRegion::Ram);
             };
             let artifact = FirmwareArtifact::load(path).map_err(map_firmware_artifact_error)?;
@@ -123,13 +149,69 @@ fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
                     format!("无法解析固件符号文件 {path}: {error}"),
                 )
             })? {
-                Some(address) => Ok(ScanRegion::Exact(address)),
-                None => Ok(ScanRegion::Ram),
+                Some(address) => {
+                    log::info!(
+                        "RTT locator resolved: session={}, source=elf_symbol, symbol=_SEGGER_RTT, address=0x{:X}, firmware={}",
+                        session_id,
+                        address,
+                        path
+                    );
+                    Ok(ScanRegion::Exact(address))
+                }
+                None => {
+                    log::info!(
+                        "RTT locator resolved: session={}, source=ram_scan, reason=elf_symbol_missing, firmware={}",
+                        session_id,
+                        path
+                    );
+                    Ok(ScanRegion::Ram)
+                }
             }
         }
-        RttLocator::Exact(address) => Ok(ScanRegion::Exact(*address)),
-        RttLocator::Ranges(ranges) => Ok(ScanRegion::Ranges(ranges.clone())),
+        RttLocator::Exact(address) => {
+            log::info!(
+                "RTT locator resolved: session={}, source=user_exact, address=0x{:X}",
+                session_id,
+                address
+            );
+            Ok(ScanRegion::Exact(*address))
+        }
+        RttLocator::Ranges(ranges) => {
+            let summary = ranges
+                .iter()
+                .map(|range| format!("0x{:X}-0x{:X}", range.start, range.end))
+                .collect::<Vec<_>>()
+                .join(",");
+            log::info!(
+                "RTT locator resolved: session={}, source=user_ranges, ranges={}",
+                session_id,
+                summary
+            );
+            Ok(ScanRegion::Ranges(ranges.clone()))
+        }
     }
+}
+
+fn channel_summary(channels: &[RttChannelInfo]) -> String {
+    channels
+        .iter()
+        .map(|channel| {
+            let up = channel
+                .up
+                .as_ref()
+                .and_then(|direction| direction.buffer_size)
+                .map(|size| size.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let down = channel
+                .down
+                .as_ref()
+                .and_then(|direction| direction.buffer_size)
+                .map(|size| size.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            format!("{}(up={},down={})", channel.index, up, down)
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn map_firmware_artifact_error(error: FirmwareArtifactError) -> RttError {
@@ -368,7 +450,7 @@ fn map_rtt_attach_error(error: ProbeRttError) -> RttError {
         ),
         ProbeRttError::ControlBlockCorrupted(message) => RttError::new(
             RttErrorCode::RttInvalidControlBlock,
-            format!("RTT Control Block 无效: {message}"),
+            format!("RTT Control Block 无效或尚未完成初始化。技术详情: {message}"),
         ),
         other => RttError::new(
             RttErrorCode::RttNotInitialized,
