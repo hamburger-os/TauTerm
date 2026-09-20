@@ -1024,6 +1024,8 @@ fn collect_channels(rtt: &mut Rtt) -> Result<Vec<RttChannelInfo>, RttError> {
         }
         entry.up = Some(RttChannelDirectionInfo {
             buffer_size: Some(channel.buffer_size()),
+            usable: true,
+            issue: None,
         });
     }
     for channel in rtt.down_channels().iter() {
@@ -1041,6 +1043,8 @@ fn collect_channels(rtt: &mut Rtt) -> Result<Vec<RttChannelInfo>, RttError> {
         }
         entry.down = Some(RttChannelDirectionInfo {
             buffer_size: Some(channel.buffer_size()),
+            usable: true,
+            issue: None,
         });
     }
     Ok(entries.into_values().collect())
@@ -1083,7 +1087,11 @@ impl RttBackend for ProbeRsRttBackend {
                 let mut rtt = rtt
                     .lock()
                     .map_err(|error| RttError::backend(error.to_string()))?;
-                let channel_count = rtt.up_channels().iter().count();
+
+                let channel_count = match &*rtt {
+                    ProbeRttHandle::Strict(rtt) => rtt.up_channels().iter().count(),
+                    ProbeRttHandle::Degraded(rtt) => rtt.up_channels.len(),
+                };
                 if channel_count == 0 {
                     return Ok((Vec::new(), 0));
                 }
@@ -1092,27 +1100,54 @@ impl RttBackend for ProbeRsRttBackend {
                 let channel_budget = channel_count.min(MAX_UP_CHANNELS_PER_POLL);
                 let mut chunks = Vec::new();
                 let mut buffer = [0u8; 4 * 1024];
-                for (position, channel) in rtt.up_channels().iter_mut().enumerate() {
-                    let distance = (position + channel_count - start) % channel_count;
-                    if distance >= channel_budget {
-                        continue;
-                    }
-                    for _ in 0..MAX_READS_PER_UP_CHANNEL {
-                        let count = channel
-                            .read(&mut core, &mut buffer)
-                            .map_err(map_rtt_io_error)?;
-                        if count == 0 {
-                            break;
+
+                match &mut *rtt {
+                    ProbeRttHandle::Strict(rtt) => {
+                        for (position, channel) in rtt.up_channels().iter_mut().enumerate() {
+                            let distance = (position + channel_count - start) % channel_count;
+                            if distance >= channel_budget {
+                                continue;
+                            }
+                            for _ in 0..MAX_READS_PER_UP_CHANNEL {
+                                let count = channel
+                                    .read(&mut core, &mut buffer)
+                                    .map_err(map_rtt_io_error)?;
+                                if count == 0 {
+                                    break;
+                                }
+                                chunks.push(RttReadChunk {
+                                    channel_index: channel.number() as u32,
+                                    data: buffer[..count].to_vec(),
+                                });
+                                if count < buffer.len() {
+                                    break;
+                                }
+                            }
                         }
-                        chunks.push(RttReadChunk {
-                            channel_index: channel.number() as u32,
-                            data: buffer[..count].to_vec(),
-                        });
-                        if count < buffer.len() {
-                            break;
+                    }
+                    ProbeRttHandle::Degraded(rtt) => {
+                        for (position, channel) in rtt.up_channels.iter_mut().enumerate() {
+                            let distance = (position + channel_count - start) % channel_count;
+                            if distance >= channel_budget {
+                                continue;
+                            }
+                            for _ in 0..MAX_READS_PER_UP_CHANNEL {
+                                let count = channel.read_up(&mut core, &mut buffer)?;
+                                if count == 0 {
+                                    break;
+                                }
+                                chunks.push(RttReadChunk {
+                                    channel_index: channel.index,
+                                    data: buffer[..count].to_vec(),
+                                });
+                                if count < buffer.len() {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
+
                 Ok((chunks, (start + channel_budget) % channel_count))
             })
             .map_err(map_target_runtime_error)??;
@@ -1136,13 +1171,30 @@ impl RttBackend for ProbeRsRttBackend {
                 let mut rtt = rtt
                     .lock()
                     .map_err(|error| RttError::backend(error.to_string()))?;
-                let channel = rtt.down_channel(channel_index as usize).ok_or_else(|| {
-                    RttError::new(
-                        RttErrorCode::RttChannelNotFound,
-                        format!("RTT Down Channel {channel_index} 不存在"),
-                    )
-                })?;
-                channel.write(&mut core, &data).map_err(map_rtt_io_error)
+                match &mut *rtt {
+                    ProbeRttHandle::Strict(rtt) => {
+                        let channel = rtt.down_channel(channel_index as usize).ok_or_else(|| {
+                            RttError::new(
+                                RttErrorCode::RttChannelNotFound,
+                                format!("RTT Down Channel {channel_index} 不存在"),
+                            )
+                        })?;
+                        channel.write(&mut core, &data).map_err(map_rtt_io_error)
+                    }
+                    ProbeRttHandle::Degraded(rtt) => {
+                        let channel = rtt
+                            .down_channels
+                            .iter_mut()
+                            .find(|channel| channel.index == channel_index)
+                            .ok_or_else(|| {
+                                RttError::new(
+                                    RttErrorCode::RttChannelNotFound,
+                                    format!("RTT Down Channel {channel_index} 不可用"),
+                                )
+                            })?;
+                        channel.write_down(&mut core, &data)
+                    }
+                }
             })
             .map_err(map_target_runtime_error)?
     }
@@ -1171,7 +1223,7 @@ impl RttBackend for ProbeRsRttBackend {
                         &diagnostic_session_id,
                     )?;
                     drop(core);
-                    let channels = collect_channels(&mut refreshed)?;
+                    let channels = refreshed.channel_metadata()?;
                     let control_block_address = refreshed.ptr();
                     *rtt.lock()
                         .map_err(|error| RttError::backend(error.to_string()))? = refreshed;
