@@ -305,6 +305,20 @@ impl RttShared {
         }
     }
 
+    pub(super) fn set_stopped(&self) {
+        if let Ok(mut selected) = self.automation_source_channel.lock() {
+            *selected = None;
+        }
+        if let Ok(mut selected) = self.send_channel.lock() {
+            *selected = None;
+        }
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.phase = RttPhase::Idle;
+            snapshot.automation_source_channel = None;
+            snapshot.send_channel = None;
+        }
+    }
+
     pub(super) fn snapshot(&self) -> RttSnapshot {
         self.snapshot
             .lock()
@@ -808,6 +822,38 @@ mod tests {
             shared.set_send_channel(0).unwrap_err().code,
             RttErrorCode::RttInvalidControlBlock
         );
+    }
+
+    #[test]
+    fn stopped_runtime_clears_active_channel_authorities_but_keeps_metadata() {
+        use super::super::model::{RttChannelDirectionInfo, RttChannelInfo};
+
+        let shared = RttShared::new();
+        shared.set_running(
+            backend_descriptor(),
+            vec![RttChannelInfo {
+                index: 0,
+                name: Some("Terminal".to_string()),
+                up: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(64),
+                    usable: true,
+                    issue: None,
+                }),
+                down: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(64),
+                    usable: true,
+                    issue: None,
+                }),
+                metadata_complete: true,
+            }],
+        );
+        shared.set_stopped();
+
+        let snapshot = shared.snapshot();
+        assert_eq!(snapshot.phase, RttPhase::Idle);
+        assert_eq!(snapshot.automation_source_channel, None);
+        assert_eq!(snapshot.send_channel, None);
+        assert_eq!(snapshot.channels.len(), 1);
     }
 
     #[test]
