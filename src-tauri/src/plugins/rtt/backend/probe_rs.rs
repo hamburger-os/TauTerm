@@ -51,7 +51,6 @@ impl ProbeRttHandle {
 #[derive(Debug)]
 struct DirectRttChannel {
     index: u32,
-    metadata_address: u64,
     buffer_address: u64,
     buffer_size: u32,
     write_offset_address: u64,
@@ -584,7 +583,6 @@ impl DegradedRtt {
             };
             let channel = DirectRttChannel {
                 index,
-                metadata_address,
                 buffer_address: snapshot.buffer_pointer,
                 buffer_size: snapshot.size,
                 write_offset_address,
