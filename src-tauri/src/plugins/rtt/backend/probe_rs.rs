@@ -15,6 +15,7 @@ use crate::plugins::rtt::model::{
 use probe_rs::rtt::{
     find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion,
 };
+use probe_rs::MemoryInterface;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
