@@ -104,20 +104,20 @@ impl ProbeRsRttBackend {
                             format!("无法打开 CPU Core {core_index}: {error}"),
                         )
                     })?;
-                    let mut rtt =
-                        match try_attach_to_rtt(&mut core, attach_timeout, &attach_region) {
-                            Ok(rtt) => rtt,
-                            Err(error) => {
-                                if matches!(error, ProbeRttError::ControlBlockCorrupted(_)) {
-                                    log_control_block_snapshot(
-                                        &mut core,
-                                        &attach_region,
-                                        &diagnostic_session_id,
-                                    );
-                                }
-                                return Err(map_rtt_attach_error(error));
+                    let mut rtt = match try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
+                    {
+                        Ok(rtt) => rtt,
+                        Err(error) => {
+                            if matches!(error, ProbeRttError::ControlBlockCorrupted(_)) {
+                                log_control_block_snapshot(
+                                    &mut core,
+                                    &attach_region,
+                                    &diagnostic_session_id,
+                                );
                             }
-                        };
+                            return Err(map_rtt_attach_error(error));
+                        }
+                    };
                     drop(core);
                     let channels = collect_channels(&mut rtt)?;
                     Ok((rtt, channels))
@@ -213,7 +213,6 @@ fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegio
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RttDescriptorSnapshot {
     name_pointer: u64,
@@ -252,7 +251,11 @@ fn parse_descriptor_words(words: &[u32], is_64_bit: bool) -> Option<RttDescripto
     }
 }
 
-fn log_control_block_snapshot(core: &mut probe_rs::Core<'_>, region: &ScanRegion, session_id: &str) {
+fn log_control_block_snapshot(
+    core: &mut probe_rs::Core<'_>,
+    region: &ScanRegion,
+    session_id: &str,
+) {
     let address = match region {
         ScanRegion::Exact(address) => *address,
         _ => match Rtt::find_control_block(core, region) {
@@ -679,11 +682,8 @@ mod tests {
 
     #[test]
     fn parses_32_bit_rtt_descriptor_words() {
-        let snapshot = parse_descriptor_words(
-            &[0x2000_0100, 0x2000_0200, 1024, 17, 9, 2],
-            false,
-        )
-        .unwrap();
+        let snapshot =
+            parse_descriptor_words(&[0x2000_0100, 0x2000_0200, 1024, 17, 9, 2], false).unwrap();
         assert_eq!(
             snapshot,
             RttDescriptorSnapshot {
@@ -700,7 +700,16 @@ mod tests {
     #[test]
     fn parses_64_bit_rtt_descriptor_words() {
         let snapshot = parse_descriptor_words(
-            &[0x5566_7788, 0x1122_3344, 0xDDEE_FF00, 0x99AA_BBCC, 4096, 5, 3, 1],
+            &[
+                0x5566_7788,
+                0x1122_3344,
+                0xDDEE_FF00,
+                0x99AA_BBCC,
+                4096,
+                5,
+                3,
+                1,
+            ],
             true,
         )
         .unwrap();
