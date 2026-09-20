@@ -486,3 +486,40 @@ fn map_rtt_io_error(error: ProbeRttError) -> RttError {
         ),
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupted_control_block_keeps_stable_error_code_and_detail() {
+        let error = map_rtt_attach_error(ProbeRttError::ControlBlockCorrupted(
+            "bad descriptor".to_string(),
+        ));
+        assert_eq!(error.code, RttErrorCode::RttInvalidControlBlock);
+        assert!(error.message.contains("无效或尚未完成初始化"));
+        assert!(error.message.contains("bad descriptor"));
+    }
+
+    #[test]
+    fn channel_summary_is_bounded() {
+        let channels = (0..20)
+            .map(|index| RttChannelInfo {
+                index,
+                name: None,
+                up: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(1024),
+                }),
+                down: None,
+                metadata_complete: true,
+            })
+            .collect::<Vec<_>>();
+
+        let summary = channel_summary(&channels);
+        assert!(summary.contains("0(up=1024,down=-)"));
+        assert!(summary.contains("15(up=1024,down=-)"));
+        assert!(summary.contains("...(+4)"));
+        assert!(!summary.contains("16(up=1024,down=-)"));
+    }
+}
