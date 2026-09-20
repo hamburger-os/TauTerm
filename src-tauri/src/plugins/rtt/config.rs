@@ -286,6 +286,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn diagnostic_labels_are_stable() {
+        assert_eq!(RttBackendKind::ProbeRs.as_str(), "probe_rs");
+        assert_eq!(RttBackendKind::JlinkExisting.as_str(), "jlink_existing");
+        assert_eq!(RttWireProtocol::Swd.as_str(), "swd");
+        assert_eq!(RttWireProtocol::Jtag.as_str(), "jtag");
+        assert_eq!(RttLocator::Auto.kind(), "auto");
+        assert_eq!(RttLocator::Exact(0x2000_0000).kind(), "exact");
+        assert_eq!(RttLocator::Ranges(vec![0x2000_0000..0x2000_1000]).kind(), "ranges");
+    }
+
+    #[test]
     fn parses_direct_probe_config_and_hex_address() {
         let config = RttConfig::from_params(&json!({
             "backend": "probe_rs",
