@@ -294,7 +294,11 @@ mod tests {
         assert_eq!(RttLocator::Auto.kind(), "auto");
         assert_eq!(RttLocator::Exact(0x2000_0000).kind(), "exact");
         assert_eq!(
-            RttLocator::Ranges(vec![0x2000_0000..0x2000_1000]).kind(),
+            RttLocator::Ranges(vec![
+                0x2000_0000..0x2000_1000,
+                0x2000_2000..0x2000_3000,
+            ])
+            .kind(),
             "ranges"
         );
     }
