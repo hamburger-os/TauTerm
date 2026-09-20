@@ -66,7 +66,6 @@ struct DegradedRtt {
     channels: Vec<RttChannelInfo>,
 }
 
-
 pub struct ProbeRsRttBackend {
     service: DebugServiceLease,
     session_id: String,
@@ -438,7 +437,6 @@ fn parse_descriptor_words(words: &[u32], is_64_bit: bool) -> Option<RttDescripto
     }
 }
 
-
 fn attach_degraded_rtt(
     core: &mut probe_rs::Core<'_>,
     region: &ScanRegion,
@@ -510,12 +508,13 @@ impl DegradedRtt {
         for flat_index in 0..total {
             let metadata_address = ptr + 24 + descriptor_size * flat_index as u64;
             let mut words = vec![0u32; descriptor_words];
-            core.read_32(metadata_address, &mut words).map_err(|error| {
-                rtt_memory_error(
-                    &format!("读取 RTT Channel metadata 0x{metadata_address:X} 失败"),
-                    error,
-                )
-            })?;
+            core.read_32(metadata_address, &mut words)
+                .map_err(|error| {
+                    rtt_memory_error(
+                        &format!("读取 RTT Channel metadata 0x{metadata_address:X} 失败"),
+                        error,
+                    )
+                })?;
             let snapshot = parse_descriptor_words(&words, is_64_bit).ok_or_else(|| {
                 RttError::new(
                     RttErrorCode::RttInvalidControlBlock,
@@ -536,8 +535,8 @@ impl DegradedRtt {
                 .map_err(|_| RttError::backend("RTT Channel index 超出 u32"))?;
             let (name, name_issue) = read_degraded_channel_name(core, snapshot.name_pointer);
             let validation_issue = validate_degraded_descriptor(core, &snapshot);
-            let issue = validation_issue.or(name_issue);
             let usable = validation_issue.is_none();
+            let issue = validation_issue.or(name_issue);
             let direction = RttChannelDirectionInfo {
                 buffer_size: usize::try_from(snapshot.size).ok(),
                 usable,
@@ -637,7 +636,10 @@ fn merged_ram_ranges(core: &probe_rs::Core<'_>) -> Vec<(u64, u64)> {
 
 fn validate_descriptor_shape(descriptor: &RttDescriptorSnapshot) -> Option<String> {
     if descriptor.size < 2 {
-        return Some(format!("buffer size {} 小于 RTT ring buffer 最小值 2", descriptor.size));
+        return Some(format!(
+            "buffer size {} 小于 RTT ring buffer 最小值 2",
+            descriptor.size
+        ));
     }
     if descriptor.write_offset >= descriptor.size {
         return Some(format!(
@@ -652,7 +654,10 @@ fn validate_descriptor_shape(descriptor: &RttDescriptorSnapshot) -> Option<Strin
         ));
     }
     if descriptor.flags & 0x3 == 0x3 {
-        return Some(format!("RTT Channel mode flags 无效: 0x{:X}", descriptor.flags));
+        return Some(format!(
+            "RTT Channel mode flags 无效: 0x{:X}",
+            descriptor.flags
+        ));
     }
     None
 }
@@ -733,7 +738,9 @@ fn read_degraded_channel_name(
     } else {
         return (
             None,
-            Some(format!("Channel 名称指针 0x{pointer:X} 不在 RAM/NVM 范围内")),
+            Some(format!(
+                "Channel 名称指针 0x{pointer:X} 不在 RAM/NVM 范围内"
+            )),
         );
     };
 
@@ -1093,7 +1100,7 @@ impl RttBackend for ProbeRsRttBackend {
                     .lock()
                     .map_err(|error| RttError::backend(error.to_string()))?;
 
-                let channel_count = match &*rtt {
+                let channel_count = match &mut *rtt {
                     ProbeRttHandle::Strict(rtt) => rtt.up_channels().iter().count(),
                     ProbeRttHandle::Degraded(rtt) => rtt.up_channels.len(),
                 };
@@ -1178,12 +1185,13 @@ impl RttBackend for ProbeRsRttBackend {
                     .map_err(|error| RttError::backend(error.to_string()))?;
                 match &mut *rtt {
                     ProbeRttHandle::Strict(rtt) => {
-                        let channel = rtt.down_channel(channel_index as usize).ok_or_else(|| {
-                            RttError::new(
-                                RttErrorCode::RttChannelNotFound,
-                                format!("RTT Down Channel {channel_index} 不存在"),
-                            )
-                        })?;
+                        let channel =
+                            rtt.down_channel(channel_index as usize).ok_or_else(|| {
+                                RttError::new(
+                                    RttErrorCode::RttChannelNotFound,
+                                    format!("RTT Down Channel {channel_index} 不存在"),
+                                )
+                            })?;
                         channel.write(&mut core, &data).map_err(map_rtt_io_error)
                     }
                     ProbeRttHandle::Degraded(rtt) => {
