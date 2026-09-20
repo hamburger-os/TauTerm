@@ -81,6 +81,7 @@ RTT 的连接建立不是黑盒操作。System Log 必须记录足够的结构�
 - Native backend 明确记录定位来源：ELF/AXF 的 `_SEGGER_RTT`、用户精确地址、用户范围或 RAM 扫描回退；ELF 符号命中时同时记录解析出的 Control Block 地址；
 - 成功 attach 后记录实际 Control Block 地址、Channel 数量和各 Channel 的 Up/Down buffer size 摘要；
 - startup、Channel refresh 与运行期 fatal error 都以稳定的 RTT error code + message 进入 System Log；底层库技术详情可以保留，但用户提示必须先给出 TauTerm 语义；
+- Control Block 被判定损坏时，Native backend 额外抓取一个有界 metadata 快照：Control Block header、Up/Down descriptor 的地址/缓冲地址/大小/读写偏移/flags，并比较批量 32-bit 读取与逐 word 读取结果；该快照用于区分“某个未使用/跟踪 Channel descriptor 异常”和“CMSIS-DAP 批量内存读取不一致”，不包含 RTT payload；
 - 诊断日志不记录 RTT payload，也不把 Session Data Log 的数据内容复制到 System Log。
 
 连接失败仍保持“backend 完成 attach/定位并取得初始 Channel metadata 后才发布 Connected”的边界。补充诊断日志不能改变连接成功语义，也不能用日志副作用掩盖真实错误。
