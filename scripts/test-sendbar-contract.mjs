@@ -201,8 +201,8 @@ assert.ok(sendBar.includes("pluginRegistry.get(tab.pluginId)?.sendTarget"));
 assert.ok(!sendBar.includes("NetworkSendTarget"), "common SendBar must not import a built-in target implementation");
 assert.ok(!sendBar.includes("set_network_send_target"), "common SendBar must not own Network synchronization");
 const app = source("src/App.tsx");
-assert.ok(app.includes("pluginRegistry.resolveSendTargetVisible"));
-assert.ok(app.includes("usePluginRuntimeRevision"));
+assert.ok(app.includes("usePluginSendTargetVisible"));
+assert.ok(!app.includes("usePluginRuntimeRevision"));
 assert.ok(!app.includes("networkSendTarget"), "app shell must not own Network target rules");
 const networkTarget = source("src/plugins/network/NetworkSendTarget.tsx");
 assert.ok(networkTarget.includes('invoke("set_network_send_target"'));
@@ -272,6 +272,14 @@ assert.ok(rttTarget.includes("disabled={disabled}"));
 assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
 assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");
 assert.ok(!app.includes("SENDBAR_MIN_PCT"), "percentage minimum quantization must not return");
+const pluginRuntimeHook = source("src/core/usePluginRuntime.ts");
+assert.ok(pluginRuntimeHook.includes("usePluginSendTargetVisible"));
+assert.ok(pluginRuntimeHook.includes("resolveSendTargetVisible"));
+assert.ok(
+  pluginRuntimeHook.includes("return useSyncExternalStore("),
+  "send-target layout visibility must subscribe through a stable derived snapshot",
+);
+
 const sendBarLayoutHook = source("src/components/SendBar/useSendBarLayout.ts");
 assert.ok(sendBarLayoutHook.includes("clampSendBarBodyHeight"));
 assert.ok(sendBarLayoutHook.includes("new ResizeObserver(normalizeHeight)"));
