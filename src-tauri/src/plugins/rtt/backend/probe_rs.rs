@@ -255,13 +255,24 @@ fn attach_rtt_with_diagnostics(
     timeout: Duration,
     region: &ScanRegion,
     session_id: &str,
-) -> Result<Rtt, RttError> {
+) -> Result<ProbeRttHandle, RttError> {
     match try_attach_to_rtt(core, timeout, region) {
-        Ok(rtt) => Ok(rtt),
+        Ok(rtt) => Ok(ProbeRttHandle::Strict(rtt)),
         Err(error) => {
             match &error {
                 ProbeRttError::ControlBlockCorrupted(_) => {
                     log_control_block_snapshot(core, region, session_id);
+                    match attach_degraded_rtt(core, region, session_id) {
+                        Ok(rtt) => return Ok(ProbeRttHandle::Degraded(rtt)),
+                        Err(degraded_error) => {
+                            log::warn!(
+                                "RTT degraded attach rejected: session={}, code={}, message={}",
+                                session_id,
+                                degraded_error.code.as_str(),
+                                degraded_error.message
+                            );
+                        }
+                    }
                 }
                 ProbeRttError::ControlBlockNotFound | ProbeRttError::NoControlBlockLocation => {
                     if let ScanRegion::Exact(address) = region {
