@@ -26,10 +26,52 @@ const MAX_UP_CHANNELS_PER_POLL: usize = 4;
 const MAX_READS_PER_UP_CHANNEL: usize = 4;
 const MAX_DIAGNOSTIC_CHANNELS: usize = 16;
 
+#[derive(Debug)]
+enum ProbeRttHandle {
+    Strict(Rtt),
+    Degraded(DegradedRtt),
+}
+
+impl ProbeRttHandle {
+    fn ptr(&self) -> u64 {
+        match self {
+            Self::Strict(rtt) => rtt.ptr(),
+            Self::Degraded(rtt) => rtt.ptr,
+        }
+    }
+
+    fn channel_metadata(&mut self) -> Result<Vec<RttChannelInfo>, RttError> {
+        match self {
+            Self::Strict(rtt) => collect_channels(rtt),
+            Self::Degraded(rtt) => Ok(rtt.channels.clone()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DirectRttChannel {
+    index: u32,
+    metadata_address: u64,
+    buffer_address: u64,
+    buffer_size: u32,
+    write_offset_address: u64,
+    read_offset_address: u64,
+    last_read_offset: Option<u32>,
+}
+
+#[derive(Debug)]
+struct DegradedRtt {
+    ptr: u64,
+    up_channels: Vec<DirectRttChannel>,
+    down_channels: Vec<DirectRttChannel>,
+    channels: Vec<RttChannelInfo>,
+}
+
+
 pub struct ProbeRsRttBackend {
     service: DebugServiceLease,
     session_id: String,
-    rtt: Arc<Mutex<Rtt>>,
+    rtt: Arc<Mutex<ProbeRttHandle>>,
     control_block_address: u64,
     core_index: usize,
     region: ScanRegion,
@@ -113,7 +155,7 @@ impl ProbeRsRttBackend {
                         &diagnostic_session_id,
                     )?;
                     drop(core);
-                    let channels = collect_channels(&mut rtt)?;
+                    let channels = rtt.channel_metadata()?;
                     Ok((rtt, channels))
                 },
             )
