@@ -191,13 +191,13 @@ impl RttShared {
                     let still_readable = selected.is_some_and(|index| {
                         channels
                             .iter()
-                            .any(|channel| channel.index == index && channel.up.is_some())
+                            .any(|channel| channel.index == index && channel.up.as_ref().is_some_and(|direction| direction.usable))
                     });
                     if !still_readable {
                         *selected = channels
                             .iter()
-                            .find(|channel| channel.index == 0 && channel.up.is_some())
-                            .or_else(|| channels.iter().find(|channel| channel.up.is_some()))
+                            .find(|channel| channel.index == 0 && channel.up.as_ref().is_some_and(|direction| direction.usable))
+                            .or_else(|| channels.iter().find(|channel| channel.up.as_ref().is_some_and(|direction| direction.usable)))
                             .map(|channel| channel.index);
                     }
                     *selected
@@ -206,13 +206,13 @@ impl RttShared {
             let still_writable = selected.is_some_and(|index| {
                 channels
                     .iter()
-                    .any(|channel| channel.index == index && channel.down.is_some())
+                    .any(|channel| channel.index == index && channel.down.as_ref().is_some_and(|direction| direction.usable))
             });
             if !still_writable {
                 *selected = channels
                     .iter()
-                    .find(|channel| channel.index == 0 && channel.down.is_some())
-                    .or_else(|| channels.iter().find(|channel| channel.down.is_some()))
+                    .find(|channel| channel.index == 0 && channel.down.as_ref().is_some_and(|direction| direction.usable))
+                    .or_else(|| channels.iter().find(|channel| channel.down.as_ref().is_some_and(|direction| direction.usable)))
                     .map(|channel| channel.index);
             }
             *selected
@@ -344,9 +344,9 @@ impl RttShared {
                 )
             })?;
         let available = if require_up {
-            channel.up.is_some()
+            channel.up.as_ref().is_some_and(|direction| direction.usable)
         } else {
-            channel.down.is_some()
+            channel.down.as_ref().is_some_and(|direction| direction.usable)
         };
         if !available {
             return Err(RttError::new(
@@ -722,6 +722,8 @@ mod tests {
                     name: Some("up-only".to_string()),
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
@@ -732,6 +734,8 @@ mod tests {
                     up: None,
                     down: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     metadata_complete: true,
                 },
@@ -758,6 +762,8 @@ mod tests {
                     name: None,
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
@@ -767,6 +773,8 @@ mod tests {
                     name: None,
                     up: Some(RttChannelDirectionInfo {
                         buffer_size: Some(64),
+                        usable: true,
+                        issue: None,
                     }),
                     down: None,
                     metadata_complete: true,
