@@ -524,8 +524,11 @@ fn rtt_connection_diagnostics_remain_observable() {
             && backend.contains("RTT exact address diagnostic:")
             && backend.contains("read8_read32_consistent=")
             && backend.contains("read8_word32_consistent=")
-            && backend.contains("read32_word32_consistent="),
-        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, corruption metadata evidence, and exact-address memory-read evidence"
+            && backend.contains("read32_word32_consistent=")
+            && backend.contains("RTT degraded attach accepted:")
+            && backend.contains("RTT channel direction quarantined:")
+            && backend.contains("ProbeRttHandle::Degraded"),
+        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, corruption evidence, and per-direction degraded attach semantics"
     );
 
     let plugin = read_source("plugins/rtt/mod.rs");
