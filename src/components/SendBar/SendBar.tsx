@@ -15,17 +15,18 @@ import styles from "./SendBar.module.css";
 
 interface SendBarProps {
   containerId: string;
+  showTargetBar: boolean;
 }
 
-export default function SendBar({ containerId }: SendBarProps) {
+export default function SendBar({ containerId, showTargetBar }: SendBarProps) {
   return (
     <SendBarProvider>
-      <SendBarInner containerId={containerId} />
+      <SendBarInner containerId={containerId} showTargetBar={showTargetBar} />
     </SendBarProvider>
   );
 }
 
-function SendBarInner({ containerId }: SendBarProps) {
+function SendBarInner({ containerId, showTargetBar }: SendBarProps) {
   const { t } = useTranslation();
   const { state, dispatch } = useSendBar();
   const { state: sessionState } = useSession();
@@ -59,7 +60,9 @@ function SendBarInner({ containerId }: SendBarProps) {
 
   return (
     <div className={styles.container}>
-      {SendTarget && <SendTarget sessionId={containerId} disabled={executionMode !== null} />}
+      {showTargetBar && SendTarget && (
+        <SendTarget sessionId={containerId} disabled={executionMode !== null} />
+      )}
 
       <div className={`${styles.body} liquid-glass-panel`}>
         <div className={styles.modeSwitcher}>
