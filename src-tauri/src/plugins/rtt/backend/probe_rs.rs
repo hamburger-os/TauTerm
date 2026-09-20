@@ -15,6 +15,7 @@ use crate::plugins::rtt::model::{
 use probe_rs::rtt::{
     find_rtt_control_block_in_raw_file, try_attach_to_rtt, Error as ProbeRttError, Rtt, ScanRegion,
 };
+use probe_rs::MemoryInterface;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -23,6 +24,7 @@ const CHANNEL_REFRESH_TIMEOUT_CAP: Duration = Duration::from_secs(2);
 const TARGET_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_UP_CHANNELS_PER_POLL: usize = 4;
 const MAX_READS_PER_UP_CHANNEL: usize = 4;
+const MAX_DIAGNOSTIC_CHANNELS: usize = 16;
 
 pub struct ProbeRsRttBackend {
     service: DebugServiceLease,
@@ -51,6 +53,7 @@ impl ProbeRsRttBackend {
     pub(super) fn open(
         config: &RttConfig,
         embedded_debug: &EmbeddedDebugManager,
+        session_id: &str,
     ) -> Result<Self, RttError> {
         let target_name = config
             .target
@@ -73,10 +76,25 @@ impl ProbeRsRttBackend {
             .map_err(map_target_runtime_error)?;
         drop(target);
 
-        let region = resolve_scan_region(config)?;
+        let descriptor = service.descriptor();
+        log::info!(
+            "RTT native target ready: session={}, probe={}, target={}, core={}, wire={}, speed_khz={}",
+            session_id,
+            descriptor.probe_label,
+            descriptor.target,
+            config.core_index,
+            config.wire_protocol.as_str(),
+            config
+                .speed_khz
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "auto".to_string())
+        );
+
+        let region = resolve_scan_region(config, session_id)?;
         let core_index = config.core_index;
         let attach_timeout = config.attach_timeout;
         let attach_region = region.clone();
+        let diagnostic_session_id = session_id.to_string();
         let (rtt, channels) = service
             .execute(
                 attach_timeout.saturating_add(Duration::from_secs(1)),
@@ -87,8 +105,20 @@ impl ProbeRsRttBackend {
                             format!("无法打开 CPU Core {core_index}: {error}"),
                         )
                     })?;
-                    let mut rtt = try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
-                        .map_err(map_rtt_attach_error)?;
+                    let mut rtt = match try_attach_to_rtt(&mut core, attach_timeout, &attach_region)
+                    {
+                        Ok(rtt) => rtt,
+                        Err(error) => {
+                            if matches!(error, ProbeRttError::ControlBlockCorrupted(_)) {
+                                log_control_block_snapshot(
+                                    &mut core,
+                                    &attach_region,
+                                    &diagnostic_session_id,
+                                );
+                            }
+                            return Err(map_rtt_attach_error(error));
+                        }
+                    };
                     drop(core);
                     let channels = collect_channels(&mut rtt)?;
                     Ok((rtt, channels))
@@ -96,6 +126,13 @@ impl ProbeRsRttBackend {
             )
             .map_err(map_target_runtime_error)??;
         let control_block_address = rtt.ptr();
+        log::info!(
+            "RTT attach succeeded: session={}, control_block=0x{:X}, channels={}, metadata={}",
+            session_id,
+            control_block_address,
+            channels.len(),
+            channel_summary(&channels)
+        );
 
         Ok(Self {
             service,
@@ -110,10 +147,14 @@ impl ProbeRsRttBackend {
     }
 }
 
-fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
+fn resolve_scan_region(config: &RttConfig, session_id: &str) -> Result<ScanRegion, RttError> {
     match &config.locator {
         RttLocator::Auto => {
             let Some(path) = config.firmware_path.as_deref() else {
+                log::info!(
+                    "RTT locator resolved: session={}, source=ram_scan, reason=no_firmware_artifact",
+                    session_id
+                );
                 return Ok(ScanRegion::Ram);
             };
             let artifact = FirmwareArtifact::load(path).map_err(map_firmware_artifact_error)?;
@@ -123,13 +164,249 @@ fn resolve_scan_region(config: &RttConfig) -> Result<ScanRegion, RttError> {
                     format!("无法解析固件符号文件 {path}: {error}"),
                 )
             })? {
-                Some(address) => Ok(ScanRegion::Exact(address)),
-                None => Ok(ScanRegion::Ram),
+                Some(address) => {
+                    log::info!(
+                        "RTT locator resolved: session={}, source=elf_symbol, symbol=_SEGGER_RTT, address=0x{:X}, firmware={}",
+                        session_id,
+                        address,
+                        path
+                    );
+                    Ok(ScanRegion::Exact(address))
+                }
+                None => {
+                    log::info!(
+                        "RTT locator resolved: session={}, source=ram_scan, reason=elf_symbol_missing, firmware={}",
+                        session_id,
+                        path
+                    );
+                    Ok(ScanRegion::Ram)
+                }
             }
         }
-        RttLocator::Exact(address) => Ok(ScanRegion::Exact(*address)),
-        RttLocator::Ranges(ranges) => Ok(ScanRegion::Ranges(ranges.clone())),
+        RttLocator::Exact(address) => {
+            log::info!(
+                "RTT locator resolved: session={}, source=user_exact, address=0x{:X}",
+                session_id,
+                address
+            );
+            Ok(ScanRegion::Exact(*address))
+        }
+        RttLocator::Ranges(ranges) => {
+            const MAX_LOGGED_RANGES: usize = 16;
+            let mut entries = ranges
+                .iter()
+                .take(MAX_LOGGED_RANGES)
+                .map(|range| format!("0x{:X}-0x{:X}", range.start, range.end))
+                .collect::<Vec<_>>();
+            if ranges.len() > MAX_LOGGED_RANGES {
+                entries.push(format!(
+                    "...(+{})",
+                    ranges.len().saturating_sub(MAX_LOGGED_RANGES)
+                ));
+            }
+            log::info!(
+                "RTT locator resolved: session={}, source=user_ranges, ranges={}",
+                session_id,
+                entries.join(",")
+            );
+            Ok(ScanRegion::Ranges(ranges.clone()))
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RttDescriptorSnapshot {
+    name_pointer: u64,
+    buffer_pointer: u64,
+    size: u32,
+    write_offset: u32,
+    read_offset: u32,
+    flags: u32,
+}
+
+fn parse_descriptor_words(words: &[u32], is_64_bit: bool) -> Option<RttDescriptorSnapshot> {
+    if is_64_bit {
+        if words.len() != 8 {
+            return None;
+        }
+        Some(RttDescriptorSnapshot {
+            name_pointer: u64::from(words[0]) | (u64::from(words[1]) << 32),
+            buffer_pointer: u64::from(words[2]) | (u64::from(words[3]) << 32),
+            size: words[4],
+            write_offset: words[5],
+            read_offset: words[6],
+            flags: words[7],
+        })
+    } else {
+        if words.len() != 6 {
+            return None;
+        }
+        Some(RttDescriptorSnapshot {
+            name_pointer: u64::from(words[0]),
+            buffer_pointer: u64::from(words[1]),
+            size: words[2],
+            write_offset: words[3],
+            read_offset: words[4],
+            flags: words[5],
+        })
+    }
+}
+
+fn log_control_block_snapshot(
+    core: &mut probe_rs::Core<'_>,
+    region: &ScanRegion,
+    session_id: &str,
+) {
+    let address = match region {
+        ScanRegion::Exact(address) => *address,
+        _ => match Rtt::find_control_block(core, region) {
+            Ok(address) => address,
+            Err(error) => {
+                log::warn!(
+                    "RTT diagnostic snapshot unavailable: session={}, reason=control_block_location, error={}",
+                    session_id,
+                    error
+                );
+                return;
+            }
+        },
+    };
+
+    let mut id = [0u8; 16];
+    if let Err(error) = core.read(address, &mut id) {
+        log::warn!(
+            "RTT diagnostic snapshot unavailable: session={}, control_block=0x{:X}, reason=header_id_read, error={}",
+            session_id,
+            address,
+            error
+        );
+        return;
+    }
+    let mut counts = [0u32; 2];
+    if let Err(error) = core.read_32(address + 16, &mut counts) {
+        log::warn!(
+            "RTT diagnostic snapshot unavailable: session={}, control_block=0x{:X}, reason=channel_count_read, error={}",
+            session_id,
+            address,
+            error
+        );
+        return;
+    }
+
+    let is_64_bit = core.is_64_bit();
+    let max_up = counts[0] as usize;
+    let max_down = counts[1] as usize;
+    log::warn!(
+        "RTT diagnostic header: session={}, control_block=0x{:X}, magic_match={}, pointer_width={}, max_up={}, max_down={}",
+        session_id,
+        address,
+        id == Rtt::RTT_ID,
+        if is_64_bit { 64 } else { 32 },
+        max_up,
+        max_down
+    );
+
+    let descriptor_words = if is_64_bit { 8 } else { 6 };
+    let descriptor_size = (descriptor_words * std::mem::size_of::<u32>()) as u64;
+    let total = max_up.saturating_add(max_down).min(MAX_DIAGNOSTIC_CHANNELS);
+
+    for flat_index in 0..total {
+        let metadata_address = address + 24 + descriptor_size * flat_index as u64;
+        let mut block_words = vec![0u32; descriptor_words];
+        if let Err(error) = core.read_32(metadata_address, &mut block_words) {
+            log::warn!(
+                "RTT diagnostic descriptor unavailable: session={}, metadata=0x{:X}, error={}",
+                session_id,
+                metadata_address,
+                error
+            );
+            continue;
+        }
+
+        let mut single_words = Vec::with_capacity(descriptor_words);
+        let mut single_read_error = None;
+        for word_index in 0..descriptor_words {
+            match core.read_word_32(metadata_address + (word_index * 4) as u64) {
+                Ok(value) => single_words.push(value),
+                Err(error) => {
+                    single_read_error = Some(error.to_string());
+                    break;
+                }
+            }
+        }
+
+        let (direction, channel_index) = if flat_index < max_up {
+            ("up", flat_index)
+        } else {
+            ("down", flat_index - max_up)
+        };
+        let static_word_count = if is_64_bit { 5 } else { 3 };
+        let static_fields_consistent = single_read_error.is_none()
+            && single_words.get(..static_word_count) == block_words.get(..static_word_count);
+        let canonical_words = if single_read_error.is_none() {
+            &single_words
+        } else {
+            &block_words
+        };
+        let Some(snapshot) = parse_descriptor_words(canonical_words, is_64_bit) else {
+            continue;
+        };
+
+        log::warn!(
+            "RTT diagnostic descriptor: session={}, direction={}, channel={}, metadata=0x{:X}, name=0x{:X}, buffer=0x{:X}, size={}, write={}, read={}, flags=0x{:X}, static_fields_block_single_consistent={}, single_read_error={}",
+            session_id,
+            direction,
+            channel_index,
+            metadata_address,
+            snapshot.name_pointer,
+            snapshot.buffer_pointer,
+            snapshot.size,
+            snapshot.write_offset,
+            snapshot.read_offset,
+            snapshot.flags,
+            static_fields_consistent,
+            single_read_error.as_deref().unwrap_or("-")
+        );
+    }
+
+    if max_up.saturating_add(max_down) > MAX_DIAGNOSTIC_CHANNELS {
+        log::warn!(
+            "RTT diagnostic descriptors truncated: session={}, total={}, logged={}",
+            session_id,
+            max_up.saturating_add(max_down),
+            MAX_DIAGNOSTIC_CHANNELS
+        );
+    }
+}
+
+fn channel_summary(channels: &[RttChannelInfo]) -> String {
+    const MAX_LOGGED_CHANNELS: usize = 16;
+    let mut entries = channels
+        .iter()
+        .take(MAX_LOGGED_CHANNELS)
+        .map(|channel| {
+            let up = channel
+                .up
+                .as_ref()
+                .and_then(|direction| direction.buffer_size)
+                .map(|size| size.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let down = channel
+                .down
+                .as_ref()
+                .and_then(|direction| direction.buffer_size)
+                .map(|size| size.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            format!("{}(up={},down={})", channel.index, up, down)
+        })
+        .collect::<Vec<_>>();
+    if channels.len() > MAX_LOGGED_CHANNELS {
+        entries.push(format!(
+            "...(+{})",
+            channels.len().saturating_sub(MAX_LOGGED_CHANNELS)
+        ));
+    }
+    entries.join(",")
 }
 
 fn map_firmware_artifact_error(error: FirmwareArtifactError) -> RttError {
@@ -368,7 +645,7 @@ fn map_rtt_attach_error(error: ProbeRttError) -> RttError {
         ),
         ProbeRttError::ControlBlockCorrupted(message) => RttError::new(
             RttErrorCode::RttInvalidControlBlock,
-            format!("RTT Control Block 无效: {message}"),
+            format!("RTT Control Block 无效或尚未完成初始化。技术详情: {message}"),
         ),
         other => RttError::new(
             RttErrorCode::RttNotInitialized,
@@ -387,5 +664,82 @@ fn map_rtt_io_error(error: ProbeRttError) -> RttError {
             RttErrorCode::ProbeDisconnected,
             format!("RTT 与目标通信失败: {other}"),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupted_control_block_keeps_stable_error_code_and_detail() {
+        let error = map_rtt_attach_error(ProbeRttError::ControlBlockCorrupted(
+            "bad descriptor".to_string(),
+        ));
+        assert_eq!(error.code, RttErrorCode::RttInvalidControlBlock);
+        assert!(error.message.contains("无效或尚未完成初始化"));
+        assert!(error.message.contains("bad descriptor"));
+    }
+
+    #[test]
+    fn parses_32_bit_rtt_descriptor_words() {
+        let snapshot =
+            parse_descriptor_words(&[0x2000_0100, 0x2000_0200, 1024, 17, 9, 2], false).unwrap();
+        assert_eq!(
+            snapshot,
+            RttDescriptorSnapshot {
+                name_pointer: 0x2000_0100,
+                buffer_pointer: 0x2000_0200,
+                size: 1024,
+                write_offset: 17,
+                read_offset: 9,
+                flags: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_64_bit_rtt_descriptor_words() {
+        let snapshot = parse_descriptor_words(
+            &[
+                0x5566_7788,
+                0x1122_3344,
+                0xDDEE_FF00,
+                0x99AA_BBCC,
+                4096,
+                5,
+                3,
+                1,
+            ],
+            true,
+        )
+        .unwrap();
+        assert_eq!(snapshot.name_pointer, 0x1122_3344_5566_7788);
+        assert_eq!(snapshot.buffer_pointer, 0x99AA_BBCC_DDEE_FF00);
+        assert_eq!(snapshot.size, 4096);
+        assert_eq!(snapshot.write_offset, 5);
+        assert_eq!(snapshot.read_offset, 3);
+        assert_eq!(snapshot.flags, 1);
+    }
+
+    #[test]
+    fn channel_summary_is_bounded() {
+        let channels = (0..20)
+            .map(|index| RttChannelInfo {
+                index,
+                name: None,
+                up: Some(RttChannelDirectionInfo {
+                    buffer_size: Some(1024),
+                }),
+                down: None,
+                metadata_complete: true,
+            })
+            .collect::<Vec<_>>();
+
+        let summary = channel_summary(&channels);
+        assert!(summary.contains("0(up=1024,down=-)"));
+        assert!(summary.contains("15(up=1024,down=-)"));
+        assert!(summary.contains("...(+4)"));
+        assert!(!summary.contains("16(up=1024,down=-)"));
     }
 }

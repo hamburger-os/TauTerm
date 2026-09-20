@@ -72,7 +72,22 @@ pub(super) fn run(
     } = context;
 
     shared.set_phase(RttPhase::OpeningBackend);
-    let mut backend = match open_backend(&config, &embedded_debug) {
+    log::info!(
+        "RTT connect start: session={}, backend={}, probe={}, target={}, wire={}, speed_khz={}, core={}, firmware={}, locator={}",
+        session_id,
+        config.backend.as_str(),
+        config.probe_selector.as_deref().unwrap_or("auto"),
+        config.target.as_deref().unwrap_or("-"),
+        config.wire_protocol.as_str(),
+        config
+            .speed_khz
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "auto".to_string()),
+        config.core_index,
+        config.firmware_path.as_deref().unwrap_or("-"),
+        config.locator.kind()
+    );
+    let mut backend = match open_backend(&config, &embedded_debug, &session_id) {
         Ok(backend) => backend,
         Err(error) => {
             shared.set_error(error.clone());
@@ -81,7 +96,18 @@ pub(super) fn run(
             return;
         }
     };
-    shared.set_running(backend.descriptor(), backend.channels().to_vec());
+    let descriptor = backend.descriptor();
+    let channels = backend.channels().to_vec();
+    log::info!(
+        "RTT connected: session={}, backend={}, probe={}, target={}, control_block={}, channels={}",
+        session_id,
+        descriptor.kind,
+        descriptor.probe.as_deref().unwrap_or("-"),
+        descriptor.target.as_deref().unwrap_or("-"),
+        descriptor.control_block_address.as_deref().unwrap_or("-"),
+        channels.len()
+    );
+    shared.set_running(descriptor, channels);
     let _ = emit_snapshot(&app, &session_id, &shared);
     if startup_tx.send(Ok(())).is_err() {
         backend.shutdown();
@@ -128,9 +154,24 @@ pub(super) fn run(
                 }
                 Ok(WorkerCommand::RefreshChannels { reply }) => {
                     let result = backend.refresh_channels();
-                    if let Ok(channels) = result.as_ref() {
-                        shared.set_running(backend.descriptor(), channels.clone());
-                        let _ = emit_snapshot(&app, &session_id, &shared);
+                    match result.as_ref() {
+                        Ok(channels) => {
+                            log::info!(
+                                "RTT channels refreshed: session={}, channels={}",
+                                session_id,
+                                channels.len()
+                            );
+                            shared.set_running(backend.descriptor(), channels.clone());
+                            let _ = emit_snapshot(&app, &session_id, &shared);
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "RTT channel refresh failed: session={}, code={}, message={}",
+                                session_id,
+                                error.code.as_str(),
+                                error.message
+                            );
+                        }
                     }
                     let _ = reply.send(result);
                 }
@@ -219,11 +260,19 @@ pub(super) fn run(
     }
 
     if let Some(error) = fatal_error {
+        log::error!(
+            "RTT runtime fault: session={}, code={}, message={}",
+            session_id,
+            error.code.as_str(),
+            error.message
+        );
         shared.set_error(error.clone());
         let _ = emit_snapshot(&app, &session_id, &shared);
         if !shutting_down.load(Ordering::Acquire) {
             notify_unexpected_disconnect(app, session_id, error);
         }
+    } else {
+        log::info!("RTT worker stopped: session={}", session_id);
     }
 }
 

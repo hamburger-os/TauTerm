@@ -13,10 +13,28 @@ pub enum RttBackendKind {
     JlinkExisting,
 }
 
+impl RttBackendKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProbeRs => "probe_rs",
+            Self::JlinkExisting => "jlink_existing",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RttWireProtocol {
     Swd,
     Jtag,
+}
+
+impl RttWireProtocol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Swd => "swd",
+            Self::Jtag => "jtag",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +43,16 @@ pub enum RttLocator {
     Auto,
     Exact(u64),
     Ranges(Vec<Range<u64>>),
+}
+
+impl RttLocator {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Exact(_) => "exact",
+            Self::Ranges(_) => "ranges",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +284,20 @@ fn parse_channels(value: Option<&Value>) -> Result<Vec<u32>, RttError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn diagnostic_labels_are_stable() {
+        assert_eq!(RttBackendKind::ProbeRs.as_str(), "probe_rs");
+        assert_eq!(RttBackendKind::JlinkExisting.as_str(), "jlink_existing");
+        assert_eq!(RttWireProtocol::Swd.as_str(), "swd");
+        assert_eq!(RttWireProtocol::Jtag.as_str(), "jtag");
+        assert_eq!(RttLocator::Auto.kind(), "auto");
+        assert_eq!(RttLocator::Exact(0x2000_0000).kind(), "exact");
+        assert_eq!(
+            RttLocator::Ranges(vec![0x2000_0000..0x2000_1000, 0x2000_2000..0x2000_3000,]).kind(),
+            "ranges"
+        );
+    }
 
     #[test]
     fn parses_direct_probe_config_and_hex_address() {

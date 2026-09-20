@@ -100,7 +100,15 @@ async fn connect_session(
         session_id,
         ..
     } = request;
-    let config = config::RttConfig::from_params(&params).map_err(|error| error.to_string())?;
+    let config = config::RttConfig::from_params(&params).map_err(|error| {
+        log::error!(
+            "RTT connect rejected: session={}, code={}, message={}",
+            session_id.as_deref().unwrap_or("<new>"),
+            error.code.as_str(),
+            error.message
+        );
+        error.to_string()
+    })?;
     let backend = config.backend;
     let plugin = state.plugin::<RttPlugin>(PLUGIN_ID);
     let runtime = Arc::new(RttRuntime::new(config, Arc::clone(&state.embedded_debug)));
@@ -149,6 +157,12 @@ async fn connect_session(
             .map_err(|error| format!("RTT worker 启动任务失败: {error}"))?;
 
     if let Err(error) = start_result {
+        log::error!(
+            "RTT connect failed: session={}, code={}, message={}",
+            new_session_id,
+            error.code.as_str(),
+            error.message
+        );
         cleanup_failed_session(app.clone(), new_session_id.clone()).await;
         return Err(format_rtt_connect_error(error));
     }

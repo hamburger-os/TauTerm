@@ -18,11 +18,13 @@ pub trait RttBackend {
 pub(super) fn open_backend(
     config: &RttConfig,
     embedded_debug: &EmbeddedDebugManager,
+    session_id: &str,
 ) -> Result<Box<dyn RttBackend>, RttError> {
     match config.backend {
         RttBackendKind::ProbeRs => Ok(Box::new(probe_rs::ProbeRsRttBackend::open(
             config,
             embedded_debug,
+            session_id,
         )?)),
         RttBackendKind::JlinkExisting => Ok(Box::new(
             jlink_existing::JlinkExistingRttBackend::open(config)?,

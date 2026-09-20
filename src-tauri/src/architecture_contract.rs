@@ -506,6 +506,32 @@ fn native_rtt_uses_shared_embedded_debug_service_capability() {
 }
 
 #[test]
+fn rtt_connection_diagnostics_remain_observable() {
+    let worker = read_source("plugins/rtt/worker.rs");
+    assert!(
+        worker.contains("RTT connect start:") && worker.contains("RTT runtime fault:"),
+        "RTT worker lifecycle diagnostics must remain visible in the System Log"
+    );
+
+    let backend = read_source("plugins/rtt/backend/probe_rs.rs");
+    assert!(
+        backend.contains("RTT locator resolved:")
+            && backend.contains("symbol=_SEGGER_RTT")
+            && backend.contains("RTT attach succeeded:")
+            && backend.contains("RTT diagnostic header:")
+            && backend.contains("RTT diagnostic descriptor:")
+            && backend.contains("static_fields_block_single_consistent="),
+        "native RTT diagnostics must preserve locator provenance, resolved Control Block visibility, and corruption metadata evidence"
+    );
+
+    let plugin = read_source("plugins/rtt/mod.rs");
+    assert!(
+        plugin.contains("RTT connect rejected:") && plugin.contains("RTT connect failed:"),
+        "RTT connector must log both pre-runtime rejection and final startup failure"
+    );
+}
+
+#[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
     for forbidden in [
