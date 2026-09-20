@@ -73,19 +73,19 @@ pub(super) fn run(
 
     shared.set_phase(RttPhase::OpeningBackend);
     log::info!(
-        "RTT connect start: session={}, backend={:?}, probe={}, target={}, wire={:?}, speed_khz={}, core={}, firmware={}, locator={:?}",
+        "RTT connect start: session={}, backend={}, probe={}, target={}, wire={}, speed_khz={}, core={}, firmware={}, locator={}",
         session_id,
-        config.backend,
+        config.backend.as_str(),
         config.probe_selector.as_deref().unwrap_or("auto"),
         config.target.as_deref().unwrap_or("-"),
-        config.wire_protocol,
+        config.wire_protocol.as_str(),
         config
             .speed_khz
             .map(|value| value.to_string())
             .unwrap_or_else(|| "auto".to_string()),
         config.core_index,
         config.firmware_path.as_deref().unwrap_or("-"),
-        config.locator
+        config.locator.kind()
     );
     let mut backend = match open_backend(&config, &embedded_debug, &session_id) {
         Ok(backend) => backend,
