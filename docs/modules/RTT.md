@@ -96,13 +96,13 @@ RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同�
 工作区中的当前观察 Channel、Automation source 与 SendBar 的发送 Channel 是三个独立状态。切换观察 Channel 只改变 viewer，不再隐式改写正在使用或下一次订阅使用的 Automation source。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
 
 - **View Channel**：只负责当前工作区展示；有 Up 时可进入原始 Terminal/Log/HEX，语义观察器存在时进入对应高级视图；
-- **Automation source**：必须有 Up，由 Rust Runtime 独立维护；Auto Reply/Lua 订阅创建时固定该 source，不随之后的 View Channel 切换；
+- **Automation receive source**：必须有 Up，由 Rust Runtime 独立维护；Auto Reply/Lua 订阅创建时固定该 source，不随之后的 View Channel 切换。普通 RTT 工作区仅在存在多个可选 Up Channel 时于公共 TargetBar 暴露该选择，SystemView 等语义观察器不作为普通文本自动化来源；
 - **Send target**：必须有 Down，由公共 SendBar 顶部 `RttSendTarget` 选择；
 - Terminal 模式的键盘输入直接写当前 Terminal 对应的 Down Channel，这是终端交互，不是第二套发送栏。
 
 上层双向协议可以声明 **Down Channel claim**。被 SystemView 等协议观察器占用的 Down Channel 不再进入公共 SendBar/Automation 通用发送目标，也拒绝普通 `rtt_write`，避免文本或脚本数据污染协议控制流；协议自身通过 Runtime 内部控制路径写入。
 
-RTT 启用 TauTerm 公共 SendBar。Basic/Command/Auto Reply/Script 继续使用统一 SendBar 产品体验；底层通过协议无关 `AutomationIo` 接入，而不是要求 RTT 根 Session 伪造 `DataPlane`。Lua 的 `send()` 使用当前 Down target，`send_to("rtt:<index>", ...)` 可显式指定 Channel；接收订阅来自当前 Up source。Send target 行是否存在由插件运行态统一判定：只有实际存在可用 Down Channel 时才渲染并计入 SendBar 高度，断连、连接失败或没有可写方向时不预留隐藏目标栏空间。
+RTT 启用 TauTerm 公共 SendBar。Basic/Command/Auto Reply/Script 继续使用统一 SendBar 产品体验；底层通过协议无关 `AutomationIo` 接入，而不是要求 RTT 根 Session 伪造 `DataPlane`。Lua 的 `send()` 使用当前 Down target，`send_to("rtt:<index>", ...)` 可显式指定 Channel；接收订阅来自当前 Up source。Send target 行是否存在由插件运行态统一判定：只有实际存在可用 Down Channel 时才渲染并计入 SendBar 高度，断连、连接失败或没有可写方向时不预留隐藏目标栏空间。当前 View 进入 SystemView RTOS Trace / Events / Raw 等语义观察器时，插件通过公共运行态 presentation contribution 隐藏 SendBar surface，但保持对应 Session 的 SendBar provider 挂载，切回普通 RTT 视图时输入草稿和自动化执行所有权不会因 UI 隐藏而丢失。
 
 重连创建新 runtime generation 后，前端会重新同步当前 Up source 与 Down target，不能让前端保留选择和新 backend 默认值发生隐式漂移。
 
@@ -129,7 +129,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 2. **Session Data Log**：用户显式开启时进入公共 LogEngine，记录为 `[RX][RTT:n]` / `[TX][RTT:n]`；
 3. **presentation batch**：短周期批量发送 WebView。
 
-历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
+历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history eviction，这属于回放保留窗口前移，不属于采集丢失，因此不作为持续黄色告警展示。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
 canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition/history loss、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
@@ -151,11 +151,11 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 连接页使用统一控件高度/矩阵布局。常用项只展示连接方式、probe、target、wire protocol、固件符号文件和 RTT 定位；speed/core 收入高级设置。工作区复用 Workspace Content surface，不再拥有第二套发送框或额外玻璃 Card。
 
-宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。RTOS Trace 主视图包含采集控制、目标端/解码端 loss、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，而不是 host acquisition timestamp。
+宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。语义观察器视图不显示普通 SendBar；Trace 的 START/STOP 等协议动作由 observer 自己的紧凑工具栏负责。RTOS Trace 主视图包含采集控制、目标端/解码端 loss、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，而不是 host acquisition timestamp。任务 lane 使用稳定 task id 顺序，统计表可按 runtime 排序；高 DPI Canvas 依据真实 Pane 尺寸重建 backing store，避免固定像素画布与主题字体脱节。
 
 ## SystemView / RTOS Trace
 
-SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根据 Channel metadata 中的 `SysView` / `SystemView` 名称自动挂载，也提供显式 attach 命令用于 metadata 不完整或自定义命名场景。挂载 observer 本身是被动行为，不自动向目标发送 START；开始/停止 Trace 必须由用户显式操作。每个 SystemView observer：
+SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根据 Channel metadata 中的 `SysView` / `SystemView` 名称自动挂载，也提供显式 attach 命令用于 metadata 不完整或自定义命名场景。挂载 observer 本身是被动行为，不自动向目标发送 START；开始/停止 Trace 必须由用户显式操作。开始采集后 Runtime 自动请求 System Description / Task List / System Time；前端若遇到首次出现且缺少名称或优先级的 Task ID，会对该未知任务集合做一次去抖动 metadata resync，不要求用户手工点击“刷新信息”。每个 SystemView observer：
 
 - 只订阅指定 RTT Up Channel 的 canonical `StoredRttChunk`，不存在第二个 probe/RTT reader；
 - 使用 Rust streaming decoder 处理跨 chunk 半包、变长整数、标准/长度包、同步前缀与 target timestamp delta；
@@ -163,7 +163,8 @@ SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根�
 - 维护有界事件历史、任务运行周期与切换次数，再以批量事件和 snapshot 发送 WebView；
 - 支持同一 RTT Session 同时存在多个 observer，因此数据模型不把 SystemView 写死为“唯一 Channel”，可自然扩展到多核/多 trace source；
 - 多 observer 场景只选择一个可用的同索引 Down Channel 作为共享 SystemView controller，并只对该通道声明 `SystemView` claim；所有 observer 的 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME 都经该内部控制路径发送，其余 observer 保持纯 Up 被动语义，避免无谓占用无关 Down Channel；完全没有可用 Down 时仍可被动解析已经在运行的 trace；
-- 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计。
+- 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计；target overflow 发生时把 overflow packet 的 delta 区间视为未知，不归属给此前运行任务；subscriber drop 会清空半包 decoder 状态并重新等待下一次 10-byte sync marker，禁止在缺口后继续猜包边界；
+- 前端对目标端/decoder 缺口显示 Trace incomplete 状态，并把 overflow 区间作为未知时间带展示；任务利用率只基于仍可确认的 target-time 区间，不把缺失事件伪装成连续任务执行。
 
 前端 Canvas 时间线只消费已经解码的 target-time event model；React 不承担二进制协议解码，也不为每个 trace event 创建时间线 DOM。Events 视图仅挂载有界近期事件，Raw 视图继续读取原 RTT 历史用于协议诊断。
 
