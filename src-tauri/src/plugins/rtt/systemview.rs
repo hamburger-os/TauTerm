@@ -1188,6 +1188,52 @@ mod tests {
     }
 
     #[test]
+    fn target_overflow_does_not_charge_unknown_gap_to_active_task() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 10,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 1,
+            fields: vec![12],
+            text: None,
+            delta_cycles: 100,
+            sync_boundary: false,
+        });
+
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.tasks[0].runtime_cycles, 0);
+        assert_eq!(snapshot.target_dropped_events, 12);
+        assert_eq!(snapshot.last_target_cycles, 110);
+    }
+
+    #[test]
+    fn decoder_gap_requires_a_new_sync_marker() {
+        let mut decoder = SystemViewDecoder::default();
+        let mut synced = vec![0; 10];
+        synced.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&synced);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+
+        decoder.reset_after_gap();
+        let (packets, errors) = decoder.push(&packet(4, &[7], 1));
+        assert_eq!(errors, 0);
+        assert!(packets.is_empty());
+
+        let mut resynced = vec![0; 10];
+        resynced.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&resynced);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+        assert!(packets[0].sync_boundary);
+    }
+
+    #[test]
     fn trace_state_tracks_runtime_and_target_overflow_separately() {
         let mut state = TraceState::new(7, 1, true);
         state.apply(ParsedPacket {
