@@ -102,6 +102,7 @@ function drawTimeline(
   ctx.fillText("Idle", 12, idleY + laneHeight * 0.68);
 
   let activeTask: { id: number; start: number } | null = null;
+  let interruptedTaskId: number | null = null;
   const taskIntervals: Array<{ id: number; start: number; end: number }> = [];
   let irqDepth = 0;
   let irqStart: number | null = null;
@@ -129,14 +130,31 @@ function drawTimeline(
       closeTask(event.target_cycles);
       if (idleStart == null) idleStart = event.target_cycles;
     } else if (event.event_id === 2) {
-      if (irqDepth === 0) irqStart = event.target_cycles;
+      if (irqDepth === 0) {
+        irqStart = event.target_cycles;
+        interruptedTaskId = activeTask?.id ?? null;
+        closeTask(event.target_cycles);
+      }
       irqDepth += 1;
-    } else if (event.event_id === 3 || event.event_id === 18) {
+    } else if (event.event_id === 3) {
       irqDepth = Math.max(0, irqDepth - 1);
-      if (irqDepth === 0 && irqStart != null) {
+      if (irqDepth === 0) {
+        if (irqStart != null) {
+          irqIntervals.push({ start: irqStart, end: event.target_cycles });
+          irqStart = null;
+        }
+        if (interruptedTaskId != null) {
+          activeTask = { id: interruptedTaskId, start: event.target_cycles };
+          interruptedTaskId = null;
+        }
+      }
+    } else if (event.event_id === 18) {
+      if (irqStart != null) {
         irqIntervals.push({ start: irqStart, end: event.target_cycles });
         irqStart = null;
       }
+      irqDepth = 0;
+      interruptedTaskId = null;
     }
   }
   closeTask(endCycles);
@@ -188,10 +206,10 @@ export default function SystemViewTraceView({
   }, [events, mode, snapshot]);
 
   const visibleEvents = useMemo(() => events.slice(-MAX_EVENT_ROWS).reverse(), [events]);
-  const totalRuntime = useMemo(
-    () => (snapshot?.tasks ?? []).reduce((sum, task) => sum + task.runtime_cycles, 0),
-    [snapshot?.tasks],
-  );
+  const windowCycles = useMemo(() => {
+    if (!snapshot) return 0;
+    return Math.max(0, snapshot.last_target_cycles - snapshot.window_start_cycles);
+  }, [snapshot]);
 
   return (
     <div className={styles.root}>
@@ -250,7 +268,7 @@ export default function SystemViewTraceView({
                 <span>{t("rtt.traceRuntime")}</span>
               </div>
               {(snapshot?.tasks ?? []).slice(0, 24).map(task => {
-                const percent = totalRuntime > 0 ? (task.runtime_cycles / totalRuntime) * 100 : 0;
+                const percent = windowCycles > 0 ? (task.runtime_cycles / windowCycles) * 100 : 0;
                 return (
                   <div key={task.id} className={styles.taskRow}>
                     <span>{task.name || "0x" + task.id.toString(16)}</span>
