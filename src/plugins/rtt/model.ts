@@ -92,8 +92,8 @@ export interface RttSnapshot {
   channel_claims: RttChannelClaim[];
   rx_bytes: number;
   tx_bytes: number;
-  dropped_history_bytes: number;
-  dropped_history_chunks: number;
+  evicted_history_bytes: number;
+  evicted_history_chunks: number;
   dropped_automation_bytes: number;
   dropped_automation_chunks: number;
   dropped_presentation_bytes: number;
@@ -205,6 +205,33 @@ export function systemViewObserver(
   return snapshot?.observers.find(
     observer => observer.kind === "systemview" && observer.channel_index === channelIndex,
   ) ?? null;
+}
+
+export function resolveRttViewMode(
+  snapshot: RttSnapshot | null | undefined,
+  channelIndex: number | null,
+  configuredMode: RttViewMode | undefined,
+): RttViewMode {
+  if (channelIndex == null) return "terminal";
+  const observer = systemViewObserver(snapshot, channelIndex);
+  if (observer) {
+    return configuredMode === "trace" || configuredMode === "events" || configuredMode === "raw"
+      ? configuredMode
+      : "trace";
+  }
+  if (configuredMode === "terminal" || configuredMode === "log" || configuredMode === "hex") {
+    return configuredMode;
+  }
+  return channelIndex === 0 ? "terminal" : "log";
+}
+
+export function isRttSemanticView(
+  snapshot: RttSnapshot | null | undefined,
+  channelIndex: number | null,
+  configuredMode: RttViewMode | undefined,
+): boolean {
+  const mode = resolveRttViewMode(snapshot, channelIndex, configuredMode);
+  return mode === "trace" || mode === "events" || mode === "raw";
 }
 
 export function defaultRttParams(): Record<string, unknown> {
