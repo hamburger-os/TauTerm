@@ -162,7 +162,7 @@ SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根�
 - 解码 Trace Start/Stop、Overflow、ISR、Task Create/Info/Run/Ready、Idle、Timer、System Description、Init、Marker 等基础事件，并保留未知/用户事件；
 - 维护有界事件历史、任务运行周期与切换次数，再以批量事件和 snapshot 发送 WebView；
 - 支持同一 RTT Session 同时存在多个 observer，因此数据模型不把 SystemView 写死为“唯一 Channel”，可自然扩展到多核/多 trace source；
-- 若同索引 Down Channel 可用，会声明 `SystemView` claim，并通过内部控制路径发送 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME；没有 Down 时仍可被动解析已经在运行的 trace；
+- 多 observer 场景只选择一个可用的同索引 Down Channel 作为共享 SystemView controller，并只对该通道声明 `SystemView` claim；所有 observer 的 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME 都经该内部控制路径发送，其余 observer 保持纯 Up 被动语义，避免无谓占用无关 Down Channel；完全没有可用 Down 时仍可被动解析已经在运行的 trace；
 - 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计。
 
 前端 Canvas 时间线只消费已经解码的 target-time event model；React 不承担二进制协议解码，也不为每个 trace event 创建时间线 DOM。Events 视图仅挂载有界近期事件，Raw 视图继续读取原 RTT 历史用于协议诊断。
