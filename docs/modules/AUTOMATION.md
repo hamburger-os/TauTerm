@@ -6,7 +6,7 @@ TauTerm 的发送能力既要支持人工调试，也要支持命令面板、自
 
 ## 当前方案
 
-全局 SendBar 是插件能力，而不是所有 Session 的固定 UI。Serial、SSH、Telnet、Network Debug、RTT 等声明支持时可使用；Local Shell、TFTP、iperf、TRDP、Modbus 由各自工作流完成操作，不强制显示发送栏。
+全局 SendBar 是插件能力，而不是所有 Session 的固定 UI。Serial、SSH、Telnet、Network Debug、RTT 等声明支持时可使用；Local Shell、TFTP、iperf、TRDP、Modbus 由各自工作流完成操作，不强制显示发送栏。支持 SendBar 的插件还可以通过运行态 presentation contribution 临时隐藏 surface，例如 RTT 切入 SystemView 语义观察器时回收发送栏空间；隐藏只影响布局，不卸载该 Session 的 SendBar provider，也不能停止已经取得执行权的 Auto Reply/Lua。
 
 SendBar 的人工与自动化入口统一依赖协议无关的 `AutomationIo`。普通流式 Session 由 `SessionIo/DataPlane` 直接实现该能力：文本路径按 Session encoding 转码，HEX/raw 原样写入；Network Debug 保留 targeted send；RTT 这类多路 Container Session 则提供自己的 bounded automation source 与 Down target，而不伪造根 `DataPlane`。因此 Basic/Command/Auto Reply/Lua 能复用同一 SendBar，同时协议仍保留自己的真实 I/O 模型。
 
@@ -22,7 +22,7 @@ Command Set、Auto Reply Config 与 Lua Script 不把浏览器本地存储作为
 
 自动回复与 Lua Script 启动时使用不可变运行快照。SendBar 从启动请求发出开始占有执行权，直到启动失败、停止成功或会话断开后才释放；运行期间禁止切换会改变当前执行语义的状态。命令面板执行同样基于启动时选中命令的串行快照。 插件 TargetBar 也是该执行快照的一部分；执行锁存在时公共 SendBar 通过统一 `disabled` contract 禁用 Network/RTT 等目标控件，不能在运行中悄悄改写目标。
 
-Network Debug 与 RTT 的目标选择都由各自插件 runtime store 拥有；公共 SendBar 只通过 `sendTarget` / `sendData` contribution 挂载目标选择和发送策略。Network 目标同步只在已连接 runtime 上执行。RTT 将“当前 Up automation source”和“当前 Down send target”建模为两个独立选择，重连 generation 变化后重新同步，不能假设同 index 一定双向。AutomationRx 在启动时捕获 Up source，因此运行中的 Auto Reply/Lua 不会因为用户浏览其它 RTT Channel 而改变输入流。
+Network Debug 与 RTT 的目标选择都由各自插件 runtime store 拥有；公共 SendBar 只通过 `sendTarget` / `sendData` contribution 挂载目标选择和发送策略。Network 目标同步只在已连接 runtime 上执行。RTT 将“当前 Up automation receive source”和“当前 Down send target”建模为两个独立选择，重连 generation 变化后重新同步，不能假设同 index 一定双向；有多个普通 Up Channel 时，两者统一在 TargetBar 中选择，不再把接收源控件塞进 RTT viewer header。AutomationRx 在启动时捕获 Up source，因此运行中的 Auto Reply/Lua 不会因为用户浏览其它 RTT Channel 而改变输入流。
 
 ## 数据流
 
@@ -43,7 +43,7 @@ flowchart LR
 
 ## 设计边界
 
-- SendBar 显示能力由插件 manifest/注册信息定义，Session 配置只能在支持范围内关闭，不能给不支持的插件强行开启。
+- SendBar 显示能力由插件 manifest/注册信息定义，Session 配置只能在支持范围内关闭，不能给不支持的插件强行开启；运行态 contribution 只能控制 presentation visibility，不能通过卸载 provider 改写自动化生命周期。
 - SendBar 主体最小高度必须直接保持 CSS 定义的 canonical 像素值；拖高后再次拖到最小值必须与首次打开一致，不能通过百分比取整、向上取整或其它量化模型改变几何。
 - 自动回复与脚本必须受 Session 生命周期约束，断开后不能继续使用失效的运行时能力。
 - Network Debug/RTT 目标属于插件私有 Session runtime 状态；公共 SessionContext 不保存 peer/Channel 字段。RTT 的 Up automation source 与 Down send target 必须分离校验。
