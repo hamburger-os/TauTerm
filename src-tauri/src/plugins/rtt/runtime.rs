@@ -955,8 +955,7 @@ impl RttRuntime {
             .clone()
             .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
         let runtime = match SystemViewRuntime::spawn(SystemViewSpawn {
-            app,
-            session_id,
+            presenter: worker::systemview_presenter(app, session_id),
             generation: snapshot.generation,
             channel_index,
             control_available: false,
