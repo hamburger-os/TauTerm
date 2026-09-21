@@ -109,6 +109,7 @@ pub enum SystemViewControl {
     Start,
     Stop,
     RefreshMetadata,
+    RefreshTasks,
 }
 
 impl SystemViewControl {
@@ -117,6 +118,7 @@ impl SystemViewControl {
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
             "refresh" => Ok(Self::RefreshMetadata),
+            "refresh_tasks" => Ok(Self::RefreshTasks),
             other => Err(format!("未知 SystemView 控制命令: {other}")),
         }
     }
@@ -130,6 +132,7 @@ impl SystemViewControl {
                 COMMAND_GET_TASKLIST,
                 COMMAND_GET_SYSTIME,
             ],
+            Self::RefreshTasks => &[COMMAND_GET_TASKLIST],
         }
     }
 }
