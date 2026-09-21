@@ -151,6 +151,16 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           <span>{connected ? t("rtt.connected") : t("rtt.disconnected")}</span>
           <span>RX {formatBytes(snapshot?.rx_bytes ?? 0)}</span>
           <span>TX {formatBytes(snapshot?.tx_bytes ?? 0)}</span>
+          {(snapshot?.evicted_history_chunks ?? 0) > 0 && (
+            <span
+              title={t("rtt.historyRollingHint", {
+                chunks: snapshot?.evicted_history_chunks ?? 0,
+                bytes: formatBytes(snapshot?.evicted_history_bytes ?? 0),
+              })}
+            >
+              {t("rtt.historyRolling")}
+            </span>
+          )}
           {snapshot?.backend?.capabilities.enumerate_channels && (
             <GlassButton
               size="sm"
