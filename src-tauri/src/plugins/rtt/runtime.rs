@@ -360,6 +360,15 @@ impl RttShared {
             })
     }
 
+    fn observer_bootstrap(&self, channel_index: u32) -> Vec<StoredRttChunk> {
+        self.history
+            .lock()
+            .ok()
+            .and_then(|history| history.channels.get(&channel_index).map(|item| item.chunks.clone()))
+            .map(|chunks| chunks.into_iter().collect())
+            .unwrap_or_default()
+    }
+
     fn validate_channel_direction(
         &self,
         channel_index: u32,
@@ -916,6 +925,10 @@ impl RttRuntime {
                 return Err(error);
             }
         };
+        // Subscribe before taking the history snapshot. Chunks published during the bootstrap
+        // window are therefore present in both places and are de-duplicated by RTT sequence in
+        // the SystemView runtime; no canonical bytes can fall into an attach-time gap.
+        let bootstrap = self.shared.observer_bootstrap(channel_index);
         let (app, session_id) = self
             .observer_context
             .lock()
@@ -928,6 +941,7 @@ impl RttRuntime {
             snapshot.generation,
             channel_index,
             control_available,
+            bootstrap,
             subscription,
             decoder_drops,
         ) {
