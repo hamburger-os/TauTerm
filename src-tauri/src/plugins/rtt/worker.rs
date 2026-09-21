@@ -39,10 +39,7 @@ pub(super) enum WorkerCommand {
     },
 }
 
-pub(super) fn systemview_presenter(
-    app: AppHandle,
-    session_id: String,
-) -> SystemViewPresenter {
+pub(super) fn systemview_presenter(app: AppHandle, session_id: String) -> SystemViewPresenter {
     Arc::new(move |presentation| match presentation {
         SystemViewPresentation::Batch { events, snapshot } => {
             let _ = app.emit(
