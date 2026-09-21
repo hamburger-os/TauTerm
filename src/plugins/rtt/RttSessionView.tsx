@@ -316,7 +316,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                   <SystemViewTraceView
                     state={systemViewState}
                     mode={mode}
-                    controlAvailable={observer.control_channel_index === channel.index}
+                    controlAvailable={observer.control_channel_index != null}
                     onStart={() => void controlSystemView(sessionId, channel.index, "start")}
                     onStop={() => void controlSystemView(sessionId, channel.index, "stop")}
                     onRefresh={() => void controlSystemView(sessionId, channel.index, "refresh")}
