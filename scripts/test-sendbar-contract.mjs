@@ -243,6 +243,10 @@ assert.ok(rttPlugin.includes("isRttSemanticView"));
 assert.ok(rttTarget.includes("selectRttSendChannel"));
 assert.ok(rttTarget.includes("selectRttAutomationSource"));
 assert.ok(rttTarget.includes("systemViewObserver"));
+assert.ok(
+  rttTarget.includes("if (disabled || receiveChannel == null || runtimeSource === receiveChannel) return;"),
+  "RTT automation source auto-correction must respect the SendBar execution lock",
+);
 assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
 assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
 assert.ok(rttRuntime.includes("selectedChannel"), "RTT viewer Channel must remain plugin-local UI state");
