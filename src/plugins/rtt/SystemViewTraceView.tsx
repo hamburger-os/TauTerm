@@ -247,11 +247,17 @@ export default function SystemViewTraceView({
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const metadataRefreshKeyRef = useRef("");
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
   const snapshot = state?.snapshot ?? null;
   const events = state?.events ?? [];
   const unknownTasks = useMemo(
     () => (snapshot?.tasks ?? []).filter(task => !task.name || task.priority == null),
     [snapshot?.tasks],
+  );
+  const unknownTaskKey = useMemo(
+    () => unknownTasks.map(task => task.id).sort((a, b) => a - b).join(","),
+    [unknownTasks],
   );
   const integrityCompromised = Boolean(snapshot && (
     snapshot.target_dropped_events > 0
@@ -260,15 +266,15 @@ export default function SystemViewTraceView({
   ));
 
   useEffect(() => {
-    if (!controlAvailable || unknownTasks.length === 0 || !snapshot) return;
-    const key = `${snapshot.generation}:${unknownTasks.map(task => task.id).sort((a, b) => a - b).join(",")}`;
+    if (!controlAvailable || !unknownTaskKey || !snapshot) return;
+    const key = `${snapshot.generation}:${unknownTaskKey}`;
     if (metadataRefreshKeyRef.current === key) return;
     const timer = window.setTimeout(() => {
       metadataRefreshKeyRef.current = key;
-      onRefresh();
+      onRefreshRef.current();
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [controlAvailable, onRefresh, snapshot, unknownTasks]);
+  }, [controlAvailable, snapshot?.generation, unknownTaskKey]);
 
   useEffect(() => {
     if (mode !== "trace" || !canvasRef.current) return;
