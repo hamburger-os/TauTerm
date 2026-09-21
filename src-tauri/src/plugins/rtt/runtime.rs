@@ -827,7 +827,7 @@ impl RttRuntime {
             return Err(RttError::new(
                 RttErrorCode::RttChannelNotFound,
                 format!(
-                    "SystemView Channel {channel_index} 没有可用的同索引 Down Channel，无法发送控制命令"
+                    "SystemView Channel {channel_index} 不是当前控制通道或没有可用的同索引 Down Channel"
                 ),
             ));
         }
@@ -892,7 +892,7 @@ impl RttRuntime {
                 }
             }
         }
-        self.publish_observers();
+        self.rebalance_systemview_control();
         Ok(())
     }
 
@@ -908,23 +908,7 @@ impl RttRuntime {
         self.shared
             .validate_channel_direction(channel_index, true)?;
         let snapshot = self.shared.snapshot();
-        let control_available = snapshot
-            .channels
-            .iter()
-            .any(|channel| channel.index == channel_index && channel.has_usable_down());
-        let owner = "SystemView";
-        if control_available {
-            self.shared.claim_down_channel(channel_index, owner)?;
-        }
-        let (subscription, decoder_drops) = match self.shared.subscribe_observer(channel_index) {
-            Ok(value) => value,
-            Err(error) => {
-                if control_available {
-                    self.shared.release_down_channel(channel_index, owner);
-                }
-                return Err(error);
-            }
-        };
+        let (subscription, decoder_drops) = self.shared.subscribe_observer(channel_index)?;
         // Subscribe before taking the history snapshot. Chunks published during the bootstrap
         // window are therefore present in both places and are de-duplicated by RTT sequence in
         // the SystemView runtime; no canonical bytes can fall into an attach-time gap.
@@ -940,24 +924,19 @@ impl RttRuntime {
             session_id,
             snapshot.generation,
             channel_index,
-            control_available,
+            false,
             bootstrap,
             subscription,
             decoder_drops,
         ) {
             Ok(runtime) => Arc::new(runtime),
-            Err(error) => {
-                if control_available {
-                    self.shared.release_down_channel(channel_index, owner);
-                }
-                return Err(RttError::backend(error));
-            }
+            Err(error) => return Err(RttError::backend(error)),
         };
         self.systemview
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))?
             .insert(channel_index, runtime);
-        self.publish_observers();
+        self.rebalance_systemview_control();
         // Attaching a semantic observer is passive. Starting/stopping trace changes target
         // behavior and therefore remains an explicit user action through systemview_control.
         Ok(())
@@ -974,6 +953,45 @@ impl RttRuntime {
         }
         self.shared
             .release_down_channel(channel_index, "SystemView");
+        self.rebalance_systemview_control();
+    }
+
+    fn rebalance_systemview_control(&self) {
+        let runtimes = self
+            .systemview
+            .lock()
+            .map(|runtimes| runtimes.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let snapshot = self.shared.snapshot();
+        let mut controllable = Vec::new();
+
+        for runtime in &runtimes {
+            let channel_index = runtime.channel_index();
+            let has_down = snapshot.channels.iter().any(|channel| {
+                channel.index == channel_index && channel.has_usable_down()
+            });
+            if has_down {
+                match self.shared.claim_down_channel(channel_index, "SystemView") {
+                    Ok(()) => controllable.push(channel_index),
+                    Err(error) => {
+                        log::warn!(
+                            "SystemView control claim unavailable: channel={}, code={}, message={}",
+                            channel_index,
+                            error.code.as_str(),
+                            error.message
+                        );
+                    }
+                }
+            } else {
+                self.shared
+                    .release_down_channel(channel_index, "SystemView");
+            }
+        }
+
+        let controller = controllable.into_iter().min();
+        for runtime in &runtimes {
+            runtime.set_control_available(controller == Some(runtime.channel_index()));
+        }
         self.publish_observers();
     }
 
