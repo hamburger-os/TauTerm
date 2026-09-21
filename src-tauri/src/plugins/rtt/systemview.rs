@@ -206,6 +206,7 @@ impl TraceState {
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
+        let previous_target_cycles = self.last_target_cycles;
         if packet.sync_boundary {
             // SEGGER resets LastTxTimeStamp before emitting the sync/start sequence. The first
             // event after the 10-byte sync marker therefore carries a delta of zero, not an
@@ -213,13 +214,19 @@ impl TraceState {
             // open execution interval, keep the presentation timeline monotonic, and resume by
             // accumulating the new epoch's deltas. Absolute SYSTIME values remain available as
             // event payloads (IDs 12/13) instead of being conflated with packet deltas.
-            self.close_active_task(self.last_target_cycles);
+            self.close_active_task(previous_target_cycles);
             self.interrupted_task = None;
             self.isr_depth = 0;
         }
-        self.last_target_cycles = self
-            .last_target_cycles
-            .saturating_add(packet.delta_cycles as u64);
+        if packet.event_id == 1 {
+            // Overflow means events before this packet are missing. The packet delta spans an
+            // interval whose scheduler state is unknowable, so never charge that interval to the
+            // previously active task.
+            self.close_active_task(previous_target_cycles);
+            self.interrupted_task = None;
+            self.isr_depth = 0;
+        }
+        self.last_target_cycles = previous_target_cycles.saturating_add(packet.delta_cycles as u64);
         self.event_count = self.event_count.saturating_add(1);
 
         let mut context_id = None;
@@ -429,6 +436,12 @@ impl TraceState {
         }
     }
 
+    fn mark_input_gap(&mut self) {
+        self.close_active_task(self.last_target_cycles);
+        self.interrupted_task = None;
+        self.isr_depth = 0;
+    }
+
     fn clear(&mut self) {
         let phase = self.phase;
         let last_target_cycles = self.last_target_cycles;
@@ -506,6 +519,15 @@ impl SystemViewShared {
             .into_iter()
             .map(|packet| state.apply(packet))
             .collect()
+    }
+
+    fn mark_input_gap(&self) {
+        if let Ok(mut decoder) = self.decoder.lock() {
+            decoder.reset_after_gap();
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.mark_input_gap();
+        }
     }
 
     fn snapshot(&self) -> SystemViewSnapshot {
@@ -686,10 +708,20 @@ fn run_decoder(
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut changed = true;
+    let mut observed_decoder_drops = shared.decoder_dropped_chunks.load(Ordering::Acquire);
 
     while !stopping.load(Ordering::Acquire) {
         match subscription.recv_timeout(Duration::from_millis(20)) {
             Ok(chunk) => {
+                let decoder_drops = shared.decoder_dropped_chunks.load(Ordering::Acquire);
+                if decoder_drops != observed_decoder_drops {
+                    // A bounded observation subscriber dropped one or more canonical RTT chunks.
+                    // Packet boundaries are no longer trustworthy, so discard partial decoder
+                    // state and wait for SEGGER's next sync marker before decoding again.
+                    shared.mark_input_gap();
+                    observed_decoder_drops = decoder_drops;
+                    changed = true;
+                }
                 if chunk.sequence <= replay_through_sequence {
                     continue;
                 }
@@ -747,6 +779,12 @@ struct SystemViewDecoder {
 }
 
 impl SystemViewDecoder {
+    fn reset_after_gap(&mut self) {
+        self.buffer.clear();
+        self.synchronized = false;
+        self.mark_next_sync_boundary = false;
+    }
+
     fn push(&mut self, bytes: &[u8]) -> (Vec<ParsedPacket>, u64) {
         self.buffer.extend_from_slice(bytes);
         let mut packets = Vec::new();
