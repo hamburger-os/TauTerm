@@ -93,8 +93,11 @@ pub fn run() {
 
     let plugin_runtime = plugins::catalog::build_runtime();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default();
+    #[cfg(not(test))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+
+    builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
