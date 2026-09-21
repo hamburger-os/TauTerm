@@ -3,6 +3,7 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
+#[cfg(not(test))]
 use super::systemview::{SystemViewPresentation, SystemViewPresenter};
 use crate::embedded_debug::observation::now_ms;
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
@@ -39,6 +40,7 @@ pub(super) enum WorkerCommand {
     },
 }
 
+#[cfg(not(test))]
 pub(super) fn systemview_presenter(app: AppHandle, session_id: String) -> SystemViewPresenter {
     Arc::new(move |presentation| match presentation {
         SystemViewPresentation::Batch { events, snapshot } => {
