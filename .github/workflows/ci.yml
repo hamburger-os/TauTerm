@@ -78,6 +78,35 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: node scripts/check-cargo-licenses.js
 
+      - name: Diagnose Windows unit-test loader
+        if: matrix.os == 'windows-2025'
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --no-run
+          $exe = Get-ChildItem "src-tauri/target/debug/deps/tauterm_lib-*.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $exe) { throw "tauterm_lib unit-test executable was not produced" }
+
+          $dumpbin = (Get-Command dumpbin.exe -ErrorAction SilentlyContinue).Source
+          if (-not $dumpbin) {
+            $dumpbin = Get-ChildItem "C:/Program Files/Microsoft Visual Studio" -Filter dumpbin.exe -Recurse |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+
+          Write-Host "=== comctl32 imports ==="
+          & $dumpbin /imports:comctl32.dll $exe.FullName
+          Write-Host "=== manifest resource ==="
+          $manifest = Join-Path $env:RUNNER_TEMP "tauterm-lib-test.manifest"
+          & mt.exe -nologo "-inputresource:$($exe.FullName);#1" "-out:$manifest"
+          if ($LASTEXITCODE -eq 0 -and (Test-Path $manifest)) {
+            Get-Content $manifest
+          } else {
+            Write-Host "No embedded manifest resource #1"
+            $global:LASTEXITCODE = 0
+          }
+
       - name: Rust tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
