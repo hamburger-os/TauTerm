@@ -546,6 +546,12 @@ impl SystemViewRuntime {
         self.shared.snapshot()
     }
 
+    pub fn set_control_available(&self, available: bool) {
+        if let Ok(mut state) = self.shared.state.lock() {
+            state.control_available = available;
+        }
+    }
+
     pub fn history(&self, limit: usize) -> SystemViewHistoryResponse {
         self.shared.history(limit)
     }
