@@ -27,11 +27,6 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
   );
 
   const runtimeSend = runtime.snapshot?.send_channel ?? null;
-  const sendChannel = runtimeSend != null
-    && writable.some(channel => channel.index === runtimeSend)
-    ? runtimeSend
-    : writable[0].index;
-
   const runtimeSource = runtime.snapshot?.automation_source_channel ?? null;
   const receiveChannel = runtimeSource != null
     && readable.some(channel => channel.index === runtimeSource)
@@ -44,6 +39,11 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
   }, [disabled, receiveChannel, runtimeSource, sessionId]);
 
   if (writable.length === 0) return null;
+
+  const sendChannel = runtimeSend != null
+    && writable.some(channel => channel.index === runtimeSend)
+    ? runtimeSend
+    : writable[0].index;
 
   return (
     <div className={`${styles.bar} liquid-glass-panel`}>
