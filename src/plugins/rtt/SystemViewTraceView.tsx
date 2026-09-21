@@ -15,7 +15,7 @@ interface Props {
   controlAvailable: boolean;
   onStart: () => void;
   onStop: () => void;
-  onRefresh: () => void;
+  onRefreshTasks: () => void;
   onClear: () => void;
 }
 
@@ -241,14 +241,14 @@ export default function SystemViewTraceView({
   controlAvailable,
   onStart,
   onStop,
-  onRefresh,
+  onRefreshTasks,
   onClear,
 }: Props) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const metadataRefreshKeyRef = useRef("");
-  const onRefreshRef = useRef(onRefresh);
-  onRefreshRef.current = onRefresh;
+  const onRefreshTasksRef = useRef(onRefreshTasks);
+  onRefreshTasksRef.current = onRefreshTasks;
   const snapshot = state?.snapshot ?? null;
   const events = state?.events ?? [];
   const unknownTasks = useMemo(
@@ -275,7 +275,7 @@ export default function SystemViewTraceView({
     // Metadata can arrive after the task's first execution event. Retry a small bounded sequence
     // instead of polling forever; any resolved/changed unknown-task set cancels the old sequence.
     const timers = [350, 2500, 10000].map(delay => window.setTimeout(
-      () => onRefreshRef.current(),
+      () => onRefreshTasksRef.current(),
       delay,
     ));
     return () => timers.forEach(timer => window.clearTimeout(timer));
