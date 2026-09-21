@@ -14,7 +14,7 @@ use crate::embedded_debug::observation::{
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -640,6 +640,7 @@ pub struct RttRuntime {
     shutting_down: Arc<AtomicBool>,
     worker_exited: Arc<AtomicBool>,
     systemview: Mutex<BTreeMap<u32, Arc<SystemViewRuntime>>>,
+    systemview_suppressed: Mutex<BTreeSet<u32>>,
     observer_context: Mutex<Option<(AppHandle, String)>>,
     closed: AtomicBool,
 }
@@ -655,6 +656,7 @@ impl RttRuntime {
             shutting_down: Arc::new(AtomicBool::new(false)),
             worker_exited: Arc::new(AtomicBool::new(false)),
             systemview: Mutex::new(BTreeMap::new()),
+            systemview_suppressed: Mutex::new(BTreeSet::new()),
             observer_context: Mutex::new(None),
             closed: AtomicBool::new(false),
         }
@@ -666,6 +668,9 @@ impl RttRuntime {
         }
         self.shutting_down.store(false, Ordering::Release);
         self.worker_exited.store(false, Ordering::Release);
+        if let Ok(mut suppressed) = self.systemview_suppressed.lock() {
+            suppressed.clear();
+        }
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         *self
@@ -805,7 +810,20 @@ impl RttRuntime {
     }
 
     pub fn systemview_attach(&self, channel_index: u32) -> Result<(), RttError> {
+        if let Ok(mut suppressed) = self.systemview_suppressed.lock() {
+            suppressed.remove(&channel_index);
+        }
         self.start_systemview_observer(channel_index)
+    }
+
+    pub fn systemview_detach(&self, channel_index: u32) -> Result<(), RttError> {
+        self.shared.validate_channel_direction(channel_index, true)?;
+        self.systemview_suppressed
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .insert(channel_index);
+        self.stop_systemview_observer(channel_index);
+        Ok(())
     }
 
     pub fn systemview_snapshot(&self, channel_index: u32) -> Result<SystemViewSnapshot, RttError> {
@@ -886,7 +904,12 @@ impl RttRuntime {
                     normalized.contains("sysview") || normalized.contains("systemview")
                 })
                 .unwrap_or(false);
-            if is_systemview && channel.has_usable_up() {
+            let suppressed = self
+                .systemview_suppressed
+                .lock()
+                .map(|suppressed| suppressed.contains(&channel.index))
+                .unwrap_or(false);
+            if is_systemview && channel.has_usable_up() && !suppressed {
                 if let Err(error) = self.start_systemview_observer(channel.index) {
                     log::warn!(
                         "SystemView auto attach skipped: channel={}, code={}, message={}",
