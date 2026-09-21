@@ -862,6 +862,15 @@ impl RttRuntime {
                 )
             })?;
         self.write_internal(control_channel, control.bytes().to_vec())?;
+        if matches!(control, SystemViewControl::Start) {
+            // Starting a recording is also the natural metadata synchronization boundary. Keep
+            // this automatic so task names/priorities and target timing do not depend on a
+            // separate user-facing refresh action.
+            self.write_internal(
+                control_channel,
+                SystemViewControl::RefreshMetadata.bytes().to_vec(),
+            )?;
+        }
         Ok(())
     }
 
