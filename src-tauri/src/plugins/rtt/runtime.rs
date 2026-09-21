@@ -954,8 +954,13 @@ impl RttRuntime {
             .map_err(|error| RttError::backend(error.to_string()))?
             .clone()
             .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
+        #[cfg(not(test))]
+        let presenter = worker::systemview_presenter(app, session_id);
+        #[cfg(test)]
+        let presenter = super::systemview::discard_presenter();
+
         let runtime = match SystemViewRuntime::spawn(SystemViewSpawn {
-            presenter: worker::systemview_presenter(app, session_id),
+            presenter,
             generation: snapshot.generation,
             channel_index,
             control_available: false,
