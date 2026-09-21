@@ -388,7 +388,7 @@ export default function SystemViewTraceView({
               </span>
             </div>
             <div className={styles.taskTable}>
-              <div className={styles.taskRow + " " + styles.taskHeader}>
+              <div className={`${styles.taskRow} ${styles.taskHeader} liquid-control-surface`}>
                 <span>{t("rtt.traceTask")}</span>
                 <span>{t("rtt.tracePriority")}</span>
                 <span>{t("rtt.traceSwitches")}</span>
