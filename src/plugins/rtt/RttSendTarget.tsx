@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { usePluginRuntime } from "../../core/usePluginRuntime";
 import {
@@ -38,6 +39,11 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
     && readable.some(channel => channel.index === runtimeSource)
     ? runtimeSource
     : readable[0]?.index ?? null;
+
+  useEffect(() => {
+    if (receiveChannel == null || runtimeSource === receiveChannel) return;
+    void selectRttAutomationSource(sessionId, receiveChannel);
+  }, [receiveChannel, runtimeSource, sessionId]);
 
   return (
     <div className={`${styles.bar} liquid-glass-panel`}>
