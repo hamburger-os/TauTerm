@@ -6,6 +6,7 @@ use super::model::{
 };
 use super::systemview::{
     SystemViewControl, SystemViewHistoryResponse, SystemViewRuntime, SystemViewSnapshot,
+    SystemViewSpawn,
 };
 use super::worker::{self, WorkerCommand, WorkerContext};
 use crate::embedded_debug::observation::{
@@ -817,7 +818,8 @@ impl RttRuntime {
     }
 
     pub fn systemview_detach(&self, channel_index: u32) -> Result<(), RttError> {
-        self.shared.validate_channel_direction(channel_index, true)?;
+        self.shared
+            .validate_channel_direction(channel_index, true)?;
         self.systemview_suppressed
             .lock()
             .map_err(|error| RttError::backend(error.to_string()))?
@@ -947,16 +949,16 @@ impl RttRuntime {
             .map_err(|error| RttError::backend(error.to_string()))?
             .clone()
             .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
-        let runtime = match SystemViewRuntime::spawn(
+        let runtime = match SystemViewRuntime::spawn(SystemViewSpawn {
             app,
             session_id,
-            snapshot.generation,
+            generation: snapshot.generation,
             channel_index,
-            false,
+            control_available: false,
             bootstrap,
             subscription,
-            decoder_drops,
-        ) {
+            decoder_dropped_chunks: decoder_drops,
+        }) {
             Ok(runtime) => Arc::new(runtime),
             Err(error) => return Err(RttError::backend(error)),
         };
