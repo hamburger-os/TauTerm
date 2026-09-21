@@ -11,6 +11,8 @@ interface GlassButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   fullWidth?: boolean;
   /** 加载状态 */
   loading?: boolean;
+  /** 图标专用紧凑按钮，外部几何仍由公共尺寸 token 管理。 */
+  iconOnly?: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export default function GlassButton({
   size = "md",
   fullWidth = false,
   loading = false,
+  iconOnly = false,
   className = "",
   disabled,
   ...props
@@ -35,6 +38,7 @@ export default function GlassButton({
     globalClass,
     fullWidth && styles.fullWidth,
     loading && styles.loading,
+    iconOnly && styles.iconOnly,
     className,
   ]
     .filter(Boolean)

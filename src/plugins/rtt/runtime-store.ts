@@ -514,7 +514,7 @@ export async function detachSystemView(
 export async function controlSystemView(
   sessionId: string,
   channelIndex: number,
-  control: "start" | "stop" | "refresh",
+  control: "start" | "stop" | "refresh" | "refresh_tasks",
 ): Promise<void> {
   try {
     await invoke("rtt_systemview_control", { sessionId, channelIndex, control });

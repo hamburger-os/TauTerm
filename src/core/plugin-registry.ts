@@ -131,11 +131,14 @@ export interface PluginSendContext {
   sendDefault: (sessionId: string, data: string | Uint8Array) => Promise<void>;
 }
 
-export interface PluginSendTargetVisibilityContext {
+export interface PluginRuntimePresentationContext {
   sessionId: string;
   params: Record<string, unknown>;
   runtimeSnapshot: unknown;
 }
+
+export type PluginSendTargetVisibilityContext = PluginRuntimePresentationContext;
+export type PluginSendBarVisibilityContext = PluginRuntimePresentationContext;
 
 export interface PluginSessionTreeMenuItem {
   id: string;
@@ -217,6 +220,8 @@ export interface PluginRegistration {
   sessionTree?: PluginSessionTreeContribution;
   sendTarget?: ComponentType<{ sessionId: string; disabled?: boolean }>;
   sendTargetVisible?: (context: PluginSendTargetVisibilityContext) => boolean;
+  /** Runtime presentation only. False hides the surface without unmounting its per-session provider. */
+  sendBarVisible?: (context: PluginSendBarVisibilityContext) => boolean;
   terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
   appOverlay?: ComponentType;
   rightSidebar?: PluginRightSidebarContribution;
@@ -363,6 +368,20 @@ class PluginRegistry {
 
   resolveSendBarEnabled(pluginId: string, requested?: boolean): boolean {
     return this.supportsSendBar(pluginId) && requested !== false;
+  }
+
+  resolveSendBarVisible(
+    pluginId: string,
+    sessionId: string,
+    params: Record<string, unknown>,
+  ): boolean {
+    const plugin = this.get(pluginId);
+    if (!plugin || plugin.manifest.send_bar !== true) return false;
+    return plugin.sendBarVisible?.({
+      sessionId,
+      params,
+      runtimeSnapshot: plugin.runtimeStore?.getSnapshot(sessionId),
+    }) ?? true;
   }
 
   resolveSendTargetVisible(

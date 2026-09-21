@@ -109,6 +109,7 @@ pub enum SystemViewControl {
     Start,
     Stop,
     RefreshMetadata,
+    RefreshTasks,
 }
 
 impl SystemViewControl {
@@ -117,6 +118,7 @@ impl SystemViewControl {
             "start" => Ok(Self::Start),
             "stop" => Ok(Self::Stop),
             "refresh" => Ok(Self::RefreshMetadata),
+            "refresh_tasks" => Ok(Self::RefreshTasks),
             other => Err(format!("未知 SystemView 控制命令: {other}")),
         }
     }
@@ -130,6 +132,7 @@ impl SystemViewControl {
                 COMMAND_GET_TASKLIST,
                 COMMAND_GET_SYSTIME,
             ],
+            Self::RefreshTasks => &[COMMAND_GET_TASKLIST],
         }
     }
 }
@@ -206,6 +209,7 @@ impl TraceState {
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
+        let previous_target_cycles = self.last_target_cycles;
         if packet.sync_boundary {
             // SEGGER resets LastTxTimeStamp before emitting the sync/start sequence. The first
             // event after the 10-byte sync marker therefore carries a delta of zero, not an
@@ -213,13 +217,19 @@ impl TraceState {
             // open execution interval, keep the presentation timeline monotonic, and resume by
             // accumulating the new epoch's deltas. Absolute SYSTIME values remain available as
             // event payloads (IDs 12/13) instead of being conflated with packet deltas.
-            self.close_active_task(self.last_target_cycles);
+            self.close_active_task(previous_target_cycles);
             self.interrupted_task = None;
             self.isr_depth = 0;
         }
-        self.last_target_cycles = self
-            .last_target_cycles
-            .saturating_add(packet.delta_cycles as u64);
+        if packet.event_id == 1 {
+            // Overflow means events before this packet are missing. The packet delta spans an
+            // interval whose scheduler state is unknowable, so never charge that interval to the
+            // previously active task.
+            self.close_active_task(previous_target_cycles);
+            self.interrupted_task = None;
+            self.isr_depth = 0;
+        }
+        self.last_target_cycles = previous_target_cycles.saturating_add(packet.delta_cycles as u64);
         self.event_count = self.event_count.saturating_add(1);
 
         let mut context_id = None;
@@ -429,6 +439,12 @@ impl TraceState {
         }
     }
 
+    fn mark_input_gap(&mut self) {
+        self.close_active_task(self.last_target_cycles);
+        self.interrupted_task = None;
+        self.isr_depth = 0;
+    }
+
     fn clear(&mut self) {
         let phase = self.phase;
         let last_target_cycles = self.last_target_cycles;
@@ -506,6 +522,15 @@ impl SystemViewShared {
             .into_iter()
             .map(|packet| state.apply(packet))
             .collect()
+    }
+
+    fn mark_input_gap(&self) {
+        if let Ok(mut decoder) = self.decoder.lock() {
+            decoder.reset_after_gap();
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.mark_input_gap();
+        }
     }
 
     fn snapshot(&self) -> SystemViewSnapshot {
@@ -675,7 +700,13 @@ fn run_decoder(
 ) {
     let replay_through_sequence = bootstrap.last().map_or(0, |chunk| chunk.sequence);
     let mut pending = VecDeque::<SystemViewEvent>::new();
+    let mut expected_channel_offset = None;
     for chunk in bootstrap {
+        if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected) {
+            shared.mark_input_gap();
+        }
+        expected_channel_offset =
+            Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
         pending.extend(shared.ingest(chunk));
         while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
             pending.pop_front();
@@ -693,6 +724,16 @@ fn run_decoder(
                 if chunk.sequence <= replay_through_sequence {
                     continue;
                 }
+                if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected)
+                {
+                    // Channel offsets are canonical and contiguous for one RTT Up stream. A
+                    // discontinuity is therefore an exact acquisition/subscriber gap signal,
+                    // unlike sampling the asynchronous drop counter which could reset the decoder
+                    // before an older queued chunk is consumed.
+                    shared.mark_input_gap();
+                }
+                expected_channel_offset =
+                    Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
                 for event in shared.ingest(chunk) {
                     pending.push_back(event);
                 }
@@ -747,6 +788,12 @@ struct SystemViewDecoder {
 }
 
 impl SystemViewDecoder {
+    fn reset_after_gap(&mut self) {
+        self.buffer.clear();
+        self.synchronized = false;
+        self.mark_next_sync_boundary = false;
+    }
+
     fn push(&mut self, bytes: &[u8]) -> (Vec<ParsedPacket>, u64) {
         self.buffer.extend_from_slice(bytes);
         let mut packets = Vec::new();
@@ -1147,6 +1194,52 @@ mod tests {
         assert_eq!(decoded.fields[1], 72_000_000);
         assert_eq!(decoded.fields[2], 0x2000_0000);
         assert_eq!(decoded.delta_cycles, 3);
+    }
+
+    #[test]
+    fn target_overflow_does_not_charge_unknown_gap_to_active_task() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 10,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 1,
+            fields: vec![12],
+            text: None,
+            delta_cycles: 100,
+            sync_boundary: false,
+        });
+
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.tasks[0].runtime_cycles, 0);
+        assert_eq!(snapshot.target_dropped_events, 12);
+        assert_eq!(snapshot.last_target_cycles, 110);
+    }
+
+    #[test]
+    fn decoder_gap_requires_a_new_sync_marker() {
+        let mut decoder = SystemViewDecoder::default();
+        let mut synced = vec![0; 10];
+        synced.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&synced);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+
+        decoder.reset_after_gap();
+        let (packets, errors) = decoder.push(&packet(4, &[7], 1));
+        assert_eq!(errors, 0);
+        assert!(packets.is_empty());
+
+        let mut resynced = vec![0; 10];
+        resynced.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&resynced);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+        assert!(packets[0].sync_boundary);
     }
 
     #[test]

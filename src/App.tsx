@@ -27,7 +27,7 @@ import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
 import { pluginRegistry } from "./core/plugin-registry";
-import { usePluginSendTargetVisible } from "./core/usePluginRuntime";
+import { usePluginSendBarVisible, usePluginSendTargetVisible } from "./core/usePluginRuntime";
 import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
@@ -56,12 +56,17 @@ function AppInner() {
   const activeShowSendBar = activeTabForBar
     ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
     : false;
+  const activeSendBarVisible = usePluginSendBarVisible(
+    activeTabForBar?.pluginId ?? "",
+    activeTabForBar?.id ?? "",
+    activeTabForBar?.params ?? {},
+  );
   const activeTargetVisible = usePluginSendTargetVisible(
     activeTabForBar?.pluginId ?? "",
     activeTabForBar?.id ?? "",
     activeTabForBar?.params ?? {},
   );
-  const activeShowTargetBar = activeShowSendBar && activeTargetVisible;
+  const activeShowTargetBar = activeShowSendBar && activeSendBarVisible && activeTargetVisible;
   const {
     isResizing: isResizingSendBar,
     hostStyle: sendBarHostStyle,
@@ -336,11 +341,11 @@ function AppInner() {
             const showSendBar = pluginRegistry.resolveSendBarEnabled(tab.pluginId, tab.sendBarEnabled);
             return (
               <React.Fragment key={tab.id}>
-                {(showSendBar && isActive) && (
+                {(showSendBar && isActive && activeSendBarVisible) && (
                   <ResizeHandle direction="vertical" onMouseDown={handleSendBarMouseDown} />
                 )}
                 {showSendBar && (
-                  <div style={isActive
+                  <div style={isActive && activeSendBarVisible
                     ? sendBarHostStyle
                     : { display: "none" }
                   }>

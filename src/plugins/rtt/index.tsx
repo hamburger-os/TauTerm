@@ -8,6 +8,7 @@ import RttSessionView from "./RttSessionView";
 import {
   defaultRttParams,
   hasUsableRttDownChannel,
+  isRttSemanticView,
   normalizeRttParams,
   rttDefaultSessionName,
   rttSubtitle,
@@ -66,6 +67,13 @@ export const rttPlugin = definePlugin({
   sendTargetVisible: ({ runtimeSnapshot }) => {
     const runtime = runtimeSnapshot as RttRuntimeSnapshot | undefined;
     return hasUsableRttDownChannel(runtime?.snapshot);
+  },
+  sendBarVisible: ({ runtimeSnapshot }) => {
+    const runtime = runtimeSnapshot as RttRuntimeSnapshot | undefined;
+    if (!runtime) return true;
+    const channelIndex = runtime.selectedChannel;
+    const configuredMode = channelIndex == null ? undefined : runtime.viewModes[channelIndex];
+    return !isRttSemanticView(runtime.snapshot, channelIndex, configuredMode);
   },
   customView: RttSessionView,
   formatSessionError: error => {
