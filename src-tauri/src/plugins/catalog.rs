@@ -50,6 +50,7 @@ macro_rules! tauterm_invoke_handler {
             $crate::plugins::rtt::commands::rtt_set_automation_source_channel,
             $crate::plugins::rtt::commands::rtt_set_send_channel,
             $crate::plugins::rtt::commands::rtt_systemview_attach,
+            $crate::plugins::rtt::commands::rtt_systemview_detach,
             $crate::plugins::rtt::commands::rtt_systemview_snapshot,
             $crate::plugins::rtt::commands::rtt_systemview_history,
             $crate::plugins::rtt::commands::rtt_systemview_control,
