@@ -145,6 +145,8 @@ const rttSnapshot = {
   }],
   automation_source_channel: 0,
   send_channel: 0,
+  observers: [],
+  channel_claims: [],
   rx_bytes: 0,
   tx_bytes: 0,
   dropped_history_bytes: 0,
@@ -157,6 +159,10 @@ const rttSnapshot = {
   last_error: null,
 };
 assert.equal(hasUsableRttDownChannel(rttSnapshot), true);
+assert.equal(hasUsableRttDownChannel({
+  ...rttSnapshot,
+  channel_claims: [{ channel_index: 0, owner: "SystemView" }],
+}), false);
 assert.equal(hasUsableRttDownChannel({ ...rttSnapshot, phase: "faulted" }), false);
 assert.equal(hasUsableRttDownChannel({
   ...rttSnapshot,
