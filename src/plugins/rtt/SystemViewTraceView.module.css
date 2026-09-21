@@ -1,0 +1,236 @@
+.root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.traceToolbar {
+  flex: 0 0 auto;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 6px var(--spacing-md);
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.traceState,
+.actions,
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 36%, transparent);
+}
+
+.recording {
+  background: var(--color-success);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-success) 64%, transparent);
+}
+
+.error {
+  flex: 0 0 auto;
+  padding: 6px var(--spacing-md);
+  color: var(--color-error);
+  border-bottom: 1px solid var(--content-divider);
+  font-size: var(--text-xs);
+}
+
+.metrics {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--content-divider);
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.metric {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--theme-control-veil);
+}
+
+.metric span,
+.sectionHeader span {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.traceBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(220px, 1.35fr) minmax(150px, 0.65fr);
+  overflow: hidden;
+}
+
+.timelineSection,
+.tasksSection {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.timelineSection {
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.sectionHeader {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 5px var(--spacing-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--content-divider) 70%, transparent);
+}
+
+.canvasScroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.timeline {
+  display: block;
+  width: 100%;
+  min-width: 760px;
+  height: 100%;
+  min-height: 220px;
+  background: transparent;
+}
+
+.taskTable,
+.eventList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-size: var(--text-xs);
+}
+
+.taskRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.5fr) minmax(70px, 0.5fr) minmax(80px, 0.6fr) minmax(140px, 1fr);
+  gap: var(--spacing-sm);
+  align-items: center;
+  min-height: 30px;
+  padding: 4px var(--spacing-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--content-divider) 55%, transparent);
+}
+
+.taskRow > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.taskHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--text-muted);
+  background: var(--theme-content-header-veil);
+}
+
+.eventList {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-family: var(--font-mono);
+}
+
+.eventRow {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: var(--spacing-sm);
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--content-divider) 55%, transparent);
+}
+
+.eventMeta,
+.eventDelta {
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.eventName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: var(--spacing-md);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+@container session-pane (max-width: 760px) {
+  .traceToolbar {
+    align-items: flex-start;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .taskRow {
+    grid-template-columns: minmax(140px, 1.4fr) 60px 70px minmax(120px, 1fr);
+  }
+}
+
+@container session-pane (max-width: 520px) {
+  .traceToolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .traceBody {
+    grid-template-rows: minmax(200px, 1fr) minmax(140px, 0.8fr);
+  }
+
+  .eventRow {
+    grid-template-columns: 1fr max-content;
+  }
+
+  .eventName {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
