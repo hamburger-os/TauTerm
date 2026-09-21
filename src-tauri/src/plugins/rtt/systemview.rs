@@ -1078,11 +1078,11 @@ fn event_kind(event_id: u32) -> &'static str {
 }
 
 // These protocol/state tests are platform-independent and run on Linux/macOS. On Windows,
- // referencing this mixed protocol/runtime module from libtest makes the otherwise headless test
- // executable retain Tauri's native TaskDialog path; Cargo libtest binaries have no application
- // manifest, so the loader binds comctl32 v5 and fails before the harness starts. Windows still
- // compiles the full module under strict Clippy and exercises the real Tauri application in the
- // dedicated Runtime E2E workflow.
+// referencing this mixed protocol/runtime module from libtest makes the otherwise headless test
+// executable retain Tauri's native TaskDialog path; Cargo libtest binaries have no application
+// manifest, so the loader binds comctl32 v5 and fails before the harness starts. Windows still
+// compiles the full module under strict Clippy and exercises the real Tauri application in the
+// dedicated Runtime E2E workflow.
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
