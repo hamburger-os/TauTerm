@@ -43,7 +43,10 @@ export function hasRttChannelIssues(channel: RttChannelInfo): boolean {
 
 export function hasUsableRttDownChannel(snapshot: RttSnapshot | null | undefined): boolean {
   return snapshot?.phase === "running"
-    && snapshot.channels.some(channel => isUsableRttDirection(channel.down));
+    && snapshot.channels.some(
+      channel => isUsableRttDirection(channel.down)
+        && !isRttDownChannelClaimed(snapshot, channel.index),
+    );
 }
 
 export interface RttChannelClaim {
