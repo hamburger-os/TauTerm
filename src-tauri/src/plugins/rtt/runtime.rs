@@ -449,9 +449,7 @@ impl RttShared {
         {
             return Err(RttError::new(
                 RttErrorCode::RttWriteFailed,
-                format!(
-                    "RTT Down Channel {channel_index} 正由 {owner} 使用，不能作为通用发送目标"
-                ),
+                format!("RTT Down Channel {channel_index} 正由 {owner} 使用，不能作为通用发送目标"),
             ));
         }
         Ok(())
@@ -487,14 +485,12 @@ impl RttShared {
         let replacement = channels
             .iter()
             .find(|channel| {
-                channel.index == 0
-                    && channel.has_usable_down()
-                    && !claims.contains(&channel.index)
+                channel.index == 0 && channel.has_usable_down() && !claims.contains(&channel.index)
             })
             .or_else(|| {
-                channels.iter().find(|channel| {
-                    channel.has_usable_down() && !claims.contains(&channel.index)
-                })
+                channels
+                    .iter()
+                    .find(|channel| channel.has_usable_down() && !claims.contains(&channel.index))
             })
             .map(|channel| channel.index);
         if let Ok(mut selected) = self.send_channel.lock() {
@@ -516,7 +512,10 @@ impl RttShared {
             .channel_claims
             .lock()
             .map(|mut claims| {
-                if claims.get(&channel_index).is_some_and(|value| value == owner) {
+                if claims
+                    .get(&channel_index)
+                    .is_some_and(|value| value == owner)
+                {
                     claims.remove(&channel_index);
                     true
                 } else {
@@ -732,7 +731,8 @@ impl RttRuntime {
     }
 
     pub fn write(&self, channel_index: u32, data: Vec<u8>) -> Result<usize, RttError> {
-        self.shared.validate_channel_direction(channel_index, false)?;
+        self.shared
+            .validate_channel_direction(channel_index, false)?;
         self.shared.validate_user_write(channel_index)?;
         self.write_internal(channel_index, data)
     }
@@ -795,7 +795,8 @@ impl RttRuntime {
     }
 
     pub fn systemview_snapshot(&self, channel_index: u32) -> Result<SystemViewSnapshot, RttError> {
-        self.systemview_runtime(channel_index).map(|runtime| runtime.snapshot())
+        self.systemview_runtime(channel_index)
+            .map(|runtime| runtime.snapshot())
     }
 
     pub fn systemview_history(
@@ -895,11 +896,13 @@ impl RttRuntime {
         {
             return Ok(());
         }
-        self.shared.validate_channel_direction(channel_index, true)?;
+        self.shared
+            .validate_channel_direction(channel_index, true)?;
         let snapshot = self.shared.snapshot();
-        let control_available = snapshot.channels.iter().any(|channel| {
-            channel.index == channel_index && channel.has_usable_down()
-        });
+        let control_available = snapshot
+            .channels
+            .iter()
+            .any(|channel| channel.index == channel_index && channel.has_usable_down());
         let owner = "SystemView";
         if control_available {
             self.shared.claim_down_channel(channel_index, owner)?;
@@ -955,7 +958,8 @@ impl RttRuntime {
         if let Some(runtime) = runtime {
             runtime.shutdown();
         }
-        self.shared.release_down_channel(channel_index, "SystemView");
+        self.shared
+            .release_down_channel(channel_index, "SystemView");
         self.publish_observers();
     }
 
