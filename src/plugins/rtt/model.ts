@@ -163,6 +163,7 @@ export interface SystemViewSnapshot {
   ram_base?: number | null;
   id_shift?: number | null;
   system_description: string[];
+  window_start_cycles: number;
   last_target_cycles: number;
   tasks: SystemViewTaskSnapshot[];
 }
