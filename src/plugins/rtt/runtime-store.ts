@@ -205,9 +205,21 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
     loaded: false,
     error: null,
   };
+  const visibleEvents = payload.kind === "batch"
+    ? payload.events.filter(
+      event => event.sequence > payload.snapshot.cleared_through_sequence,
+    )
+    : [];
   const events = payload.kind === "batch"
-    ? mergeSystemViewEvents(previous.events, payload.events)
-    : previous.events;
+    ? mergeSystemViewEvents(
+      previous.events.filter(
+        event => event.sequence > payload.snapshot.cleared_through_sequence,
+      ),
+      visibleEvents,
+    )
+    : previous.events.filter(
+      event => event.sequence > payload.snapshot.cleared_through_sequence,
+    );
   publish(payload.session_id, {
     ...prev,
     systemview: Object.freeze({
