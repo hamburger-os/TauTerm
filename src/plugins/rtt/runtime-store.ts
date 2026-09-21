@@ -457,10 +457,17 @@ export async function ensureSystemViewHistory(
 export async function attachSystemView(
   sessionId: string,
   channelIndex: number,
-): Promise<void> {
-  await invoke("rtt_systemview_attach", { sessionId, channelIndex });
-  await refreshRttRuntime(sessionId);
-  await ensureSystemViewHistory(sessionId, channelIndex);
+): Promise<boolean> {
+  try {
+    await invoke("rtt_systemview_attach", { sessionId, channelIndex });
+    await refreshRttRuntime(sessionId);
+    await ensureSystemViewHistory(sessionId, channelIndex);
+    return true;
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
+    return false;
+  }
 }
 
 export async function controlSystemView(
@@ -468,26 +475,36 @@ export async function controlSystemView(
   channelIndex: number,
   control: "start" | "stop" | "refresh",
 ): Promise<void> {
-  await invoke("rtt_systemview_control", { sessionId, channelIndex, control });
+  try {
+    await invoke("rtt_systemview_control", { sessionId, channelIndex, control });
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
+  }
 }
 
 export async function clearSystemView(
   sessionId: string,
   channelIndex: number,
 ): Promise<void> {
-  await invoke("rtt_systemview_clear", { sessionId, channelIndex });
-  const prev = current(sessionId);
-  publish(sessionId, {
-    ...prev,
-    systemview: Object.freeze({
-      ...prev.systemview,
-      [channelIndex]: Object.freeze({
-        snapshot: prev.systemview[channelIndex]?.snapshot ?? null,
-        events: Object.freeze([]),
-        loaded: false,
-        error: null,
+  try {
+    await invoke("rtt_systemview_clear", { sessionId, channelIndex });
+    const prev = current(sessionId);
+    publish(sessionId, {
+      ...prev,
+      systemview: Object.freeze({
+        ...prev.systemview,
+        [channelIndex]: Object.freeze({
+          snapshot: prev.systemview[channelIndex]?.snapshot ?? null,
+          events: Object.freeze([]),
+          loaded: false,
+          error: null,
+        }),
       }),
-    }),
-  });
-  await ensureSystemViewHistory(sessionId, channelIndex);
+    });
+    await ensureSystemViewHistory(sessionId, channelIndex);
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
+  }
 }
