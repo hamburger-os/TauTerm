@@ -997,9 +997,10 @@ impl RttRuntime {
 
         for runtime in &runtimes {
             let channel_index = runtime.channel_index();
-            let has_down = snapshot.channels.iter().any(|channel| {
-                channel.index == channel_index && channel.has_usable_down()
-            });
+            let has_down = snapshot
+                .channels
+                .iter()
+                .any(|channel| channel.index == channel_index && channel.has_usable_down());
             if has_down {
                 match self.shared.claim_down_channel(channel_index, "SystemView") {
                     Ok(()) => controllable.push(channel_index),
