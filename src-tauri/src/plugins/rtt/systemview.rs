@@ -94,7 +94,14 @@ pub type SystemViewPresenter = Arc<dyn Fn(SystemViewPresentation) + Send + Sync 
 
 #[cfg(test)]
 pub fn discard_presenter() -> SystemViewPresenter {
-    Arc::new(|_| {})
+    Arc::new(|presentation| match presentation {
+        SystemViewPresentation::Batch { events, snapshot } => {
+            let _ = (events.len(), snapshot.channel_index);
+        }
+        SystemViewPresentation::Snapshot { snapshot } => {
+            let _ = snapshot.channel_index;
+        }
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
