@@ -62,6 +62,7 @@ pub struct SystemViewSnapshot {
     pub decoder_dropped_chunks: u64,
     pub decoder_errors: u64,
     pub presentation_dropped_events: u64,
+    pub cleared_through_sequence: u64,
     pub sys_freq_hz: Option<u32>,
     pub cpu_freq_hz: Option<u32>,
     pub ram_base: Option<u32>,
@@ -126,6 +127,7 @@ struct TraceState {
     target_dropped_events: u64,
     decoder_errors: u64,
     presentation_dropped_events: u64,
+    cleared_through_sequence: u64,
     sys_freq_hz: Option<u32>,
     cpu_freq_hz: Option<u32>,
     ram_base: Option<u32>,
@@ -150,6 +152,7 @@ impl TraceState {
             target_dropped_events: 0,
             decoder_errors: 0,
             presentation_dropped_events: 0,
+            cleared_through_sequence: 0,
             sys_freq_hz: None,
             cpu_freq_hz: None,
             ram_base: None,
@@ -339,6 +342,7 @@ impl TraceState {
             decoder_dropped_chunks,
             decoder_errors: self.decoder_errors,
             presentation_dropped_events: self.presentation_dropped_events,
+            cleared_through_sequence: self.cleared_through_sequence,
             sys_freq_hz: self.sys_freq_hz,
             cpu_freq_hz: self.cpu_freq_hz,
             ram_base: self.ram_base,
@@ -385,7 +389,7 @@ impl TraceState {
         self.decoder_errors = 0;
         self.presentation_dropped_events = 0;
         self.events.clear();
-        self.next_event_sequence = 1;
+        self.cleared_through_sequence = self.next_event_sequence.saturating_sub(1);
         self.tasks = task_metadata;
         self.active_task = active_task_id.map(|task_id| (task_id, last_target_cycles));
         self.phase = phase;
@@ -450,6 +454,7 @@ impl SystemViewShared {
                 decoder_dropped_chunks: drops,
                 decoder_errors: 0,
                 presentation_dropped_events: 0,
+                cleared_through_sequence: 0,
                 sys_freq_hz: None,
                 cpu_freq_hz: None,
                 ram_base: None,
@@ -1137,6 +1142,7 @@ mod tests {
         assert_eq!(snapshot.phase, SystemViewPhase::Recording);
         assert_eq!(snapshot.last_target_cycles, before);
         assert_eq!(snapshot.event_count, 0);
+        assert_eq!(snapshot.cleared_through_sequence, 3);
         assert_eq!(snapshot.tasks.len(), 1);
         assert_eq!(snapshot.tasks[0].name.as_deref(), Some("worker"));
         assert_eq!(snapshot.tasks[0].runtime_cycles, 0);
