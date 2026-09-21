@@ -260,9 +260,10 @@ export default function SystemViewTraceView({
     [unknownTasks],
   );
   const integrityCompromised = Boolean(snapshot && (
-    snapshot.target_dropped_events > 0
+    snapshot.target_overflow_packets > 0
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
+    || snapshot.presentation_dropped_events > 0
   ));
 
   useEffect(() => {
