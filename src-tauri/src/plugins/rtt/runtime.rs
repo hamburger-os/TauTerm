@@ -272,8 +272,8 @@ impl RttShared {
             .unwrap_or((0, 0));
         if let Ok(mut snapshot) = self.snapshot.lock() {
             snapshot.rx_bytes = snapshot.rx_bytes.saturating_add(chunk.data.len() as u64);
-            snapshot.dropped_history_chunks = loss.0;
-            snapshot.dropped_history_bytes = loss.1;
+            snapshot.evicted_history_chunks = loss.0;
+            snapshot.evicted_history_bytes = loss.1;
         }
         let _ = self.raw_source.publish(&chunk);
         chunk
