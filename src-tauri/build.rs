@@ -63,11 +63,13 @@ fn main() {
         }
     }
 
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        // Cargo test binaries do not inherit the application manifest produced by tauri-build.
-        // The Tauri Windows UI stack can import TaskDialogIndirect, which requires Common Controls
-        // v6. Embed that dependency in test binaries only so cargo test has the same loader
-        // contract as the real application without changing the application manifest.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // Cargo's unit-test executable does not inherit the application manifest produced by
+        // tauri-build. The Tauri Windows UI stack can import TaskDialogIndirect, which requires
+        // Common Controls v6. Add the same dependency to every MSVC-linked artifact; the linker
+        // merges it with the application manifest for normal builds and supplies it to tests.
         let manifest = std::path::PathBuf::from(
             std::env::var("CARGO_MANIFEST_DIR")
                 .expect("CARGO_MANIFEST_DIR is unavailable for Windows test manifest"),
@@ -75,11 +77,8 @@ fn main() {
         .join("tests")
         .join("windows-test.manifest");
         println!("cargo:rerun-if-changed={}", manifest.display());
-        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
-        println!(
-            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
-            manifest.display()
-        );
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
     }
 
     tauri_build::build();
