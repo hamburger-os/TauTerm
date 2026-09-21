@@ -236,7 +236,10 @@ impl TraceState {
             14 => {
                 if let Some(description) = packet.text.as_ref() {
                     if !description.is_empty()
-                        && !self.system_description.iter().any(|item| item == description)
+                        && !self
+                            .system_description
+                            .iter()
+                            .any(|item| item == description)
                     {
                         self.system_description.push(description.clone());
                     }
@@ -725,7 +728,8 @@ fn decode_packet(data: &[u8]) -> Result<Option<(ParsedPacket, usize)>, ()> {
     let Some((delta_cycles, timestamp_len)) = decode_varint(&data[payload_end..])? else {
         return Ok(None);
     };
-    let (fields, text) = decode_length_delimited_payload(event_id, &data[payload_start..payload_end]);
+    let (fields, text) =
+        decode_length_delimited_payload(event_id, &data[payload_start..payload_end]);
     Ok(Some((
         ParsedPacket {
             event_id,
