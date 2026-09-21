@@ -102,6 +102,28 @@
 .channelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .direction { flex: 0 0 auto; color: var(--accent-primary); font-family: var(--font-mono); }
 
+.automationSourceMark {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 48%, transparent);
+  border-radius: 999px;
+  color: var(--accent-primary);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.automationButton {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .viewer {
   min-width: 0;
   min-height: 0;
