@@ -155,7 +155,7 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 ## SystemView / RTOS Trace
 
-SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根据 Channel metadata 中的 `SysView` / `SystemView` 名称自动挂载，也提供显式 attach 命令用于 metadata 不完整或自定义命名场景。挂载 observer 本身是被动行为，不自动向目标发送 START；开始/停止 Trace 必须由用户显式操作。开始采集后 Runtime 自动请求 System Description / Task List / System Time；前端若遇到首次出现且缺少名称或优先级的 Task ID，会对该未知任务集合做一次去抖动 metadata resync，不要求用户手工点击“刷新信息”。每个 SystemView observer：
+SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根据 Channel metadata 中的 `SysView` / `SystemView` 名称自动挂载，也提供显式 attach 命令用于 metadata 不完整或自定义命名场景。挂载 observer 本身是被动行为，不自动向目标发送 START；开始/停止 Trace 必须由用户显式操作。开始采集后 Runtime 自动请求 System Description / Task List / System Time；前端若遇到首次出现且缺少名称或优先级的 Task ID，会对该未知任务集合执行有界退避的 Task List 重同步，不重复请求无关系统信息，也不要求用户手工点击“刷新信息”。每个 SystemView observer：
 
 - 只订阅指定 RTT Up Channel 的 canonical `StoredRttChunk`，不存在第二个 probe/RTT reader；
 - 使用 Rust streaming decoder 处理跨 chunk 半包、变长整数、标准/长度包、同步前缀与 target timestamp delta；
