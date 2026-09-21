@@ -998,35 +998,44 @@ impl RttRuntime {
             .map(|runtimes| runtimes.values().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         let snapshot = self.shared.snapshot();
-        let mut controllable = Vec::new();
+        let mut candidates = runtimes
+            .iter()
+            .map(|runtime| runtime.channel_index())
+            .filter(|channel_index| {
+                snapshot.channels.iter().any(|channel| {
+                    channel.index == *channel_index && channel.has_usable_down()
+                })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
 
-        for runtime in &runtimes {
-            let channel_index = runtime.channel_index();
-            let has_down = snapshot
-                .channels
-                .iter()
-                .any(|channel| channel.index == channel_index && channel.has_usable_down());
-            if has_down {
-                match self.shared.claim_down_channel(channel_index, "SystemView") {
-                    Ok(()) => controllable.push(channel_index),
-                    Err(error) => {
-                        log::warn!(
-                            "SystemView control claim unavailable: channel={}, code={}, message={}",
-                            channel_index,
-                            error.code.as_str(),
-                            error.message
-                        );
-                    }
+        let mut controller = None;
+        for channel_index in candidates {
+            match self.shared.claim_down_channel(channel_index, "SystemView") {
+                Ok(()) => {
+                    controller = Some(channel_index);
+                    break;
                 }
-            } else {
-                self.shared
-                    .release_down_channel(channel_index, "SystemView");
+                Err(error) => {
+                    log::warn!(
+                        "SystemView control claim unavailable: channel={}, code={}, message={}",
+                        channel_index,
+                        error.code.as_str(),
+                        error.message
+                    );
+                }
             }
         }
 
-        let controller = controllable.into_iter().min();
+        // SystemView has one host-to-target command stream. Other observed Up channels remain
+        // passive semantic sources and must not unnecessarily reserve unrelated Down channels.
         for runtime in &runtimes {
-            runtime.set_control_available(controller == Some(runtime.channel_index()));
+            let channel_index = runtime.channel_index();
+            if controller != Some(channel_index) {
+                self.shared
+                    .release_down_channel(channel_index, "SystemView");
+            }
+            runtime.set_control_available(controller == Some(channel_index));
         }
         self.publish_observers();
     }
