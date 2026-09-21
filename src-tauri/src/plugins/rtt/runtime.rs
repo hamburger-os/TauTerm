@@ -847,16 +847,21 @@ impl RttRuntime {
         channel_index: u32,
         control: SystemViewControl,
     ) -> Result<(), RttError> {
-        let runtime = self.systemview_runtime(channel_index)?;
-        if !runtime.snapshot().control_available {
-            return Err(RttError::new(
-                RttErrorCode::RttChannelNotFound,
-                format!(
-                    "SystemView Channel {channel_index} 不是当前控制通道或没有可用的同索引 Down Channel"
-                ),
-            ));
-        }
-        self.write_internal(channel_index, control.bytes().to_vec())?;
+        self.systemview_runtime(channel_index)?;
+        let control_channel = self
+            .systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .values()
+            .find(|runtime| runtime.snapshot().control_available)
+            .map(|runtime| runtime.channel_index())
+            .ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttChannelNotFound,
+                    "当前 SystemView 观察器没有可用的协议控制 Down Channel",
+                )
+            })?;
+        self.write_internal(control_channel, control.bytes().to_vec())?;
         Ok(())
     }
 
@@ -1031,17 +1036,16 @@ impl RttRuntime {
             .systemview
             .lock()
             .map(|runtimes| {
+                let control_channel_index = runtimes
+                    .values()
+                    .find(|runtime| runtime.snapshot().control_available)
+                    .map(|runtime| runtime.channel_index());
                 runtimes
                     .values()
-                    .map(|runtime| {
-                        let snapshot = runtime.snapshot();
-                        RttObserverInfo {
-                            kind: "systemview".to_string(),
-                            channel_index: runtime.channel_index(),
-                            control_channel_index: snapshot
-                                .control_available
-                                .then_some(runtime.channel_index()),
-                        }
+                    .map(|runtime| RttObserverInfo {
+                        kind: "systemview".to_string(),
+                        channel_index: runtime.channel_index(),
+                        control_channel_index,
                     })
                     .collect()
             })
