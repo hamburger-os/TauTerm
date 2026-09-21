@@ -731,7 +731,6 @@ fn run_decoder(
                     // unlike sampling the asynchronous drop counter which could reset the decoder
                     // before an older queued chunk is consumed.
                     shared.mark_input_gap();
-                    changed = true;
                 }
                 expected_channel_offset =
                     Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
