@@ -58,6 +58,19 @@ impl RttChannelInfo {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RttChannelClaim {
+    pub channel_index: u32,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RttObserverInfo {
+    pub kind: String,
+    pub channel_index: u32,
+    pub control_channel_index: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RttSnapshot {
     /// Monotonic process-local runtime identity. Every reconnect gets a new generation.
@@ -69,6 +82,10 @@ pub struct RttSnapshot {
     pub automation_source_channel: Option<u32>,
     /// Runtime-authoritative Down Channel used by shared SendBar/AutomationIo.
     pub send_channel: Option<u32>,
+    /// Derived semantic observers consume canonical RTT bytes without creating another hardware reader.
+    pub observers: Vec<RttObserverInfo>,
+    /// Protocol-owned Down Channels are excluded from generic terminal/SendBar writes.
+    pub channel_claims: Vec<RttChannelClaim>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub dropped_history_bytes: u64,
@@ -93,6 +110,8 @@ impl Default for RttSnapshot {
             channels: Vec::new(),
             automation_source_channel: None,
             send_channel: None,
+            observers: Vec::new(),
+            channel_claims: Vec::new(),
             rx_bytes: 0,
             tx_bytes: 0,
             dropped_history_bytes: 0,

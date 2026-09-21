@@ -76,6 +76,10 @@ impl<T> ObservationSubscription<T> {
     pub fn try_recv(&self) -> Result<T, mpsc::TryRecvError> {
         self.receiver.try_recv()
     }
+
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Result<T, mpsc::RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout)
+    }
 }
 
 pub struct ObservationSource<T: Clone + Send + 'static> {

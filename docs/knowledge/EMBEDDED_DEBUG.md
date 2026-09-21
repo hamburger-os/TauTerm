@@ -30,6 +30,18 @@ TauTerm 当前只把 J-Link RTT TELNET/Existing Debug Session 作为兼容 backe
 
 Existing Session backend 仅连接本机 loopback 服务，不能因为底层是 TCP 就扩展成未经设计的远程服务入口。Channel/Control Block 等能力应按该接口实际可提供的能力降级，不能把 native probe backend 的 introspection 能力套用过去。RTT TELNET Channel 选择必须遵循 SEGGER 官方 Config String 契约，在连接建立后的协议窗口内发送完整配置串，不能把 `RTTCh` 子命令当作裸文本命令发送。
 
+## SEGGER SystemView
+
+- SystemView target source：https://github.com/SEGGERMicro/SystemView
+- SystemView target implementation：https://github.com/SEGGERMicro/SystemView/blob/main/SYSVIEW/SEGGER_SYSVIEW.c
+- SystemView public API/event IDs：https://github.com/SEGGERMicro/SystemView/blob/main/SYSVIEW/SEGGER_SYSVIEW.h
+- SystemView host command IDs：https://github.com/SEGGERMicro/SystemView/blob/main/SYSVIEW/SEGGER_SYSVIEW_Int.h
+- Upstream license：https://github.com/SEGGERMicro/SystemView/blob/main/LICENSE.md
+
+TauTerm 的 SystemView decoder 以目标端公开源代码中的 packet framing、event ID、变长整数、timestamp delta 和 Down Channel command 定义为协议依据；不从第三方 UI 截图反推二进制格式。上游 source 许可证允许在保留条件下再分发/修改，但 TauTerm 当前只实现兼容 decoder/control path，不复制或 vendoring 上游实现，因此不存在额外 bundled-source 许可证文件。
+
+SystemView 数据使用目标端 timestamp delta 建立时间线；host acquisition timestamp 只用于采集诊断，不能替代 target time。SystemView control 与普通 SendBar 写入属于不同语义：START/STOP/metadata 请求由 semantic observer 内部路径发送，公共发送不得写入被 observer claim 的 Down Channel。
+
 ## 设计核对原则
 
 - RTT Up 与 Down Channel 分别核对，不假设同 index 必然构成双向 stream。

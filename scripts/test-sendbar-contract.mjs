@@ -145,6 +145,8 @@ const rttSnapshot = {
   }],
   automation_source_channel: 0,
   send_channel: 0,
+  observers: [],
+  channel_claims: [],
   rx_bytes: 0,
   tx_bytes: 0,
   dropped_history_bytes: 0,
@@ -157,6 +159,10 @@ const rttSnapshot = {
   last_error: null,
 };
 assert.equal(hasUsableRttDownChannel(rttSnapshot), true);
+assert.equal(hasUsableRttDownChannel({
+  ...rttSnapshot,
+  channel_claims: [{ channel_index: 0, owner: "SystemView" }],
+}), false);
 assert.equal(hasUsableRttDownChannel({ ...rttSnapshot, phase: "faulted" }), false);
 assert.equal(hasUsableRttDownChannel({
   ...rttSnapshot,
@@ -225,6 +231,13 @@ assert.ok(rttTarget.includes("selectRttSendChannel"));
 assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
 assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
 assert.ok(rttRuntime.includes("selectedChannel"), "RTT viewer Channel must remain plugin-local UI state");
+const selectRttChannelBody = rttRuntime.match(
+  /export async function selectRttChannel\([\s\S]*?\n\}/,
+)?.[0] ?? "";
+assert.ok(
+  !selectRttChannelBody.includes("rtt_set_automation_source_channel"),
+  "browsing an RTT channel must not mutate the automation source",
+);
 assert.ok(
   rttTarget.includes("runtime.snapshot?.send_channel"),
   "RTT SendBar target must come from the runtime-authoritative snapshot",

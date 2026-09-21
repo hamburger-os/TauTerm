@@ -1,6 +1,13 @@
 use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
-use super::model::{RttChunkDto, RttHistoryResponse, RttPhase, RttSnapshot, StoredRttChunk};
+use super::model::{
+    RttChannelClaim, RttChunkDto, RttHistoryResponse, RttObserverInfo, RttPhase, RttSnapshot,
+    StoredRttChunk,
+};
+use super::systemview::{
+    SystemViewControl, SystemViewHistoryResponse, SystemViewRuntime, SystemViewSnapshot,
+    SystemViewSpawn,
+};
 use super::worker::{self, WorkerCommand, WorkerContext};
 use crate::embedded_debug::observation::{
     ObservationSequencer, ObservationSource, ObservationSubscription,
@@ -8,8 +15,8 @@ use crate::embedded_debug::observation::{
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::plugin_adapter::SessionService;
 use crate::session::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIoError};
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -148,6 +155,7 @@ pub(super) struct RttShared {
     channel_offsets: Mutex<BTreeMap<u32, u64>>,
     automation_source_channel: Mutex<Option<u32>>,
     send_channel: Mutex<Option<u32>>,
+    channel_claims: Mutex<BTreeMap<u32, String>>,
 }
 
 impl RttShared {
@@ -165,6 +173,7 @@ impl RttShared {
             channel_offsets: Mutex::new(BTreeMap::new()),
             automation_source_channel: Mutex::new(None),
             send_channel: Mutex::new(None),
+            channel_claims: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -202,17 +211,25 @@ impl RttShared {
                     }
                     *selected
                 });
+        let claimed = self
+            .channel_claims
+            .lock()
+            .map(|claims| claims.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let is_writable = |channel: &super::model::RttChannelInfo| {
+            channel.has_usable_down() && !claimed.contains(&channel.index)
+        };
         let send_channel = self.send_channel.lock().ok().and_then(|mut selected| {
             let still_writable = selected.is_some_and(|index| {
                 channels
                     .iter()
-                    .any(|channel| channel.index == index && channel.has_usable_down())
+                    .any(|channel| channel.index == index && is_writable(channel))
             });
             if !still_writable {
                 *selected = channels
                     .iter()
-                    .find(|channel| channel.index == 0 && channel.has_usable_down())
-                    .or_else(|| channels.iter().find(|channel| channel.has_usable_down()))
+                    .find(|channel| channel.index == 0 && is_writable(channel))
+                    .or_else(|| channels.iter().find(|channel| is_writable(channel)))
                     .map(|channel| channel.index);
             }
             *selected
@@ -223,6 +240,7 @@ impl RttShared {
             snapshot.channels = channels;
             snapshot.automation_source_channel = automation_source_channel;
             snapshot.send_channel = send_channel;
+            snapshot.channel_claims = self.channel_claim_snapshot();
             snapshot.last_error = None;
         }
     }
@@ -316,6 +334,8 @@ impl RttShared {
             snapshot.phase = RttPhase::Idle;
             snapshot.automation_source_channel = None;
             snapshot.send_channel = None;
+            snapshot.observers.clear();
+            snapshot.channel_claims.clear();
         }
     }
 
@@ -339,6 +359,20 @@ impl RttShared {
                 dropped_chunks: 0,
                 dropped_bytes: 0,
             })
+    }
+
+    fn observer_bootstrap(&self, channel_index: u32) -> Vec<StoredRttChunk> {
+        self.history
+            .lock()
+            .ok()
+            .and_then(|history| {
+                history
+                    .channels
+                    .get(&channel_index)
+                    .map(|item| item.chunks.clone())
+            })
+            .map(|chunks| chunks.into_iter().collect())
+            .unwrap_or_default()
     }
 
     fn validate_channel_direction(
@@ -395,6 +429,7 @@ impl RttShared {
 
     fn set_send_channel(&self, channel_index: u32) -> Result<(), RttError> {
         self.validate_channel_direction(channel_index, false)?;
+        self.validate_user_write(channel_index)?;
         *self
             .send_channel
             .lock()
@@ -403,6 +438,162 @@ impl RttShared {
             snapshot.send_channel = Some(channel_index);
         }
         Ok(())
+    }
+
+    fn channel_claim_snapshot(&self) -> Vec<RttChannelClaim> {
+        self.channel_claims
+            .lock()
+            .map(|claims| {
+                claims
+                    .iter()
+                    .map(|(channel_index, owner)| RttChannelClaim {
+                        channel_index: *channel_index,
+                        owner: owner.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn validate_user_write(&self, channel_index: u32) -> Result<(), RttError> {
+        if let Some(owner) = self
+            .channel_claims
+            .lock()
+            .ok()
+            .and_then(|claims| claims.get(&channel_index).cloned())
+        {
+            return Err(RttError::new(
+                RttErrorCode::RttWriteFailed,
+                format!("RTT Down Channel {channel_index} 正由 {owner} 使用，不能作为通用发送目标"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn claim_down_channel(&self, channel_index: u32, owner: &str) -> Result<(), RttError> {
+        self.validate_channel_direction(channel_index, false)?;
+        {
+            let mut claims = self
+                .channel_claims
+                .lock()
+                .map_err(|error| RttError::backend(error.to_string()))?;
+            if let Some(existing) = claims.get(&channel_index) {
+                if existing != owner {
+                    return Err(RttError::new(
+                        RttErrorCode::RttWriteFailed,
+                        format!(
+                            "RTT Down Channel {channel_index} 已由 {existing} 占用，无法交给 {owner}"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+            claims.insert(channel_index, owner.to_string());
+        }
+
+        let channels = self.snapshot().channels;
+        let claims = self
+            .channel_claims
+            .lock()
+            .map(|claims| claims.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let replacement = channels
+            .iter()
+            .find(|channel| {
+                channel.index == 0 && channel.has_usable_down() && !claims.contains(&channel.index)
+            })
+            .or_else(|| {
+                channels
+                    .iter()
+                    .find(|channel| channel.has_usable_down() && !claims.contains(&channel.index))
+            })
+            .map(|channel| channel.index);
+        if let Ok(mut selected) = self.send_channel.lock() {
+            if selected.is_some_and(|current| current == channel_index) {
+                *selected = replacement;
+            }
+        }
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            if snapshot.send_channel == Some(channel_index) {
+                snapshot.send_channel = replacement;
+            }
+            snapshot.channel_claims = self.channel_claim_snapshot();
+        }
+        Ok(())
+    }
+
+    fn release_down_channel(&self, channel_index: u32, owner: &str) {
+        let removed = self
+            .channel_claims
+            .lock()
+            .map(|mut claims| {
+                if claims
+                    .get(&channel_index)
+                    .is_some_and(|value| value == owner)
+                {
+                    claims.remove(&channel_index);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if !removed {
+            return;
+        }
+        let channels = self.snapshot().channels;
+        let claims = self
+            .channel_claims
+            .lock()
+            .map(|claims| claims.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut selected_guard = match self.send_channel.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        if selected_guard.is_none() {
+            *selected_guard = channels
+                .iter()
+                .find(|channel| {
+                    channel.index == 0
+                        && channel.has_usable_down()
+                        && !claims.contains(&channel.index)
+                })
+                .or_else(|| {
+                    channels.iter().find(|channel| {
+                        channel.has_usable_down() && !claims.contains(&channel.index)
+                    })
+                })
+                .map(|channel| channel.index);
+        }
+        let selected = *selected_guard;
+        drop(selected_guard);
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.send_channel = selected;
+            snapshot.channel_claims = self.channel_claim_snapshot();
+        }
+    }
+
+    fn set_observers(&self, observers: Vec<RttObserverInfo>) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            snapshot.observers = observers;
+        }
+    }
+
+    fn subscribe_observer(
+        self: &Arc<Self>,
+        channel_index: u32,
+    ) -> Result<(ObservationSubscription<StoredRttChunk>, Arc<AtomicU64>), RttError> {
+        self.validate_channel_direction(channel_index, true)?;
+        let drops = Arc::new(AtomicU64::new(0));
+        let drop_counter = Arc::clone(&drops);
+        let subscription = self.raw_source.subscribe_filtered(
+            move |chunk| chunk.channel_index == channel_index,
+            move |_| {
+                drop_counter.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+        Ok((subscription, drops))
     }
 
     fn send_channel(&self) -> Result<u32, RttError> {
@@ -449,6 +640,9 @@ pub struct RttRuntime {
     worker: Mutex<Option<JoinHandle<()>>>,
     shutting_down: Arc<AtomicBool>,
     worker_exited: Arc<AtomicBool>,
+    systemview: Mutex<BTreeMap<u32, Arc<SystemViewRuntime>>>,
+    systemview_suppressed: Mutex<BTreeSet<u32>>,
+    observer_context: Mutex<Option<(AppHandle, String)>>,
     closed: AtomicBool,
 }
 
@@ -462,6 +656,9 @@ impl RttRuntime {
             worker: Mutex::new(None),
             shutting_down: Arc::new(AtomicBool::new(false)),
             worker_exited: Arc::new(AtomicBool::new(false)),
+            systemview: Mutex::new(BTreeMap::new()),
+            systemview_suppressed: Mutex::new(BTreeSet::new()),
+            observer_context: Mutex::new(None),
             closed: AtomicBool::new(false),
         }
     }
@@ -472,8 +669,16 @@ impl RttRuntime {
         }
         self.shutting_down.store(false, Ordering::Release);
         self.worker_exited.store(false, Ordering::Release);
+        if let Ok(mut suppressed) = self.systemview_suppressed.lock() {
+            suppressed.clear();
+        }
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
+        *self
+            .observer_context
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))? =
+            Some((app.clone(), session_id.to_string()));
         let context = WorkerContext {
             config: self.config.clone(),
             embedded_debug: Arc::clone(&self.embedded_debug),
@@ -503,7 +708,18 @@ impl RttRuntime {
             .attach_timeout
             .saturating_add(Duration::from_secs(15));
         match startup_rx.recv_timeout(startup_timeout) {
-            Ok(result) => result,
+            Ok(Ok(())) => {
+                if let Err(error) = self.sync_systemview_observers() {
+                    log::warn!(
+                        "RTT SystemView observer discovery failed: session={}, code={}, message={}",
+                        session_id,
+                        error.code.as_str(),
+                        error.message
+                    );
+                }
+                Ok(())
+            }
+            Ok(Err(error)) => Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.shutdown_inner(false);
                 Err(RttError::new(
@@ -535,6 +751,13 @@ impl RttRuntime {
     }
 
     pub fn write(&self, channel_index: u32, data: Vec<u8>) -> Result<usize, RttError> {
+        self.shared
+            .validate_channel_direction(channel_index, false)?;
+        self.shared.validate_user_write(channel_index)?;
+        self.write_internal(channel_index, data)
+    }
+
+    fn write_internal(&self, channel_index: u32, data: Vec<u8>) -> Result<usize, RttError> {
         if data.is_empty() {
             return Ok(0);
         }
@@ -574,9 +797,276 @@ impl RttRuntime {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         tx.try_send(WorkerCommand::RefreshChannels { reply: reply_tx })
             .map_err(|error| RttError::backend(format!("RTT 命令队列不可用: {error}")))?;
-        reply_rx
+        let channels = reply_rx
             .recv_timeout(CHANNEL_REFRESH_REPLY_TIMEOUT)
-            .map_err(|_| RttError::backend("刷新 RTT Channel 超时"))?
+            .map_err(|_| RttError::backend("刷新 RTT Channel 超时"))??;
+        if let Err(error) = self.sync_systemview_observers() {
+            log::warn!(
+                "RTT SystemView observer refresh failed: code={}, message={}",
+                error.code.as_str(),
+                error.message
+            );
+        }
+        Ok(channels)
+    }
+
+    pub fn systemview_attach(&self, channel_index: u32) -> Result<(), RttError> {
+        if let Ok(mut suppressed) = self.systemview_suppressed.lock() {
+            suppressed.remove(&channel_index);
+        }
+        self.start_systemview_observer(channel_index)
+    }
+
+    pub fn systemview_detach(&self, channel_index: u32) -> Result<(), RttError> {
+        self.shared
+            .validate_channel_direction(channel_index, true)?;
+        self.systemview_suppressed
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .insert(channel_index);
+        self.stop_systemview_observer(channel_index);
+        Ok(())
+    }
+
+    pub fn systemview_snapshot(&self, channel_index: u32) -> Result<SystemViewSnapshot, RttError> {
+        self.systemview_runtime(channel_index)
+            .map(|runtime| runtime.snapshot())
+    }
+
+    pub fn systemview_history(
+        &self,
+        channel_index: u32,
+        limit: usize,
+    ) -> Result<SystemViewHistoryResponse, RttError> {
+        self.systemview_runtime(channel_index)
+            .map(|runtime| runtime.history(limit))
+    }
+
+    pub fn systemview_control(
+        &self,
+        channel_index: u32,
+        control: SystemViewControl,
+    ) -> Result<(), RttError> {
+        self.systemview_runtime(channel_index)?;
+        let control_channel = self
+            .systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .values()
+            .find(|runtime| runtime.snapshot().control_available)
+            .map(|runtime| runtime.channel_index())
+            .ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttChannelNotFound,
+                    "当前 SystemView 观察器没有可用的协议控制 Down Channel",
+                )
+            })?;
+        self.write_internal(control_channel, control.bytes().to_vec())?;
+        Ok(())
+    }
+
+    pub fn systemview_clear(&self, channel_index: u32) -> Result<(), RttError> {
+        self.systemview_runtime(channel_index)?.clear();
+        Ok(())
+    }
+
+    fn systemview_runtime(&self, channel_index: u32) -> Result<Arc<SystemViewRuntime>, RttError> {
+        self.systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .get(&channel_index)
+            .cloned()
+            .ok_or_else(|| {
+                RttError::new(
+                    RttErrorCode::RttChannelNotFound,
+                    format!("RTT Channel {channel_index} 未启用 SystemView 观察器"),
+                )
+            })
+    }
+
+    fn sync_systemview_observers(&self) -> Result<(), RttError> {
+        let snapshot = self.shared.snapshot();
+        let existing = self
+            .systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for channel_index in existing {
+            let still_available = snapshot
+                .channels
+                .iter()
+                .any(|channel| channel.index == channel_index && channel.has_usable_up());
+            if !still_available {
+                self.stop_systemview_observer(channel_index);
+            }
+        }
+        for channel in &snapshot.channels {
+            let is_systemview = channel
+                .name
+                .as_deref()
+                .map(|name| {
+                    let normalized = name.trim().to_ascii_lowercase();
+                    normalized.contains("sysview") || normalized.contains("systemview")
+                })
+                .unwrap_or(false);
+            let suppressed = self
+                .systemview_suppressed
+                .lock()
+                .map(|suppressed| suppressed.contains(&channel.index))
+                .unwrap_or(false);
+            if is_systemview && channel.has_usable_up() && !suppressed {
+                if let Err(error) = self.start_systemview_observer(channel.index) {
+                    log::warn!(
+                        "SystemView auto attach skipped: channel={}, code={}, message={}",
+                        channel.index,
+                        error.code.as_str(),
+                        error.message
+                    );
+                }
+            }
+        }
+        self.rebalance_systemview_control();
+        Ok(())
+    }
+
+    fn start_systemview_observer(&self, channel_index: u32) -> Result<(), RttError> {
+        if self
+            .systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .contains_key(&channel_index)
+        {
+            return Ok(());
+        }
+        self.shared
+            .validate_channel_direction(channel_index, true)?;
+        let snapshot = self.shared.snapshot();
+        let (subscription, decoder_drops) = self.shared.subscribe_observer(channel_index)?;
+        // Subscribe before taking the history snapshot. Chunks published during the bootstrap
+        // window are therefore present in both places and are de-duplicated by RTT sequence in
+        // the SystemView runtime; no canonical bytes can fall into an attach-time gap.
+        let bootstrap = self.shared.observer_bootstrap(channel_index);
+        #[cfg(not(test))]
+        let presenter = {
+            let (app, session_id) = self
+                .observer_context
+                .lock()
+                .map_err(|error| RttError::backend(error.to_string()))?
+                .clone()
+                .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
+            worker::systemview_presenter(app, session_id)
+        };
+        #[cfg(test)]
+        let presenter = super::systemview::discard_presenter();
+
+        let runtime = match SystemViewRuntime::spawn(SystemViewSpawn {
+            presenter,
+            generation: snapshot.generation,
+            channel_index,
+            control_available: false,
+            bootstrap,
+            subscription,
+            decoder_dropped_chunks: decoder_drops,
+        }) {
+            Ok(runtime) => Arc::new(runtime),
+            Err(error) => return Err(RttError::backend(error)),
+        };
+        self.systemview
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .insert(channel_index, runtime);
+        self.rebalance_systemview_control();
+        // Attaching a semantic observer is passive. Starting/stopping trace changes target
+        // behavior and therefore remains an explicit user action through systemview_control.
+        Ok(())
+    }
+
+    fn stop_systemview_observer(&self, channel_index: u32) {
+        let runtime = self
+            .systemview
+            .lock()
+            .ok()
+            .and_then(|mut runtimes| runtimes.remove(&channel_index));
+        if let Some(runtime) = runtime {
+            runtime.shutdown();
+        }
+        self.shared
+            .release_down_channel(channel_index, "SystemView");
+        self.rebalance_systemview_control();
+    }
+
+    fn rebalance_systemview_control(&self) {
+        let runtimes = self
+            .systemview
+            .lock()
+            .map(|runtimes| runtimes.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let snapshot = self.shared.snapshot();
+        let mut candidates = runtimes
+            .iter()
+            .map(|runtime| runtime.channel_index())
+            .filter(|channel_index| {
+                snapshot
+                    .channels
+                    .iter()
+                    .any(|channel| channel.index == *channel_index && channel.has_usable_down())
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+
+        let mut controller = None;
+        for channel_index in candidates {
+            match self.shared.claim_down_channel(channel_index, "SystemView") {
+                Ok(()) => {
+                    controller = Some(channel_index);
+                    break;
+                }
+                Err(error) => {
+                    log::warn!(
+                        "SystemView control claim unavailable: channel={}, code={}, message={}",
+                        channel_index,
+                        error.code.as_str(),
+                        error.message
+                    );
+                }
+            }
+        }
+
+        // SystemView has one host-to-target command stream. Other observed Up channels remain
+        // passive semantic sources and must not unnecessarily reserve unrelated Down channels.
+        for runtime in &runtimes {
+            let channel_index = runtime.channel_index();
+            if controller != Some(channel_index) {
+                self.shared
+                    .release_down_channel(channel_index, "SystemView");
+            }
+            runtime.set_control_available(controller == Some(channel_index));
+        }
+        self.publish_observers();
+    }
+
+    fn publish_observers(&self) {
+        let observers = self
+            .systemview
+            .lock()
+            .map(|runtimes| {
+                let control_channel_index = runtimes
+                    .values()
+                    .find(|runtime| runtime.snapshot().control_available)
+                    .map(|runtime| runtime.channel_index());
+                runtimes
+                    .values()
+                    .map(|runtime| RttObserverInfo {
+                        kind: "systemview".to_string(),
+                        channel_index: runtime.channel_index(),
+                        control_channel_index,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.shared.set_observers(observers);
     }
 
     fn shutdown_inner(&self, permanent: bool) {
@@ -590,6 +1080,14 @@ impl RttRuntime {
             && matches!(self.shared.snapshot().phase, RttPhase::Faulted);
         if !preserve_faulted {
             self.shared.set_phase(RttPhase::Stopping);
+        }
+        let observer_channels = self
+            .systemview
+            .lock()
+            .map(|runtimes| runtimes.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for channel_index in observer_channels {
+            self.stop_systemview_observer(channel_index);
         }
         if let Ok(mut tx_slot) = self.command_tx.lock() {
             if let Some(tx) = tx_slot.take() {
@@ -613,8 +1111,11 @@ impl RttRuntime {
             }
         }
         self.shared.raw_source.close();
+        if let Ok(mut context) = self.observer_context.lock() {
+            *context = None;
+        }
         if !preserve_faulted {
-            self.shared.set_phase(RttPhase::Idle);
+            self.shared.set_stopped();
         }
     }
 }

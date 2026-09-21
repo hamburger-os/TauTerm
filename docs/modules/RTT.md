@@ -2,7 +2,7 @@
 
 ## 目标
 
-RTT 调试助手为嵌入式目标提供长期运行的 Real Time Transfer 会话，负责调试探针连接、RTT Control Block 定位、多 Up/Down Channel 收发、有限历史、Session Data Log 与 Terminal/Log/HEX 观察工作区。
+RTT 调试助手为嵌入式目标提供长期运行的 Real Time Transfer 会话，负责调试探针连接、RTT Control Block 定位、多 Up/Down Channel 收发、有限历史、Session Data Log，以及原始 Terminal/Log/HEX 与语义化 SystemView/RTOS Trace 观察工作区。
 
 RTT 是多通道目标内存通信机制，不等价于单个串口字节流。本模块使用 **Container Session + 插件私有 Runtime**，不把某个 RTT Channel 伪装成根 Session `DataPlane`；公共 Kernel 不解释 probe、Control Block 或 RTT Channel 语义。
 
@@ -34,13 +34,13 @@ probe-rs Session / short Core borrow
 RTT service lease + RTT state
    └──────── canonical RTT frames ──────────┘
                     │
-       ┌────────────┼─────────────┐
-       ▼            ▼             ▼
- bounded history  LogEngine   presentation batch
-                                  │
-                              runtime store
-                                  │
-                         Terminal / Log / HEX
+       ┌────────────┼───────────────┬────────────────┐
+       ▼            ▼               ▼                ▼
+ bounded history  LogEngine   presentation batch  semantic observers
+                                  │                │
+                              runtime store        └─ SystemView decoder
+                                  │                     │
+                         Terminal / Log / HEX      RTOS Trace / Events / Raw
 ```
 
 `RttRuntime` 通过 `SessionService` 挂到 Container Session，并由 RTT 插件自己的 `SessionRuntimeRegistry<RttRuntime>` 建立弱索引。SessionStore 仍是用户可见连接生命周期的唯一权威所有者；RTT Runtime 只持有插件私有资源与状态。
@@ -93,11 +93,14 @@ RTT 的连接建立不是黑盒操作。System Log 必须记录足够的结构�
 
 RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同时具有 Up/Down。
 
-工作区中的当前观察 Channel 与 SendBar 的发送 Channel 是两个独立状态。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
+工作区中的当前观察 Channel、Automation source 与 SendBar 的发送 Channel 是三个独立状态。切换观察 Channel 只改变 viewer，不再隐式改写正在使用或下一次订阅使用的 Automation source。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
 
-- **观察 / Automation source**：必须有 Up，用于 Terminal/Log/HEX 与 Auto Reply/Lua `on_data`；
+- **View Channel**：只负责当前工作区展示；有 Up 时可进入原始 Terminal/Log/HEX，语义观察器存在时进入对应高级视图；
+- **Automation source**：必须有 Up，由 Rust Runtime 独立维护；Auto Reply/Lua 订阅创建时固定该 source，不随之后的 View Channel 切换；
 - **Send target**：必须有 Down，由公共 SendBar 顶部 `RttSendTarget` 选择；
 - Terminal 模式的键盘输入直接写当前 Terminal 对应的 Down Channel，这是终端交互，不是第二套发送栏。
+
+上层双向协议可以声明 **Down Channel claim**。被 SystemView 等协议观察器占用的 Down Channel 不再进入公共 SendBar/Automation 通用发送目标，也拒绝普通 `rtt_write`，避免文本或脚本数据污染协议控制流；协议自身通过 Runtime 内部控制路径写入。
 
 RTT 启用 TauTerm 公共 SendBar。Basic/Command/Auto Reply/Script 继续使用统一 SendBar 产品体验；底层通过协议无关 `AutomationIo` 接入，而不是要求 RTT 根 Session 伪造 `DataPlane`。Lua 的 `send()` 使用当前 Down target，`send_to("rtt:<index>", ...)` 可显式指定 Channel；接收订阅来自当前 Up source。Send target 行是否存在由插件运行态统一判定：只有实际存在可用 Down Channel 时才渲染并计入 SendBar 高度，断连、连接失败或没有可写方向时不预留隐藏目标栏空间。
 
@@ -128,11 +131,11 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history loss。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
-canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。现有 AutomationRx 已直接订阅该 canonical source，并在订阅时固定 Up Channel；未来 SystemView/defmt 等 decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT overflow、host acquisition loss、decoder/subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
+canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition/history loss、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
 ## 前端运行态与后台生命周期
 
-RTT 的 snapshot、generation、Channel buffer、当前观察 Channel与 view mode 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中；Automation source 与 Send target 则由 Rust Runtime snapshot 作为唯一权威状态，前端只镜像后端确认后的选择，不能自行维护第二份发送目标真值。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。前端缓存同时执行 per-channel 与 per-session 总预算，Log 视图只挂载有界的近期 chunk，避免多 Channel 长时运行把 WebView 内存和 DOM 数量按 Channel 数线性放大。
+RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、view mode 与 SystemView presentation cache 由插件级 runtime store 持有，不散落在 `RttSessionView` 的临时 React state 中；Automation source、Send target、semantic observer 与 Channel claim 则由 Rust Runtime snapshot 作为唯一权威状态，前端只镜像后端确认后的选择，不能自行维护第二份发送目标真值。切换 Session/Pane 不停止 worker；切回来仍看到同一进程内 runtime 的状态与有限历史。前端缓存同时执行 per-channel 与 per-session 总预算，Log 视图只挂载有界的近期 chunk，避免多 Channel 长时运行把 WebView 内存和 DOM 数量按 Channel 数线性放大。
 
 同一 Saved Session 重连会创建新的 generation；新 generation 到达时清空旧 presentation cache 并重新同步 source/target，禁止旧事件污染新 runtime。
 
@@ -148,13 +151,27 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 连接页使用统一控件高度/矩阵布局。常用项只展示连接方式、probe、target、wire protocol、固件符号文件和 RTT 定位；speed/core 收入高级设置。工作区复用 Workspace Content surface，不再拥有第二套发送框或额外玻璃 Card。
 
-宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。viewer 只包含 Terminal / Log / HEX。
+宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。RTOS Trace 主视图包含采集控制、目标端/解码端 loss、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，而不是 host acquisition timestamp。
+
+## SystemView / RTOS Trace
+
+SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根据 Channel metadata 中的 `SysView` / `SystemView` 名称自动挂载，也提供显式 attach 命令用于 metadata 不完整或自定义命名场景。挂载 observer 本身是被动行为，不自动向目标发送 START；开始/停止 Trace 必须由用户显式操作。每个 SystemView observer：
+
+- 只订阅指定 RTT Up Channel 的 canonical `StoredRttChunk`，不存在第二个 probe/RTT reader；
+- 使用 Rust streaming decoder 处理跨 chunk 半包、变长整数、标准/长度包、同步前缀与 target timestamp delta；
+- 解码 Trace Start/Stop、Overflow、ISR、Task Create/Info/Run/Ready、Idle、Timer、System Description、Init、Marker 等基础事件，并保留未知/用户事件；
+- 维护有界事件历史、任务运行周期与切换次数，再以批量事件和 snapshot 发送 WebView；
+- 支持同一 RTT Session 同时存在多个 observer，因此数据模型不把 SystemView 写死为“唯一 Channel”，可自然扩展到多核/多 trace source；
+- 多 observer 场景只选择一个可用的同索引 Down Channel 作为共享 SystemView controller，并只对该通道声明 `SystemView` claim；所有 observer 的 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME 都经该内部控制路径发送，其余 observer 保持纯 Up 被动语义，避免无谓占用无关 Down Channel；完全没有可用 Down 时仍可被动解析已经在运行的 trace；
+- 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计。
+
+前端 Canvas 时间线只消费已经解码的 target-time event model；React 不承担二进制协议解码，也不为每个 trace event 创建时间线 DOM。Events 视图仅挂载有界近期事件，Raw 视图继续读取原 RTT 历史用于协议诊断。
 
 ## 扩展边界
 
-SuperWatch/实时变量和 SystemView/RTOS Trace 会共享“probe/target 所有权、固件符号、调度、原始观测事件与丢失语义”，但它们不是 RTT 协议本身。native probe 所有权已经提升到共享 Embedded Debug runtime：RTT 只是其中一个 service，不能再创建插件私有 probe worker。
+SuperWatch/实时变量和 SystemView/RTOS Trace 共享“probe/target 所有权、固件符号、调度、观测/loss 模型”，但数据源不同。native probe 所有权已经提升到共享 Embedded Debug runtime：RTT 只是其中一个 service，不能再创建插件私有 probe worker。
 
-未来直接内存采样必须通过同一个 `EmbeddedDebugManager` 获取 target worker，并使用独立 service lease/公平的短操作调度；SystemView/defmt 则订阅 RTT canonical raw source，不允许建立第二个 RTT reader。变量/DWARF/SVD 解析、采样策略和 Trace decoder 都留在各自 observation domain，不能塞进 RTT backend 或公共 Kernel。
+直接内存采样必须通过同一个 `EmbeddedDebugManager` 获取 target worker，并使用独立 service lease/公平的短操作调度；SystemView/defmt/自定义 RTT telemetry 则订阅 RTT canonical raw source，不允许建立第二个 RTT reader。变量/DWARF/SVD 解析、采样策略和 Trace decoder 都留在各自 observation domain，不能塞进 RTT backend 或公共 Kernel。
 
 ## 代码锚点
 

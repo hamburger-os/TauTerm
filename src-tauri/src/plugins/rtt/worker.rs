@@ -3,6 +3,8 @@ use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttChunkDto, RttPhase, RttReadChunk, StoredRttChunk};
 use super::runtime::RttShared;
+#[cfg(not(test))]
+use super::systemview::{SystemViewPresentation, SystemViewPresenter};
 use crate::embedded_debug::observation::now_ms;
 use crate::embedded_debug::runtime::EmbeddedDebugManager;
 use crate::kernel::log_engine::{
@@ -36,6 +38,37 @@ pub(super) enum WorkerCommand {
     Shutdown {
         reply: mpsc::SyncSender<()>,
     },
+}
+
+#[cfg(not(test))]
+pub(super) fn systemview_presenter(app: AppHandle, session_id: String) -> SystemViewPresenter {
+    Arc::new(move |presentation| match presentation {
+        SystemViewPresentation::Batch { events, snapshot } => {
+            let _ = app.emit(
+                "rtt-systemview-event",
+                json!({
+                    "kind": "batch",
+                    "session_id": session_id,
+                    "generation": snapshot.generation,
+                    "channel_index": snapshot.channel_index,
+                    "events": events,
+                    "snapshot": snapshot,
+                }),
+            );
+        }
+        SystemViewPresentation::Snapshot { snapshot } => {
+            let _ = app.emit(
+                "rtt-systemview-event",
+                json!({
+                    "kind": "snapshot",
+                    "session_id": session_id,
+                    "generation": snapshot.generation,
+                    "channel_index": snapshot.channel_index,
+                    "snapshot": snapshot,
+                }),
+            );
+        }
+    })
 }
 
 pub(super) struct WorkerContext {

@@ -5,20 +5,28 @@ import { useSession } from "../../context/SessionContext";
 import { usePluginRuntime } from "../../core/usePluginRuntime";
 import Icon from "../../components/common/Icon";
 import RttTerminalView from "./RttTerminalView";
+import SystemViewTraceView from "./SystemViewTraceView";
 import {
   base64ToBytes,
   formatBytes,
   hasRttChannelIssues,
   isUsableRttDirection,
   rttChannelIssues,
+  systemViewObserver,
   type RttChannelInfo,
   type RttChunk,
   type RttViewMode,
 } from "./model";
 import {
+  attachSystemView,
+  clearSystemView,
+  controlSystemView,
+  detachSystemView,
   ensureRttHistory,
+  ensureSystemViewHistory,
   refreshRttRuntime,
   rttChannelChunks,
+  selectRttAutomationSource,
   selectRttChannel,
   sendRttTerminalData,
   setRttViewMode,
@@ -95,9 +103,18 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const usableUp = isUsableRttDirection(channel?.up);
   const usableDown = isUsableRttDirection(channel?.down);
   const chunks = rttChannelChunks(runtime, selectedChannel);
+  const observer = selectedChannel == null ? null : systemViewObserver(snapshot, selectedChannel);
+  const systemViewState = selectedChannel == null ? undefined : runtime.systemview[selectedChannel];
+  const configuredMode = selectedChannel == null ? undefined : runtime.viewModes[selectedChannel];
   const mode: RttViewMode = selectedChannel == null
     ? "terminal"
-    : (runtime.viewModes[selectedChannel] ?? (selectedChannel === 0 ? "terminal" : "log"));
+    : observer
+      ? (configuredMode === "trace" || configuredMode === "events" || configuredMode === "raw"
+        ? configuredMode
+        : "trace")
+      : (configuredMode === "terminal" || configuredMode === "log" || configuredMode === "hex"
+        ? configuredMode
+        : (selectedChannel === 0 ? "terminal" : "log"));
 
   useEffect(() => {
     if (!runtimeReadable) return;
@@ -109,7 +126,12 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
     void ensureRttHistory(sessionId, selectedChannel);
   }, [runtimeReadable, selectedChannel, sessionId, snapshot?.generation]);
 
-  const hex = useMemo(() => mode === "hex" ? formatHex(chunks) : "", [chunks, mode]);
+  useEffect(() => {
+    if (!runtimeReadable || selectedChannel == null || !observer) return;
+    void ensureSystemViewHistory(sessionId, selectedChannel);
+  }, [observer, runtimeReadable, selectedChannel, sessionId, snapshot?.generation]);
+
+  const hex = useMemo(() => mode === "hex" || mode === "raw" ? formatHex(chunks) : "", [chunks, mode]);
   const logRows = useMemo(
     () => mode === "log" ? decodeLogChunks(chunks.slice(-LOG_VIEW_MAX_CHUNKS)) : [],
     [chunks, mode],
@@ -198,6 +220,9 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               <span className={styles.direction}>
                 {isUsableRttDirection(item.up) ? "↑" : ""}
                 {isUsableRttDirection(item.down) ? "↓" : ""}
+                {snapshot?.automation_source_channel === item.index ? (
+                  <span className={styles.automationSourceMark} title={t("rtt.automationSource")}>A</span>
+                ) : null}
                 {hasRttChannelIssues(item) ? <span className={styles.channelWarning}>⚠</span> : null}
               </span>
             </button>
@@ -216,9 +241,28 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     {usableDown ? "Down" : ""}
                     {channelIssues.length > 0 ? ` · ${t("rtt.channelDegraded")}` : ""}
                   </span>
+                  {usableUp && (
+                    <button
+                      type="button"
+                      className={`liquid-glass-button ${styles.automationButton}`}
+                      aria-pressed={snapshot?.automation_source_channel === channel.index}
+                      disabled={!connected || snapshot?.automation_source_channel === channel.index}
+                      onClick={() => void selectRttAutomationSource(sessionId, channel.index)}
+                      title={snapshot?.automation_source_channel === channel.index
+                        ? t("rtt.automationSource")
+                        : t("rtt.setAutomationSource")}
+                    >
+                      {snapshot?.automation_source_channel === channel.index
+                        ? t("rtt.automationSource")
+                        : t("rtt.setAutomationSource")}
+                    </button>
+                  )}
                 </div>
                 <div className={`${styles.modeTabs} liquid-selector-strip`}>
-                  {(["terminal", "log", "hex"] as RttViewMode[]).map(item => (
+                  {(observer
+                    ? (["trace", "events", "raw"] as RttViewMode[])
+                    : (["terminal", "log", "hex"] as RttViewMode[])
+                  ).map(item => (
                     <button
                       key={item}
                       type="button"
@@ -229,6 +273,30 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                       {t(`rtt.${item}`)}
                     </button>
                   ))}
+                  {!observer && usableUp && (
+                    <button
+                      type="button"
+                      className="liquid-glass-button liquid-selector-button"
+                      title={t("rtt.enableTraceHint")}
+                      onClick={() => {
+                        void attachSystemView(sessionId, channel.index).then(attached => {
+                          if (attached) setRttViewMode(sessionId, channel.index, "trace");
+                        });
+                      }}
+                    >
+                      {t("rtt.enableTrace")}
+                    </button>
+                  )}
+                  {observer && (
+                    <button
+                      type="button"
+                      className="liquid-glass-button liquid-selector-button"
+                      title={t("rtt.disableTraceHint")}
+                      onClick={() => void detachSystemView(sessionId, channel.index)}
+                    >
+                      {t("rtt.disableTrace")}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -244,6 +312,16 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                   ) : (
                     <div className={styles.empty}>{t("rtt.noUp")}</div>
                   )
+                ) : observer && (mode === "trace" || mode === "events") ? (
+                  <SystemViewTraceView
+                    state={systemViewState}
+                    mode={mode}
+                    controlAvailable={observer.control_channel_index != null}
+                    onStart={() => void controlSystemView(sessionId, channel.index, "start")}
+                    onStop={() => void controlSystemView(sessionId, channel.index, "stop")}
+                    onRefresh={() => void controlSystemView(sessionId, channel.index, "refresh")}
+                    onClear={() => void clearSystemView(sessionId, channel.index)}
+                  />
                 ) : mode === "terminal" ? (
                   <RttTerminalView
                     key={`${snapshot?.generation ?? 0}:${channel.index}`}
