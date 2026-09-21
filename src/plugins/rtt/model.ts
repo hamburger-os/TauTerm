@@ -157,6 +157,7 @@ export interface SystemViewSnapshot {
   decoder_dropped_chunks: number;
   decoder_errors: number;
   presentation_dropped_events: number;
+  cleared_through_sequence: number;
   sys_freq_hz?: number | null;
   cpu_freq_hz?: number | null;
   ram_base?: number | null;
