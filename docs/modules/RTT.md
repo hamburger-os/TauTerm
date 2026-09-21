@@ -93,7 +93,7 @@ RTT 的连接建立不是黑盒操作。System Log 必须记录足够的结构�
 
 RTT Up 与 Down 是独立方向。同一 index 可以仅 Up、仅 Down，或同时具有 Up/Down。
 
-工作区中的当前观察 Channel、Automation source 与 SendBar 的发送 Channel 是三个独立状态。切换观察 Channel 只改变 viewer，不再隐式改写正在使用或下一次订阅使用的 Automation source。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation source 或发送目标：
+工作区中的当前观察 Channel、Automation receive source 与 SendBar 的发送 Channel 是三个独立状态。切换观察 Channel 只改变 viewer，不再隐式改写正在使用或下一次订阅使用的 Automation receive source。无效方向仍在 Channel rail 中显示为诊断项，但不会成为观察源、Automation receive source 或发送目标：
 
 - **View Channel**：只负责当前工作区展示；有 Up 时可进入原始 Terminal/Log/HEX，语义观察器存在时进入对应高级视图；
 - **Automation receive source**：必须有 Up，由 Rust Runtime 独立维护；Auto Reply/Lua 订阅创建时固定该 source，不随之后的 View Channel 切换。普通 RTT 工作区仅在存在多个可选 Up Channel 时于公共 TargetBar 暴露该选择，SystemView 等语义观察器不作为普通文本自动化来源；
@@ -131,7 +131,7 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history eviction，这属于回放保留窗口前移，不属于采集丢失，因此不作为持续黄色告警展示。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
-canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition/history loss、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
+canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition loss、history eviction、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
 ## 前端运行态与后台生命周期
 
