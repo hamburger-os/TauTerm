@@ -68,6 +68,7 @@ pub struct SystemViewSnapshot {
     pub ram_base: Option<u32>,
     pub id_shift: Option<u32>,
     pub system_description: Vec<String>,
+    pub window_start_cycles: u64,
     pub last_target_cycles: u64,
     pub tasks: Vec<SystemViewTaskSnapshot>,
 }
@@ -133,8 +134,11 @@ struct TraceState {
     ram_base: Option<u32>,
     id_shift: Option<u32>,
     system_description: Vec<String>,
+    window_start_cycles: u64,
     last_target_cycles: u64,
     active_task: Option<(u32, u64)>,
+    interrupted_task: Option<u32>,
+    isr_depth: u32,
     tasks: BTreeMap<u32, TaskState>,
     events: VecDeque<SystemViewEvent>,
     next_event_sequence: u64,
@@ -158,21 +162,23 @@ impl TraceState {
             ram_base: None,
             id_shift: None,
             system_description: Vec::new(),
+            window_start_cycles: 0,
             last_target_cycles: 0,
             active_task: None,
+            interrupted_task: None,
+            isr_depth: 0,
             tasks: BTreeMap::new(),
             events: VecDeque::new(),
             next_event_sequence: 1,
         }
     }
 
-    fn close_active_task(&mut self, at_cycles: u64) {
-        let Some((task_id, started_at)) = self.active_task.take() else {
-            return;
-        };
+    fn close_active_task(&mut self, at_cycles: u64) -> Option<u32> {
+        let (task_id, started_at) = self.active_task.take()?;
         let elapsed = at_cycles.saturating_sub(started_at);
         let task = self.tasks.entry(task_id).or_default();
         task.runtime_cycles = task.runtime_cycles.saturating_add(elapsed);
+        Some(task_id)
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
@@ -192,12 +198,26 @@ impl TraceState {
                 self.target_dropped_events = self.target_dropped_events.saturating_add(dropped);
                 value = Some(dropped);
             }
-            2 | 6 | 8 | 15 | 16 | 19 | 29 => {
+            2 => {
                 context_id = packet.fields.first().copied();
+                if self.isr_depth == 0 {
+                    self.interrupted_task = self.close_active_task(self.last_target_cycles);
+                }
+                self.isr_depth = self.isr_depth.saturating_add(1);
+            }
+            3 => {
+                self.isr_depth = self.isr_depth.saturating_sub(1);
+                if self.isr_depth == 0 {
+                    if let Some(task_id) = self.interrupted_task.take() {
+                        self.active_task = Some((task_id, self.last_target_cycles));
+                    }
+                }
             }
             4 => {
                 if let Some(task_id) = packet.fields.first().copied() {
                     self.close_active_task(self.last_target_cycles);
+                    self.interrupted_task = None;
+                    self.isr_depth = 0;
                     let task = self.tasks.entry(task_id).or_default();
                     task.switches = task.switches.saturating_add(1);
                     self.active_task = Some((task_id, self.last_target_cycles));
@@ -206,6 +226,10 @@ impl TraceState {
             }
             5 | 17 => {
                 self.close_active_task(self.last_target_cycles);
+                self.interrupted_task = None;
+            }
+            6 | 8 | 15 | 16 | 19 | 29 => {
+                context_id = packet.fields.first().copied();
             }
             7 => {
                 context_id = packet.fields.first().copied();
@@ -226,6 +250,8 @@ impl TraceState {
             }
             11 => {
                 self.close_active_task(self.last_target_cycles);
+                self.interrupted_task = None;
+                self.isr_depth = 0;
                 self.phase = SystemViewPhase::Stopped;
             }
             12 => {
@@ -247,6 +273,10 @@ impl TraceState {
                         self.system_description.push(description.clone());
                     }
                 }
+            }
+            18 => {
+                self.isr_depth = 0;
+                self.interrupted_task = None;
             }
             21 => {
                 context_id = packet.fields.first().copied();
@@ -348,6 +378,7 @@ impl TraceState {
             ram_base: self.ram_base,
             id_shift: self.id_shift,
             system_description: self.system_description.clone(),
+            window_start_cycles: self.window_start_cycles,
             last_target_cycles: self.last_target_cycles,
             tasks,
         }
@@ -367,6 +398,8 @@ impl TraceState {
         let phase = self.phase;
         let last_target_cycles = self.last_target_cycles;
         let active_task_id = self.active_task.map(|(task_id, _)| task_id);
+        let interrupted_task = self.interrupted_task;
+        let isr_depth = self.isr_depth;
         let task_metadata = self
             .tasks
             .iter()
@@ -392,7 +425,10 @@ impl TraceState {
         self.cleared_through_sequence = self.next_event_sequence.saturating_sub(1);
         self.tasks = task_metadata;
         self.active_task = active_task_id.map(|task_id| (task_id, last_target_cycles));
+        self.interrupted_task = interrupted_task;
+        self.isr_depth = isr_depth;
         self.phase = phase;
+        self.window_start_cycles = last_target_cycles;
         self.last_target_cycles = last_target_cycles;
     }
 }
@@ -460,6 +496,7 @@ impl SystemViewShared {
                 ram_base: None,
                 id_shift: None,
                 system_description: Vec::new(),
+                window_start_cycles: 0,
                 last_target_cycles: 0,
                 tasks: Vec::new(),
             })
@@ -1146,5 +1183,50 @@ mod tests {
         assert_eq!(snapshot.tasks.len(), 1);
         assert_eq!(snapshot.tasks[0].name.as_deref(), Some("worker"));
         assert_eq!(snapshot.tasks[0].runtime_cycles, 0);
+    }
+
+    #[test]
+    fn task_runtime_excludes_nested_isr_time() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 10,
+        });
+        state.apply(ParsedPacket {
+            event_id: 2,
+            fields: vec![15],
+            text: None,
+            delta_cycles: 20,
+        });
+        state.apply(ParsedPacket {
+            event_id: 2,
+            fields: vec![16],
+            text: None,
+            delta_cycles: 5,
+        });
+        state.apply(ParsedPacket {
+            event_id: 3,
+            fields: Vec::new(),
+            text: None,
+            delta_cycles: 7,
+        });
+        state.apply(ParsedPacket {
+            event_id: 3,
+            fields: Vec::new(),
+            text: None,
+            delta_cycles: 8,
+        });
+        state.apply(ParsedPacket {
+            event_id: 5,
+            fields: Vec::new(),
+            text: None,
+            delta_cycles: 30,
+        });
+
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.tasks[0].runtime_cycles, 50);
+        assert_eq!(snapshot.last_target_cycles, 80);
     }
 }
