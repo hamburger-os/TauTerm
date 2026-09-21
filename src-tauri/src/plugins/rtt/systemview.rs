@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+#[cfg(not(test))]
+use tauri::Emitter;
 
 const MAX_EVENT_HISTORY: usize = 4096;
 const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
@@ -689,32 +691,13 @@ fn run_decoder(
         if last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL && !pending.is_empty() {
             let events = pending.drain(..).collect::<Vec<_>>();
             let snapshot = shared.snapshot();
-            let _ = app.emit(
-                "rtt-systemview-event",
-                serde_json::json!({
-                    "kind": "batch",
-                    "session_id": session_id,
-                    "generation": snapshot.generation,
-                    "channel_index": snapshot.channel_index,
-                    "events": events,
-                    "snapshot": snapshot,
-                }),
-            );
+            emit_batch(&app, &session_id, snapshot, events);
             last_flush = Instant::now();
             last_snapshot = Instant::now();
             changed = false;
         } else if changed && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
             let snapshot = shared.snapshot();
-            let _ = app.emit(
-                "rtt-systemview-event",
-                serde_json::json!({
-                    "kind": "snapshot",
-                    "session_id": session_id,
-                    "generation": snapshot.generation,
-                    "channel_index": snapshot.channel_index,
-                    "snapshot": snapshot,
-                }),
-            );
+            emit_snapshot(&app, &session_id, snapshot);
             last_snapshot = Instant::now();
             changed = false;
         }
@@ -722,19 +705,60 @@ fn run_decoder(
 
     if !pending.is_empty() {
         let snapshot = shared.snapshot();
-        let _ = app.emit(
-            "rtt-systemview-event",
-            serde_json::json!({
-                "kind": "batch",
-                "session_id": session_id,
-                "generation": snapshot.generation,
-                "channel_index": snapshot.channel_index,
-                "events": pending.drain(..).collect::<Vec<_>>(),
-                "snapshot": snapshot,
-            }),
+        emit_batch(
+            &app,
+            &session_id,
+            snapshot,
+            pending.drain(..).collect::<Vec<_>>(),
         );
     }
 }
+
+#[cfg(not(test))]
+fn emit_batch(
+    app: &AppHandle,
+    session_id: &str,
+    snapshot: SystemViewSnapshot,
+    events: Vec<SystemViewEvent>,
+) {
+    let _ = app.emit(
+        "rtt-systemview-event",
+        serde_json::json!({
+            "kind": "batch",
+            "session_id": session_id,
+            "generation": snapshot.generation,
+            "channel_index": snapshot.channel_index,
+            "events": events,
+            "snapshot": snapshot,
+        }),
+    );
+}
+
+#[cfg(test)]
+fn emit_batch(
+    _app: &AppHandle,
+    _session_id: &str,
+    _snapshot: SystemViewSnapshot,
+    _events: Vec<SystemViewEvent>,
+) {
+}
+
+#[cfg(not(test))]
+fn emit_snapshot(app: &AppHandle, session_id: &str, snapshot: SystemViewSnapshot) {
+    let _ = app.emit(
+        "rtt-systemview-event",
+        serde_json::json!({
+            "kind": "snapshot",
+            "session_id": session_id,
+            "generation": snapshot.generation,
+            "channel_index": snapshot.channel_index,
+            "snapshot": snapshot,
+        }),
+    );
+}
+
+#[cfg(test)]
+fn emit_snapshot(_app: &AppHandle, _session_id: &str, _snapshot: SystemViewSnapshot) {}
 
 #[derive(Debug, Clone)]
 struct ParsedPacket {
@@ -1077,13 +1101,7 @@ fn event_kind(event_id: u32) -> &'static str {
     }
 }
 
-// These protocol/state tests are platform-independent and run on Linux/macOS. On Windows,
-// referencing this mixed protocol/runtime module from libtest makes the otherwise headless test
-// executable retain Tauri's native TaskDialog path; Cargo libtest binaries have no application
-// manifest, so the loader binds comctl32 v5 and fails before the harness starts. Windows still
-// compiles the full module under strict Clippy and exercises the real Tauri application in the
-// dedicated Runtime E2E workflow.
-#[cfg(all(test, not(target_os = "windows")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
