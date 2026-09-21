@@ -278,8 +278,8 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                       className="liquid-glass-button liquid-selector-button"
                       title={t("rtt.enableTraceHint")}
                       onClick={() => {
-                        void attachSystemView(sessionId, channel.index).then(() => {
-                          setRttViewMode(sessionId, channel.index, "trace");
+                        void attachSystemView(sessionId, channel.index).then(attached => {
+                          if (attached) setRttViewMode(sessionId, channel.index, "trace");
                         });
                       }}
                     >
