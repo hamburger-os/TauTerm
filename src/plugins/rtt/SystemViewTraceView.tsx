@@ -11,6 +11,7 @@ const MAX_TASK_LANES = 10;
 interface Props {
   state: RttSystemViewChannelState | undefined;
   mode: "trace" | "events";
+  controlAvailable: boolean;
   onStart: () => void;
   onStop: () => void;
   onRefresh: () => void;
@@ -38,10 +39,18 @@ function eventLabel(event: SystemViewEvent): string {
   return detail ? event.kind + " · " + detail : event.kind;
 }
 
+interface TimelineLabels {
+  waiting: string;
+  targetTime: string;
+  isr: string;
+  idle: string;
+}
+
 function drawTimeline(
   canvas: HTMLCanvasElement,
   events: readonly SystemViewEvent[],
   snapshot: SystemViewSnapshot | null,
+  labels: TimelineLabels,
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -59,7 +68,7 @@ function drawTimeline(
   if (visible.length === 0) {
     ctx.fillStyle = textMuted;
     ctx.font = "24px sans-serif";
-    ctx.fillText("Waiting for SystemView events...", 36, 56);
+    ctx.fillText(labels.waiting, 36, 56);
     return;
   }
 
@@ -80,7 +89,7 @@ function drawTimeline(
   ctx.lineWidth = 1;
   ctx.fillStyle = textMuted;
   ctx.font = "18px sans-serif";
-  ctx.fillText("Target time", left, 24);
+  ctx.fillText(labels.targetTime, left, 24);
 
   for (let index = 0; index < tasks.length; index += 1) {
     const y = top + index * laneHeight;
@@ -98,8 +107,8 @@ function drawTimeline(
   const irqY = top + irqLane * laneHeight;
   const idleY = top + idleLane * laneHeight;
   ctx.fillStyle = textPrimary;
-  ctx.fillText("ISR", 12, irqY + laneHeight * 0.68);
-  ctx.fillText("Idle", 12, idleY + laneHeight * 0.68);
+  ctx.fillText(labels.isr, 12, irqY + laneHeight * 0.68);
+  ctx.fillText(labels.idle, 12, idleY + laneHeight * 0.68);
 
   let activeTask: { id: number; start: number } | null = null;
   let interruptedTaskId: number | null = null;
@@ -190,6 +199,7 @@ function drawTimeline(
 export default function SystemViewTraceView({
   state,
   mode,
+  controlAvailable,
   onStart,
   onStop,
   onRefresh,
@@ -202,8 +212,13 @@ export default function SystemViewTraceView({
 
   useEffect(() => {
     if (mode !== "trace" || !canvasRef.current) return;
-    drawTimeline(canvasRef.current, events, snapshot);
-  }, [events, mode, snapshot]);
+    drawTimeline(canvasRef.current, events, snapshot, {
+      waiting: t("rtt.traceWaiting"),
+      targetTime: t("rtt.traceTargetTime"),
+      isr: t("rtt.traceIsr"),
+      idle: t("rtt.traceIdleLane"),
+    });
+  }, [events, mode, snapshot, t]);
 
   const visibleEvents = useMemo(() => events.slice(-MAX_EVENT_ROWS).reverse(), [events]);
   const windowCycles = useMemo(() => {
@@ -219,16 +234,22 @@ export default function SystemViewTraceView({
             className={styles.stateDot + (snapshot?.phase === "recording" ? " " + styles.recording : "")}
             aria-hidden="true"
           />
-          <strong>{snapshot?.phase === "recording" ? t("rtt.traceRecording") : t("rtt.traceStopped")}</strong>
+          <strong>
+            {snapshot?.phase === "recording"
+              ? t("rtt.traceRecording")
+              : snapshot?.phase === "stopped"
+                ? t("rtt.traceStopped")
+                : t("rtt.traceIdle")}
+          </strong>
         </div>
         <div className={styles.actions}>
-          <button type="button" className="liquid-glass-button" disabled={!snapshot?.control_available || snapshot?.phase === "recording"} onClick={onStart}>
+          <button type="button" className="liquid-glass-button" disabled={!controlAvailable || snapshot?.phase === "recording"} onClick={onStart}>
             {t("rtt.traceStart")}
           </button>
-          <button type="button" className="liquid-glass-button" disabled={!snapshot?.control_available || snapshot?.phase !== "recording"} onClick={onStop}>
+          <button type="button" className="liquid-glass-button" disabled={!controlAvailable || snapshot?.phase !== "recording"} onClick={onStop}>
             {t("rtt.traceStop")}
           </button>
-          <button type="button" className="liquid-glass-button" onClick={onRefresh}>{t("rtt.traceRefresh")}</button>
+          <button type="button" className="liquid-glass-button" disabled={!controlAvailable} onClick={onRefresh}>{t("rtt.traceRefresh")}</button>
           <button type="button" className="liquid-glass-button" onClick={onClear}>{t("rtt.traceClear")}</button>
         </div>
       </div>
