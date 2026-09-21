@@ -110,7 +110,8 @@ function drawTimeline(
   ctx.fillText(labels.isr, 12, irqY + laneHeight * 0.68);
   ctx.fillText(labels.idle, 12, idleY + laneHeight * 0.68);
 
-  let activeTask: { id: number; start: number } | null = null;
+  let activeTaskId: number | null = null;
+  let activeTaskStart = 0;
   let interruptedTaskId: number | null = null;
   const taskIntervals: Array<{ id: number; start: number; end: number }> = [];
   let irqDepth = 0;
@@ -120,15 +121,20 @@ function drawTimeline(
   const idleIntervals: Array<{ start: number; end: number }> = [];
 
   const closeTask = (end: number) => {
-    if (!activeTask) return;
-    if (taskIds.has(activeTask.id)) taskIntervals.push({ id: activeTask.id, start: activeTask.start, end });
-    activeTask = null;
+    if (activeTaskId == null) return;
+    if (taskIds.has(activeTaskId)) {
+      taskIntervals.push({ id: activeTaskId, start: activeTaskStart, end });
+    }
+    activeTaskId = null;
   };
 
   for (const event of visible) {
     if (event.event_id === 4) {
       closeTask(event.target_cycles);
-      if (event.context_id != null) activeTask = { id: event.context_id, start: event.target_cycles };
+      if (event.context_id != null) {
+        activeTaskId = event.context_id;
+        activeTaskStart = event.target_cycles;
+      }
       if (idleStart != null) {
         idleIntervals.push({ start: idleStart, end: event.target_cycles });
         idleStart = null;
@@ -141,7 +147,7 @@ function drawTimeline(
     } else if (event.event_id === 2) {
       if (irqDepth === 0) {
         irqStart = event.target_cycles;
-        interruptedTaskId = activeTask?.id ?? null;
+        interruptedTaskId = activeTaskId;
         closeTask(event.target_cycles);
       }
       irqDepth += 1;
@@ -153,7 +159,8 @@ function drawTimeline(
           irqStart = null;
         }
         if (interruptedTaskId != null) {
-          activeTask = { id: interruptedTaskId, start: event.target_cycles };
+          activeTaskId = interruptedTaskId;
+          activeTaskStart = event.target_cycles;
           interruptedTaskId = null;
         }
       }
