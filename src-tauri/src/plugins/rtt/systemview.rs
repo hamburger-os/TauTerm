@@ -697,7 +697,12 @@ fn run_decoder(
 ) {
     let replay_through_sequence = bootstrap.last().map_or(0, |chunk| chunk.sequence);
     let mut pending = VecDeque::<SystemViewEvent>::new();
+    let mut expected_channel_offset = None;
     for chunk in bootstrap {
+        if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected) {
+            shared.mark_input_gap();
+        }
+        expected_channel_offset = Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
         pending.extend(shared.ingest(chunk));
         while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
             pending.pop_front();
@@ -708,23 +713,23 @@ fn run_decoder(
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut changed = true;
-    let mut observed_decoder_drops = shared.decoder_dropped_chunks.load(Ordering::Acquire);
 
     while !stopping.load(Ordering::Acquire) {
         match subscription.recv_timeout(Duration::from_millis(20)) {
             Ok(chunk) => {
-                let decoder_drops = shared.decoder_dropped_chunks.load(Ordering::Acquire);
-                if decoder_drops != observed_decoder_drops {
-                    // A bounded observation subscriber dropped one or more canonical RTT chunks.
-                    // Packet boundaries are no longer trustworthy, so discard partial decoder
-                    // state and wait for SEGGER's next sync marker before decoding again.
-                    shared.mark_input_gap();
-                    observed_decoder_drops = decoder_drops;
-                    changed = true;
-                }
                 if chunk.sequence <= replay_through_sequence {
                     continue;
                 }
+                if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected) {
+                    // Channel offsets are canonical and contiguous for one RTT Up stream. A
+                    // discontinuity is therefore an exact acquisition/subscriber gap signal,
+                    // unlike sampling the asynchronous drop counter which could reset the decoder
+                    // before an older queued chunk is consumed.
+                    shared.mark_input_gap();
+                    changed = true;
+                }
+                expected_channel_offset =
+                    Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
                 for event in shared.ingest(chunk) {
                     pending.push_back(event);
                 }
