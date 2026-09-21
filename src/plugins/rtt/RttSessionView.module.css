@@ -21,6 +21,7 @@
 .identity,
 .stats,
 .viewerHeader > div,
+.viewerActions,
 .modeTabs {
   display: flex;
   align-items: center;
@@ -36,14 +37,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.stats button {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  display: grid;
-  place-items: center;
 }
 
 .errorBanner,
@@ -102,28 +95,6 @@
 .channelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .direction { flex: 0 0 auto; color: var(--accent-primary); font-family: var(--font-mono); }
 
-.automationSourceMark {
-  display: inline-grid;
-  place-items: center;
-  min-width: 16px;
-  height: 16px;
-  margin-left: 4px;
-  padding: 0 4px;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 48%, transparent);
-  border-radius: 999px;
-  color: var(--accent-primary);
-  font-size: 9px;
-  line-height: 1;
-  font-weight: 700;
-}
-
-.automationButton {
-  min-height: 26px;
-  padding: 2px 8px;
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-
 .viewer {
   min-width: 0;
   min-height: 0;
@@ -140,6 +111,12 @@
   gap: var(--spacing-sm);
   padding: 5px var(--spacing-md);
   border-bottom: 1px solid var(--content-divider);
+}
+
+.viewerActions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .modeTabs { flex: 0 0 auto; }
@@ -231,6 +208,7 @@
   .sectionTitle { display: none; }
   .channelButton { width: auto; min-width: 110px; }
   .viewerHeader { align-items: flex-start; }
+  .viewerActions,
   .modeTabs { flex-wrap: wrap; justify-content: flex-end; }
 }
 
@@ -244,6 +222,7 @@
     flex-direction: column;
     align-items: stretch;
   }
+  .viewerActions,
   .modeTabs { justify-content: flex-start; }
   .logRow { grid-template-columns: 1fr; gap: 2px; }
 }
