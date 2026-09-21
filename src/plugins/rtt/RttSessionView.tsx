@@ -298,7 +298,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     controlAvailable={observer.control_channel_index != null}
                     onStart={() => void controlSystemView(sessionId, channel.index, "start")}
                     onStop={() => void controlSystemView(sessionId, channel.index, "stop")}
-                    onRefresh={() => void controlSystemView(sessionId, channel.index, "refresh")}
+                    onRefreshTasks={() => void controlSystemView(sessionId, channel.index, "refresh_tasks")}
                     onClear={() => void clearSystemView(sessionId, channel.index)}
                   />
                 ) : mode === "terminal" ? (
