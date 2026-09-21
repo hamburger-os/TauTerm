@@ -168,10 +168,8 @@ impl TraceState {
             return;
         };
         let elapsed = at_cycles.saturating_sub(started_at);
-        self.tasks.entry(task_id).or_default().runtime_cycles = self
-            .tasks
-            .get(&task_id)
-            .map_or(elapsed, |task| task.runtime_cycles.saturating_add(elapsed));
+        let task = self.tasks.entry(task_id).or_default();
+        task.runtime_cycles = task.runtime_cycles.saturating_add(elapsed);
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
@@ -801,23 +799,17 @@ fn decode_length_delimited_payload(event_id: u32, payload: &[u8]) -> (Vec<u32>, 
     let mut fields = Vec::new();
     let mut text = None;
 
-    let mut take_varint = || -> Option<u32> {
-        let result = decode_varint(payload.get(cursor..)?).ok().flatten()?;
-        cursor += result.1;
-        Some(result.0)
-    };
-
     match event_id {
         24 => {
             for _ in 0..4 {
-                let Some(value) = take_varint() else {
+                let Some(value) = take_payload_varint(payload, &mut cursor) else {
                     break;
                 };
                 fields.push(value);
             }
         }
         25 => {
-            if let Some(value) = take_varint() {
+            if let Some(value) = take_payload_varint(payload, &mut cursor) {
                 fields.push(value);
             }
             if let Ok(Some((value, _))) = decode_string(payload.get(cursor..).unwrap_or_default()) {
@@ -825,16 +817,16 @@ fn decode_length_delimited_payload(event_id: u32, payload: &[u8]) -> (Vec<u32>, 
             }
         }
         27 | 29 => {
-            if let Some(value) = take_varint() {
+            if let Some(value) = take_payload_varint(payload, &mut cursor) {
                 fields.push(value);
             }
         }
         31 => {
-            if let Some(value) = take_varint() {
+            if let Some(value) = take_payload_varint(payload, &mut cursor) {
                 fields.push(value);
             }
             if fields.first().copied() == Some(1) {
-                if let Some(marker_id) = take_varint() {
+                if let Some(marker_id) = take_payload_varint(payload, &mut cursor) {
                     fields.push(marker_id);
                 }
                 if let Ok(Some((value, _))) =
@@ -846,7 +838,7 @@ fn decode_length_delimited_payload(event_id: u32, payload: &[u8]) -> (Vec<u32>, 
         }
         _ => {
             while cursor < payload.len() && fields.len() < 4 {
-                let Some(value) = take_varint() else {
+                let Some(value) = take_payload_varint(payload, &mut cursor) else {
                     break;
                 };
                 fields.push(value);
@@ -855,6 +847,12 @@ fn decode_length_delimited_payload(event_id: u32, payload: &[u8]) -> (Vec<u32>, 
     }
 
     (fields, text)
+}
+
+fn take_payload_varint(payload: &[u8], cursor: &mut usize) -> Option<u32> {
+    let (value, consumed) = decode_varint(payload.get(*cursor..)?).ok().flatten()?;
+    *cursor += consumed;
+    Some(value)
 }
 
 fn decode_varint(data: &[u8]) -> Result<Option<(u32, usize)>, ()> {
