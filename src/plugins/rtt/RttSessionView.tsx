@@ -170,7 +170,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               title={t("rtt.refreshChannels")}
               aria-label={t("rtt.refreshChannels")}
             >
-              <Icon name="refresh" size="sm" />
+              <Icon name="refresh" size="md" />
             </GlassButton>
           )}
         </div>
