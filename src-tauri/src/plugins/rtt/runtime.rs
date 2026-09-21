@@ -941,19 +941,8 @@ impl RttRuntime {
             .map_err(|error| RttError::backend(error.to_string()))?
             .insert(channel_index, runtime);
         self.publish_observers();
-        if control_available {
-            if let Err(error) = self.write_internal(
-                channel_index,
-                SystemViewControl::Start.bytes().to_vec(),
-            ) {
-                log::warn!(
-                    "SystemView START command failed: channel={}, code={}, message={}",
-                    channel_index,
-                    error.code.as_str(),
-                    error.message
-                );
-            }
-        }
+        // Attaching a semantic observer is passive. Starting/stopping trace changes target
+        // behavior and therefore remains an explicit user action through systemview_control.
         Ok(())
     }
 
