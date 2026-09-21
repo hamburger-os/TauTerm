@@ -231,6 +231,13 @@ assert.ok(rttTarget.includes("selectRttSendChannel"));
 assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
 assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
 assert.ok(rttRuntime.includes("selectedChannel"), "RTT viewer Channel must remain plugin-local UI state");
+const selectRttChannelBody = rttRuntime.match(
+  /export async function selectRttChannel\([\s\S]*?\n\}/,
+)?.[0] ?? "";
+assert.ok(
+  !selectRttChannelBody.includes("rtt_set_automation_source_channel"),
+  "browsing an RTT channel must not mutate the automation source",
+);
 assert.ok(
   rttTarget.includes("runtime.snapshot?.send_channel"),
   "RTT SendBar target must come from the runtime-authoritative snapshot",
