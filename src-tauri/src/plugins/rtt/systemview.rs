@@ -748,6 +748,7 @@ struct ParsedPacket {
 #[derive(Default)]
 struct SystemViewDecoder {
     buffer: Vec<u8>,
+    synchronized: bool,
     mark_next_sync_boundary: bool,
 }
 
@@ -761,16 +762,36 @@ impl SystemViewDecoder {
             if self.buffer.is_empty() {
                 break;
             }
+
+            if !self.synchronized {
+                if let Some(sync_offset) = find_sync_marker(&self.buffer) {
+                    self.buffer.drain(..sync_offset + 10);
+                    self.synchronized = true;
+                    self.mark_next_sync_boundary = true;
+                    continue;
+                }
+
+                // A semantic observer may attach in the middle of an already running RTT stream.
+                // Standard SystemView events below ID 24 do not carry a payload length, so
+                // guessing packet boundaries before SEGGER's 10-byte sync marker can create
+                // convincing but false events. Discard unsynchronized bytes while retaining only
+                // a possible split sync suffix.
+                let trailing_zeros = self
+                    .buffer
+                    .iter()
+                    .rev()
+                    .take_while(|byte| **byte == 0)
+                    .count()
+                    .min(9);
+                let discard = self.buffer.len().saturating_sub(trailing_zeros);
+                self.buffer.drain(..discard);
+                break;
+            }
+
             if self.buffer.len() >= 10 && self.buffer[..10].iter().all(|byte| *byte == 0) {
                 self.buffer.drain(..10);
                 self.mark_next_sync_boundary = true;
                 continue;
-            }
-            if self.buffer.len() < 10 && self.buffer.iter().all(|byte| *byte == 0) {
-                // A live sync marker may be split across RTT chunks. Wait only while the entire
-                // buffered prefix is zero; once a non-zero byte arrives, a regular NOP packet can
-                // be decoded normally.
-                break;
             }
 
             match decode_packet(&self.buffer) {
@@ -794,6 +815,11 @@ impl SystemViewDecoder {
         }
         (packets, errors)
     }
+}
+
+fn find_sync_marker(data: &[u8]) -> Option<usize> {
+    data.windows(10)
+        .position(|window| window.iter().all(|byte| *byte == 0))
 }
 
 fn decode_packet(data: &[u8]) -> Result<Option<(ParsedPacket, usize)>, ()> {
@@ -1080,10 +1106,12 @@ mod tests {
     }
 
     #[test]
-    fn decodes_split_task_switch_packets() {
+    fn decodes_split_task_switch_packets_after_sync() {
         let mut decoder = SystemViewDecoder::default();
+        let mut start = vec![0u8; 10];
         let bytes = packet(4, &[0x123], 8);
-        let (first, errors) = decoder.push(&bytes[..2]);
+        start.extend_from_slice(&bytes[..2]);
+        let (first, errors) = decoder.push(&start);
         assert!(first.is_empty());
         assert_eq!(errors, 0);
 
@@ -1093,6 +1121,7 @@ mod tests {
         assert_eq!(second[0].event_id, 4);
         assert_eq!(second[0].fields, vec![0x123]);
         assert_eq!(second[0].delta_cycles, 8);
+        assert!(second[0].sync_boundary);
     }
 
     #[test]
@@ -1175,13 +1204,30 @@ mod tests {
     #[test]
     fn nop_with_zero_timestamp_does_not_look_like_partial_sync_forever() {
         let mut decoder = SystemViewDecoder::default();
-        let mut bytes = vec![0, 0];
+        let mut bytes = vec![0; 10];
+        bytes.extend([0, 0]);
         bytes.extend(packet(4, &[7], 1));
         let (packets, errors) = decoder.push(&bytes);
         assert_eq!(errors, 0);
         assert_eq!(packets.len(), 2);
         assert_eq!(packets[0].event_id, 0);
         assert_eq!(packets[1].event_id, 4);
+    }
+
+    #[test]
+    fn ignores_midstream_bytes_until_a_sync_marker_arrives() {
+        let mut decoder = SystemViewDecoder::default();
+        let (packets, errors) = decoder.push(&packet(4, &[7], 1));
+        assert!(packets.is_empty());
+        assert_eq!(errors, 0);
+
+        let mut synced = vec![0; 10];
+        synced.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&synced);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].event_id, 10);
+        assert!(packets[0].sync_boundary);
     }
 
     #[test]
