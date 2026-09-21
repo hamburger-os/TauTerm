@@ -25,6 +25,7 @@ import {
   ensureSystemViewHistory,
   refreshRttRuntime,
   rttChannelChunks,
+  selectRttAutomationSource,
   selectRttChannel,
   sendRttTerminalData,
   setRttViewMode,
@@ -218,6 +219,9 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
               <span className={styles.direction}>
                 {isUsableRttDirection(item.up) ? "↑" : ""}
                 {isUsableRttDirection(item.down) ? "↓" : ""}
+                {snapshot?.automation_source_channel === item.index ? (
+                  <span className={styles.automationSourceMark} title={t("rtt.automationSource")}>A</span>
+                ) : null}
                 {hasRttChannelIssues(item) ? <span className={styles.channelWarning}>⚠</span> : null}
               </span>
             </button>
@@ -236,6 +240,22 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     {usableDown ? "Down" : ""}
                     {channelIssues.length > 0 ? ` · ${t("rtt.channelDegraded")}` : ""}
                   </span>
+                  {usableUp && (
+                    <button
+                      type="button"
+                      className={`liquid-glass-button ${styles.automationButton}`}
+                      aria-pressed={snapshot?.automation_source_channel === channel.index}
+                      disabled={!connected || snapshot?.automation_source_channel === channel.index}
+                      onClick={() => void selectRttAutomationSource(sessionId, channel.index)}
+                      title={snapshot?.automation_source_channel === channel.index
+                        ? t("rtt.automationSource")
+                        : t("rtt.setAutomationSource")}
+                    >
+                      {snapshot?.automation_source_channel === channel.index
+                        ? t("rtt.automationSource")
+                        : t("rtt.setAutomationSource")}
+                    </button>
+                  )}
                 </div>
                 <div className={`${styles.modeTabs} liquid-selector-strip`}>
                   {(observer
