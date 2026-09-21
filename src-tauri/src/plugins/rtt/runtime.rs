@@ -1002,9 +1002,10 @@ impl RttRuntime {
             .iter()
             .map(|runtime| runtime.channel_index())
             .filter(|channel_index| {
-                snapshot.channels.iter().any(|channel| {
-                    channel.index == *channel_index && channel.has_usable_down()
-                })
+                snapshot
+                    .channels
+                    .iter()
+                    .any(|channel| channel.index == *channel_index && channel.has_usable_down())
             })
             .collect::<Vec<_>>();
         candidates.sort_unstable();
