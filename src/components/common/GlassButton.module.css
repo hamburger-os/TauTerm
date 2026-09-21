@@ -36,9 +36,12 @@
 }
 
 .iconOnly {
+  padding-inline: 0;
+}
+
+.sm.iconOnly {
   width: var(--select-height);
   min-width: var(--select-height);
-  padding-inline: 0;
 }
 
 .md {
@@ -47,10 +50,20 @@
   height: 34px;
 }
 
+.md.iconOnly {
+  width: 34px;
+  min-width: 34px;
+}
+
 .lg {
   padding: 8px 24px;
   font-size: var(--text-base);
   height: 40px;
+}
+
+.lg.iconOnly {
+  width: 40px;
+  min-width: 40px;
 }
 
 /* ===== 变体 ===== */
