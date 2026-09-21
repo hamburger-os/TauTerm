@@ -357,10 +357,36 @@ impl TraceState {
     }
 
     fn clear(&mut self) {
-        let generation = self.generation;
-        let channel_index = self.channel_index;
-        let control_available = self.control_available;
-        *self = Self::new(generation, channel_index, control_available);
+        let phase = self.phase;
+        let last_target_cycles = self.last_target_cycles;
+        let active_task_id = self.active_task.map(|(task_id, _)| task_id);
+        let task_metadata = self
+            .tasks
+            .iter()
+            .map(|(id, task)| {
+                (
+                    *id,
+                    TaskState {
+                        name: task.name.clone(),
+                        priority: task.priority,
+                        runtime_cycles: 0,
+                        switches: 0,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        self.event_count = 0;
+        self.target_overflow_packets = 0;
+        self.target_dropped_events = 0;
+        self.decoder_errors = 0;
+        self.presentation_dropped_events = 0;
+        self.events.clear();
+        self.next_event_sequence = 1;
+        self.tasks = task_metadata;
+        self.active_task = active_task_id.map(|task_id| (task_id, last_target_cycles));
+        self.phase = phase;
+        self.last_target_cycles = last_target_cycles;
     }
 }
 
@@ -443,9 +469,9 @@ impl SystemViewShared {
     }
 
     fn clear(&self) {
-        if let Ok(mut decoder) = self.decoder.lock() {
-            decoder.clear();
-        }
+        // "Clear" is a presentation/statistics operation, not a transport reset. Keep any
+        // partially received packet in the streaming decoder so clearing a live recording cannot
+        // desynchronize the SystemView byte stream.
         if let Ok(mut state) = self.state.lock() {
             state.clear();
         }
@@ -635,10 +661,6 @@ struct SystemViewDecoder {
 }
 
 impl SystemViewDecoder {
-    fn clear(&mut self) {
-        self.buffer.clear();
-    }
-
     fn push(&mut self, bytes: &[u8]) -> (Vec<ParsedPacket>, u64) {
         self.buffer.extend_from_slice(bytes);
         let mut packets = Vec::new();
@@ -648,12 +670,14 @@ impl SystemViewDecoder {
             if self.buffer.is_empty() {
                 break;
             }
-            let leading_zeroes = self.buffer.iter().take_while(|byte| **byte == 0).count();
-            if leading_zeroes >= 10 {
+            if self.buffer.len() >= 10 && self.buffer[..10].iter().all(|byte| *byte == 0) {
                 self.buffer.drain(..10);
                 continue;
             }
-            if leading_zeroes >= 2 {
+            if self.buffer.len() < 10 && self.buffer.iter().all(|byte| *byte == 0) {
+                // A live sync marker may be split across RTT chunks. Wait only while the entire
+                // buffered prefix is zero; once a non-zero byte arrives, a regular NOP packet can
+                // be decoded normally.
                 break;
             }
 
@@ -1031,5 +1055,65 @@ mod tests {
         assert_eq!(snapshot.target_overflow_packets, 1);
         assert_eq!(snapshot.target_dropped_events, 4);
         assert_eq!(snapshot.decoder_dropped_chunks, 3);
+    }
+
+    #[test]
+    fn split_sync_marker_waits_and_then_resynchronizes() {
+        let mut decoder = SystemViewDecoder::default();
+        let (packets, errors) = decoder.push(&[0, 0, 0, 0, 0]);
+        assert!(packets.is_empty());
+        assert_eq!(errors, 0);
+
+        let mut rest = vec![0; 5];
+        rest.extend(packet(10, &[], 0));
+        let (packets, errors) = decoder.push(&rest);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].event_id, 10);
+    }
+
+    #[test]
+    fn nop_with_zero_timestamp_does_not_look_like_partial_sync_forever() {
+        let mut decoder = SystemViewDecoder::default();
+        let mut bytes = vec![0, 0];
+        bytes.extend(packet(4, &[7], 1));
+        let (packets, errors) = decoder.push(&bytes);
+        assert_eq!(errors, 0);
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].event_id, 0);
+        assert_eq!(packets[1].event_id, 4);
+    }
+
+    #[test]
+    fn clear_preserves_stream_time_phase_and_task_metadata() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 9,
+            fields: vec![2, 5],
+            text: Some("worker".to_string()),
+            delta_cycles: 1,
+        });
+        state.apply(ParsedPacket {
+            event_id: 10,
+            fields: Vec::new(),
+            text: None,
+            delta_cycles: 1,
+        });
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 8,
+        });
+        let before = state.last_target_cycles;
+        state.clear();
+
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.phase, SystemViewPhase::Recording);
+        assert_eq!(snapshot.last_target_cycles, before);
+        assert_eq!(snapshot.event_count, 0);
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].name.as_deref(), Some("worker"));
+        assert_eq!(snapshot.tasks[0].runtime_cycles, 0);
     }
 }
