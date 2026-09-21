@@ -67,9 +67,8 @@ fn main() {
         std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is unavailable");
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let tauri_attributes = if target_os == "windows" && target_env == "msvc" {
-        tauri_build::Attributes::new().windows_attributes(
-            tauri_build::WindowsAttributes::new_without_app_manifest(),
-        )
+        tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest())
     } else {
         tauri_build::Attributes::new()
     };
@@ -85,10 +84,7 @@ fn main() {
         let manifest = std::path::Path::new("windows-app-manifest.xml");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        println!(
-            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
-            manifest.display()
-        );
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
         println!("cargo:rustc-link-arg=/WX");
     }
 
