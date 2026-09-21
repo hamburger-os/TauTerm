@@ -566,6 +566,6 @@ mod tests {
         let snapshot = shared.snapshot();
         assert_eq!(snapshot.dropped_presentation_chunks, 1);
         assert_eq!(snapshot.dropped_presentation_bytes, 12);
-        assert_eq!(snapshot.dropped_history_chunks, 0);
+        assert_eq!(snapshot.evicted_history_chunks, 0);
     }
 }
