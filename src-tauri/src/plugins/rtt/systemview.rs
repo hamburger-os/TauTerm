@@ -503,6 +503,7 @@ impl SystemViewRuntime {
         generation: u64,
         channel_index: u32,
         control_available: bool,
+        bootstrap: Vec<StoredRttChunk>,
         subscription: ObservationSubscription<StoredRttChunk>,
         decoder_dropped_chunks: Arc<AtomicU64>,
     ) -> Result<Self, String> {
@@ -521,6 +522,7 @@ impl SystemViewRuntime {
                 run_decoder(
                     app,
                     session_id,
+                    bootstrap,
                     subscription,
                     worker_shared,
                     worker_stopping,
@@ -575,11 +577,21 @@ impl Drop for SystemViewRuntime {
 fn run_decoder(
     app: AppHandle,
     session_id: String,
+    bootstrap: Vec<StoredRttChunk>,
     subscription: ObservationSubscription<StoredRttChunk>,
     shared: Arc<SystemViewShared>,
     stopping: Arc<AtomicBool>,
 ) {
+    let replay_through_sequence = bootstrap.last().map_or(0, |chunk| chunk.sequence);
     let mut pending = VecDeque::<SystemViewEvent>::new();
+    for chunk in bootstrap {
+        pending.extend(shared.ingest(chunk));
+        while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
+            pending.pop_front();
+            shared.record_presentation_drop(1);
+        }
+    }
+
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut changed = true;
@@ -587,6 +599,9 @@ fn run_decoder(
     while !stopping.load(Ordering::Acquire) {
         match subscription.recv_timeout(Duration::from_millis(20)) {
             Ok(chunk) => {
+                if chunk.sequence <= replay_through_sequence {
+                    continue;
+                }
                 for event in shared.ingest(chunk) {
                     pending.push_back(event);
                 }
