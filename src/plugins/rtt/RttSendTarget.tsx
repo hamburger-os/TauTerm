@@ -26,8 +26,6 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
       && !isRttDownChannelClaimed(runtime.snapshot, channel.index),
   );
 
-  if (writable.length === 0) return null;
-
   const runtimeSend = runtime.snapshot?.send_channel ?? null;
   const sendChannel = runtimeSend != null
     && writable.some(channel => channel.index === runtimeSend)
@@ -41,9 +39,11 @@ export default function RttSendTarget({ sessionId, disabled = false }: { session
     : readable[0]?.index ?? null;
 
   useEffect(() => {
-    if (receiveChannel == null || runtimeSource === receiveChannel) return;
+    if (disabled || receiveChannel == null || runtimeSource === receiveChannel) return;
     void selectRttAutomationSource(sessionId, receiveChannel);
-  }, [receiveChannel, runtimeSource, sessionId]);
+  }, [disabled, receiveChannel, runtimeSource, sessionId]);
+
+  if (writable.length === 0) return null;
 
   return (
     <div className={`${styles.bar} liquid-glass-panel`}>
