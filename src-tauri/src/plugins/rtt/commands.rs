@@ -122,6 +122,17 @@ pub fn rtt_systemview_attach(
 }
 
 #[tauri::command]
+pub fn rtt_systemview_detach(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .systemview_detach(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
 pub fn rtt_systemview_snapshot(
     state: State<'_, AppState>,
     session_id: String,
