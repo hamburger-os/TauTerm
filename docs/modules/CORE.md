@@ -20,7 +20,7 @@ Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文�
 
 前端每个插件模块只导出惰性的 `PluginDefinition`，导入插件模块不得修改全局状态。`src/plugins/catalog.ts` 是唯一了解完整内建前端插件集合的 composition 模块；`main.tsx` 只调用 `installBuiltinPlugins()`。`PluginRegistry.install()` 在写入 registry 前整批校验插件 ID、能力与 contribution 基本不变量，并拒绝重复注册。应用运行期间不支持动态卸载内建插件，因此不存在与后端生命周期不对称的 `unregisterPlugin()` 假接口。
 
-`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。`PluginManifest.name` 是 Session 类型在新建卡片和配置标题中的 canonical 显示身份，`description` 只描述能力。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件；默认参数、提交前参数投影和 endpoint 解析分别由 `defaultConnectionParams`、`prepareConnectionParams` 与 `resolveEndpoint` 贡献。Session 选项默认值只通过 `PluginRegistry.getDefaultSessionOptions/resolveSessionOptions` 解析，公共页面不得再维护第二套 transfer/send-bar 默认策略。插件还可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError`、`sessionPresentation` 与 `workspace.availability` 分别拥有持久化参数投影、重连前置策略、协议错误展示、会话展示格式和断连工作台可见性。统一 Session/UI 层只消费这些通用 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
+`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。`PluginManifest.name` 是 Session 类型在新建卡片和配置标题中的 canonical 显示身份，`description` 只描述能力。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件；默认参数、提交前参数投影和 endpoint 解析分别由 `defaultConnectionParams`、`prepareConnectionParams` 与 `resolveEndpoint` 贡献。Session 选项默认值只通过 `PluginRegistry.getDefaultSessionOptions/resolveSessionOptions` 解析，公共页面不得再维护第二套 transfer/send-bar 默认策略。插件还可以通过 `persistedConnectionParams`、`reconnectGuard`、`formatSessionError`、`sessionPresentation`、`workspace.availability` 与运行态 UI presentation contribution 分别拥有持久化参数投影、重连前置策略、协议错误展示、会话展示格式、断连工作台可见性和已声明共享 surface 的上下文可见性。统一 Session/UI 层只消费这些通用 contribution，不按 SSH、TFTP、TRDP、RTT 等具体插件 ID 复制同一业务规则。
 
 前端全局动作使用 `ShortcutActionId` 作为 canonical identity。`useKeyboard` 维护唯一的运行时 action registry 与共享 document 键盘监听器；键盘快捷键、命令面板和 Toolbar 只负责选择 Action ID，并通过同一 dispatcher 执行。具体行为只在 action owner 注册一次，不允许各入口再维护平行 `switch`、魔术字符串或“显示了命令但没有执行实现”的占位分支。
 
@@ -50,7 +50,7 @@ stateDiagram-v2
 - 插件专属运行态必须由插件对象或 Session capability 持有，不把 SSH known-host verifier、协议 runtime registry 等字段泄漏到 `AppState`。Adapter 需要按 `session_id` 查找专属 runtime 时使用 `SessionRuntimeRegistry<T>`：索引实例由 Adapter 持有且只保存 `Weak<T>`，SessionStore capability graph 仍是唯一强生命周期 owner；禁止模块级 `OnceLock`/静态 runtime registry。
 - 前端只保留一个 `PluginRegistry`，插件 definition 本身无副作用。依赖无关的 contract 可以独立成类型模块，但不得为了绕过循环依赖再镜像插件注册数据；会话 presentation、连接参数准备、重连策略、断连工作台可见性、状态栏项和自定义视图均由插件 definition 直接声明。
 - 通用前端状态/渲染合同只包含协议无关字段。Serial 虚拟端口、SSH journald/文件服务、Network peer、TRDP A/B 链路等私有运行态不能为了某个 renderer 的便利继续扩张 `StatusBarContext`、通用 presentation helper 或其它公共 registry contract；插件 renderer 应通过自己的 Session/plugin store 获取私有状态。
-- UI 能力由插件 manifest/definition 声明；SendBar、自定义视图、连接配置合法性、断连工作台可见性等不由页面临时猜测。公共页面不得通过 built-in plugin ID 分支决定这些行为。
+- UI 能力由插件 manifest/definition 声明；SendBar、自定义视图、连接配置合法性、断连工作台可见性等不由页面临时猜测。插件声明支持某个共享 surface 后，可以再通过协议无关的运行态 presentation contribution 控制该 surface 当前是否显示，但不能借此改写其生命周期。公共页面不得通过 built-in plugin ID 分支决定这些行为。
 - 插件私有工作台、协议视图和工具组件归 `src/plugins/<id>/` 所有；`src/components/` 只保留真正跨插件共享的 UI 组件。
 - 全局动作行为只由 action registry owner 注册一次；Toolbar、命令面板和键盘绑定不得复制行为分发表，也不得使用脱离 `ShortcutActionId` 的第二套 action 名称。
 - 运行时对象不能被持久化为 Session 配置；插件需要从编辑态参数剥离凭据或其它瞬态字段时，通过自己的持久化投影 contribution 完成，公共 Session 层不解释字段名。
