@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod model;
 pub mod runtime;
+pub mod systemview;
 pub mod worker;
 
 pub const PLUGIN_ID: &str = "rtt";
