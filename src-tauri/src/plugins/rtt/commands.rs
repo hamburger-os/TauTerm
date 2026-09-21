@@ -1,6 +1,9 @@
 use super::backend;
 use super::error::{RttCommandError, RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttHistoryResponse, RttProbeInfo, RttSnapshot};
+use super::systemview::{
+    SystemViewControl, SystemViewHistoryResponse, SystemViewSnapshot,
+};
 use super::{RttPlugin, PLUGIN_ID};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -106,5 +109,67 @@ pub fn rtt_set_send_channel(
 ) -> Result<(), RttCommandError> {
     runtime(&state, &session_id)?
         .set_send_channel(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+
+#[tauri::command]
+pub fn rtt_systemview_attach(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .systemview_attach(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub fn rtt_systemview_snapshot(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<SystemViewSnapshot, RttCommandError> {
+    runtime(&state, &session_id)?
+        .systemview_snapshot(channel_index)
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub fn rtt_systemview_history(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+    limit: Option<usize>,
+) -> Result<SystemViewHistoryResponse, RttCommandError> {
+    runtime(&state, &session_id)?
+        .systemview_history(channel_index, limit.unwrap_or(2048))
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub async fn rtt_systemview_control(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+    control: String,
+) -> Result<(), RttCommandError> {
+    let runtime = runtime(&state, &session_id)?;
+    let control = SystemViewControl::parse(&control)
+        .map_err(|message| RttCommandError::from(RttError::invalid_config(message)))?;
+    tokio::task::spawn_blocking(move || runtime.systemview_control(channel_index, control))
+        .await
+        .map_err(|error| RttCommandError::from(RttError::backend(error.to_string())))?
+        .map_err(RttCommandError::from)
+}
+
+#[tauri::command]
+pub fn rtt_systemview_clear(
+    state: State<'_, AppState>,
+    session_id: String,
+    channel_index: u32,
+) -> Result<(), RttCommandError> {
+    runtime(&state, &session_id)?
+        .systemview_clear(channel_index)
         .map_err(RttCommandError::from)
 }
