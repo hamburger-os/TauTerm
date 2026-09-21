@@ -193,7 +193,7 @@ export function isRttDownChannelClaimed(
   snapshot: RttSnapshot | null | undefined,
   channelIndex: number,
 ): boolean {
-  return snapshot?.channel_claims.some(claim => claim.channel_index === channelIndex) ?? false;
+  return snapshot?.channel_claims?.some(claim => claim.channel_index === channelIndex) ?? false;
 }
 
 export function systemViewObserver(
