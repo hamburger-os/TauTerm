@@ -19,7 +19,7 @@ export function usePluginRuntime<T = unknown>(pluginId: string, sessionId: strin
 }
 
 /**
- * 订阅当前插件 runtime，但只把派生后的目标栏可见性布尔值暴露给布局层。
+ * 订阅当前插件 runtime，但只把派生后的发送栏可见性布尔值暴露给布局层。
  * 高频数据事件仍会触发 snapshot 检查；只要布尔值未变化，React 不会重渲染 App Shell。
  */
 export function usePluginSendBarVisible(
