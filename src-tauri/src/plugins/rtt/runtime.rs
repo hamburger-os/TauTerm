@@ -948,14 +948,16 @@ impl RttRuntime {
         // window are therefore present in both places and are de-duplicated by RTT sequence in
         // the SystemView runtime; no canonical bytes can fall into an attach-time gap.
         let bootstrap = self.shared.observer_bootstrap(channel_index);
-        let (app, session_id) = self
-            .observer_context
-            .lock()
-            .map_err(|error| RttError::backend(error.to_string()))?
-            .clone()
-            .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
         #[cfg(not(test))]
-        let presenter = worker::systemview_presenter(app, session_id);
+        let presenter = {
+            let (app, session_id) = self
+                .observer_context
+                .lock()
+                .map_err(|error| RttError::backend(error.to_string()))?
+                .clone()
+                .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT 观察器上下文不可用"))?;
+            worker::systemview_presenter(app, session_id)
+        };
         #[cfg(test)]
         let presenter = super::systemview::discard_presenter();
 
