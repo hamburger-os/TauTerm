@@ -1,9 +1,7 @@
 use super::backend;
 use super::error::{RttCommandError, RttError, RttErrorCode};
 use super::model::{RttChannelInfo, RttHistoryResponse, RttProbeInfo, RttSnapshot};
-use super::systemview::{
-    SystemViewControl, SystemViewHistoryResponse, SystemViewSnapshot,
-};
+use super::systemview::{SystemViewControl, SystemViewHistoryResponse, SystemViewSnapshot};
 use super::{RttPlugin, PLUGIN_ID};
 use crate::AppState;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -111,7 +109,6 @@ pub fn rtt_set_send_channel(
         .set_send_channel(channel_index)
         .map_err(RttCommandError::from)
 }
-
 
 #[tauri::command]
 pub fn rtt_systemview_attach(
