@@ -863,13 +863,19 @@ impl RttRuntime {
             })?;
         self.write_internal(control_channel, control.bytes().to_vec())?;
         if matches!(control, SystemViewControl::Start) {
-            // Starting a recording is also the natural metadata synchronization boundary. Keep
-            // this automatic so task names/priorities and target timing do not depend on a
-            // separate user-facing refresh action.
-            self.write_internal(
+            // Starting a recording is also the natural metadata synchronization boundary. A
+            // metadata refresh is best-effort: failure must not turn an already successful START
+            // into a false primary-action failure.
+            if let Err(error) = self.write_internal(
                 control_channel,
                 SystemViewControl::RefreshMetadata.bytes().to_vec(),
-            )?;
+            ) {
+                log::warn!(
+                    "SystemView metadata refresh after START failed: code={}, message={}",
+                    error.code.as_str(),
+                    error.message
+                );
+            }
         }
         Ok(())
     }
