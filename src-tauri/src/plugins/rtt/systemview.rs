@@ -92,6 +92,11 @@ pub enum SystemViewPresentation {
 
 pub type SystemViewPresenter = Arc<dyn Fn(SystemViewPresentation) + Send + Sync + 'static>;
 
+#[cfg(test)]
+pub fn discard_presenter() -> SystemViewPresenter {
+    Arc::new(|_| {})
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemViewControl {
     Start,
