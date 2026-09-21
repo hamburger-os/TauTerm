@@ -21,6 +21,7 @@ import {
   attachSystemView,
   clearSystemView,
   controlSystemView,
+  detachSystemView,
   ensureRttHistory,
   ensureSystemViewHistory,
   refreshRttRuntime,
@@ -286,6 +287,16 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                       {t("rtt.enableTrace")}
                     </button>
                   )}
+                  {observer && (
+                    <button
+                      type="button"
+                      className="liquid-glass-button liquid-selector-button"
+                      title={t("rtt.disableTraceHint")}
+                      onClick={() => void detachSystemView(sessionId, channel.index)}
+                    >
+                      {t("rtt.disableTrace")}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -305,6 +316,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                   <SystemViewTraceView
                     state={systemViewState}
                     mode={mode}
+                    controlAvailable={observer.control_channel_index === channel.index}
                     onStart={() => void controlSystemView(sessionId, channel.index, "start")}
                     onStop={() => void controlSystemView(sessionId, channel.index, "stop")}
                     onRefresh={() => void controlSystemView(sessionId, channel.index, "refresh")}
