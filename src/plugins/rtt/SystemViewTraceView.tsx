@@ -269,11 +269,15 @@ export default function SystemViewTraceView({
     if (!controlAvailable || !unknownTaskKey || !snapshot) return;
     const key = `${snapshot.generation}:${unknownTaskKey}`;
     if (metadataRefreshKeyRef.current === key) return;
-    const timer = window.setTimeout(() => {
-      metadataRefreshKeyRef.current = key;
-      onRefreshRef.current();
-    }, 350);
-    return () => window.clearTimeout(timer);
+    metadataRefreshKeyRef.current = key;
+
+    // Metadata can arrive after the task's first execution event. Retry a small bounded sequence
+    // instead of polling forever; any resolved/changed unknown-task set cancels the old sequence.
+    const timers = [350, 2500, 10000].map(delay => window.setTimeout(
+      () => onRefreshRef.current(),
+      delay,
+    ));
+    return () => timers.forEach(timer => window.clearTimeout(timer));
   }, [controlAvailable, snapshot?.generation, unknownTaskKey]);
 
   useEffect(() => {
