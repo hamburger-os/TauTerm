@@ -17,7 +17,7 @@ import {
   canSyncNetworkSendTarget,
   isNetworkSendTargetVisible,
 } from "../src/plugins/network/send-target.ts";
-import { hasUsableRttDownChannel } from "../src/plugins/rtt/model.ts";
+import { hasUsableRttDownChannel, isRttSemanticView } from "../src/plugins/rtt/model.ts";
 import {
   clampSendBarBodyHeight,
   getSendBarHostHeightCss,
@@ -149,8 +149,8 @@ const rttSnapshot = {
   channel_claims: [],
   rx_bytes: 0,
   tx_bytes: 0,
-  dropped_history_bytes: 0,
-  dropped_history_chunks: 0,
+  evicted_history_bytes: 0,
+  evicted_history_chunks: 0,
   dropped_automation_bytes: 0,
   dropped_automation_chunks: 0,
   dropped_presentation_bytes: 0,
@@ -171,6 +171,15 @@ assert.equal(hasUsableRttDownChannel({
     down: { buffer_size: 64, usable: false, issue: "invalid descriptor" },
   }],
 }), false);
+
+const rttTraceSnapshot = {
+  ...rttSnapshot,
+  observers: [{ kind: "systemview", channel_index: 0, control_channel_index: 0 }],
+};
+assert.equal(isRttSemanticView(rttTraceSnapshot, 0, "trace"), true);
+assert.equal(isRttSemanticView(rttTraceSnapshot, 0, "events"), true);
+assert.equal(isRttSemanticView(rttTraceSnapshot, 0, "raw"), true);
+assert.equal(isRttSemanticView(rttSnapshot, 0, "terminal"), false);
 
 // SendBar splitter geometry is exact in pixel space. Returning to the minimum must
 // produce the same canonical body height regardless of container size or plugin send target.
@@ -207,7 +216,9 @@ assert.ok(sendBar.includes("pluginRegistry.get(tab.pluginId)?.sendTarget"));
 assert.ok(!sendBar.includes("NetworkSendTarget"), "common SendBar must not import a built-in target implementation");
 assert.ok(!sendBar.includes("set_network_send_target"), "common SendBar must not own Network synchronization");
 const app = source("src/App.tsx");
+assert.ok(app.includes("usePluginSendBarVisible"));
 assert.ok(app.includes("usePluginSendTargetVisible"));
+assert.ok(app.includes("isActive && activeSendBarVisible"));
 assert.ok(!app.includes("usePluginRuntimeRevision"));
 assert.ok(!app.includes("networkSendTarget"), "app shell must not own Network target rules");
 const networkTarget = source("src/plugins/network/NetworkSendTarget.tsx");
@@ -227,7 +238,11 @@ assert.ok(rttPlugin.includes("sendTarget: RttSendTarget"));
 assert.ok(rttPlugin.includes("hasUsableRttDownChannel"));
 assert.ok(rttPlugin.includes("sendData: sendRttData"));
 assert.ok(rttPlugin.includes("sendBarEnabled: true"));
+assert.ok(rttPlugin.includes("sendBarVisible:"));
+assert.ok(rttPlugin.includes("isRttSemanticView"));
 assert.ok(rttTarget.includes("selectRttSendChannel"));
+assert.ok(rttTarget.includes("selectRttAutomationSource"));
+assert.ok(rttTarget.includes("systemViewObserver"));
 assert.ok(rttRuntime.includes('invoke("rtt_set_send_channel"'));
 assert.ok(rttRuntime.includes('invoke("rtt_set_automation_source_channel"'));
 assert.ok(rttRuntime.includes("selectedChannel"), "RTT viewer Channel must remain plugin-local UI state");
