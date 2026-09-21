@@ -364,7 +364,12 @@ impl RttShared {
         self.history
             .lock()
             .ok()
-            .and_then(|history| history.channels.get(&channel_index).map(|item| item.chunks.clone()))
+            .and_then(|history| {
+                history
+                    .channels
+                    .get(&channel_index)
+                    .map(|item| item.chunks.clone())
+            })
             .map(|chunks| chunks.into_iter().collect())
             .unwrap_or_default()
     }
