@@ -538,17 +538,29 @@ pub struct SystemViewRuntime {
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
+pub struct SystemViewSpawn {
+    pub app: AppHandle,
+    pub session_id: String,
+    pub generation: u64,
+    pub channel_index: u32,
+    pub control_available: bool,
+    pub bootstrap: Vec<StoredRttChunk>,
+    pub subscription: ObservationSubscription<StoredRttChunk>,
+    pub decoder_dropped_chunks: Arc<AtomicU64>,
+}
+
 impl SystemViewRuntime {
-    pub fn spawn(
-        app: AppHandle,
-        session_id: String,
-        generation: u64,
-        channel_index: u32,
-        control_available: bool,
-        bootstrap: Vec<StoredRttChunk>,
-        subscription: ObservationSubscription<StoredRttChunk>,
-        decoder_dropped_chunks: Arc<AtomicU64>,
-    ) -> Result<Self, String> {
+    pub fn spawn(config: SystemViewSpawn) -> Result<Self, String> {
+        let SystemViewSpawn {
+            app,
+            session_id,
+            generation,
+            channel_index,
+            control_available,
+            bootstrap,
+            subscription,
+            decoder_dropped_chunks,
+        } = config;
         let shared = Arc::new(SystemViewShared::new(
             generation,
             channel_index,
