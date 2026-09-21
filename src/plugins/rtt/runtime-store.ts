@@ -443,7 +443,14 @@ export async function ensureSystemViewHistory(
         ...prev.systemview,
         [channelIndex]: Object.freeze({
           snapshot,
-          events: Object.freeze(mergeSystemViewEvents(previous?.events ?? [], history.events)),
+          events: Object.freeze(mergeSystemViewEvents(
+            (previous?.events ?? []).filter(
+              event => event.sequence > snapshot.cleared_through_sequence,
+            ),
+            history.events.filter(
+              event => event.sequence > snapshot.cleared_through_sequence,
+            ),
+          )),
           loaded: true,
           error: null,
         }),
@@ -474,6 +481,28 @@ export async function attachSystemView(
     await invoke("rtt_systemview_attach", { sessionId, channelIndex });
     await refreshRttRuntime(sessionId);
     await ensureSystemViewHistory(sessionId, channelIndex);
+    return true;
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
+    return false;
+  }
+}
+
+export async function detachSystemView(
+  sessionId: string,
+  channelIndex: number,
+): Promise<boolean> {
+  try {
+    await invoke("rtt_systemview_detach", { sessionId, channelIndex });
+    await refreshRttRuntime(sessionId);
+    const prev = current(sessionId);
+    const { [channelIndex]: _detached, ...systemview } = prev.systemview;
+    publish(sessionId, {
+      ...prev,
+      systemview: Object.freeze(systemview),
+      error: null,
+    });
     return true;
   } catch (cause) {
     const prev = current(sessionId);
