@@ -705,7 +705,8 @@ fn run_decoder(
         if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected) {
             shared.mark_input_gap();
         }
-        expected_channel_offset = Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
+        expected_channel_offset =
+            Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
         pending.extend(shared.ingest(chunk));
         while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
             pending.pop_front();
@@ -723,7 +724,8 @@ fn run_decoder(
                 if chunk.sequence <= replay_through_sequence {
                     continue;
                 }
-                if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected) {
+                if expected_channel_offset.is_some_and(|expected| chunk.channel_offset != expected)
+                {
                     // Channel offsets are canonical and contiguous for one RTT Up stream. A
                     // discontinuity is therefore an exact acquisition/subscriber gap signal,
                     // unlike sampling the asynchronous drop counter which could reset the decoder
