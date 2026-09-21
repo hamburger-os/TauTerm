@@ -182,26 +182,20 @@ impl TraceState {
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
-        if packet.timestamp_reset {
-            let previous_cycles = self.last_target_cycles;
-            self.close_active_task(previous_cycles);
+        if packet.sync_boundary {
+            // SEGGER resets LastTxTimeStamp before emitting the sync/start sequence. The first
+            // event after the 10-byte sync marker therefore carries a delta of zero, not an
+            // absolute target timestamp. Treat the marker as a trace-epoch boundary: close any
+            // open execution interval, keep the presentation timeline monotonic, and resume by
+            // accumulating the new epoch's deltas. Absolute SYSTIME values remain available as
+            // event payloads (IDs 12/13) instead of being conflated with packet deltas.
+            self.close_active_task(self.last_target_cycles);
             self.interrupted_task = None;
             self.isr_depth = 0;
-
-            // The first packet after SEGGER's 10-byte sync marker is timestamped relative to
-            // zero. Reconstruct that absolute 32-bit target timestamp without double-counting the
-            // previous trace epoch, while preserving monotonic time across a 32-bit wrap.
-            let epoch = previous_cycles & !u64::from(u32::MAX);
-            let mut absolute = epoch.saturating_add(packet.delta_cycles as u64);
-            if absolute < previous_cycles {
-                absolute = absolute.saturating_add(1u64 << 32);
-            }
-            self.last_target_cycles = absolute;
-        } else {
-            self.last_target_cycles = self
-                .last_target_cycles
-                .saturating_add(packet.delta_cycles as u64);
         }
+        self.last_target_cycles = self
+            .last_target_cycles
+            .saturating_add(packet.delta_cycles as u64);
         self.event_count = self.event_count.saturating_add(1);
 
         let mut context_id = None;
@@ -748,13 +742,13 @@ struct ParsedPacket {
     fields: Vec<u32>,
     text: Option<String>,
     delta_cycles: u32,
-    timestamp_reset: bool,
+    sync_boundary: bool,
 }
 
 #[derive(Default)]
 struct SystemViewDecoder {
     buffer: Vec<u8>,
-    reset_next_timestamp: bool,
+    mark_next_sync_boundary: bool,
 }
 
 impl SystemViewDecoder {
@@ -769,7 +763,7 @@ impl SystemViewDecoder {
             }
             if self.buffer.len() >= 10 && self.buffer[..10].iter().all(|byte| *byte == 0) {
                 self.buffer.drain(..10);
-                self.reset_next_timestamp = true;
+                self.mark_next_sync_boundary = true;
                 continue;
             }
             if self.buffer.len() < 10 && self.buffer.iter().all(|byte| *byte == 0) {
@@ -782,8 +776,8 @@ impl SystemViewDecoder {
             match decode_packet(&self.buffer) {
                 Ok(Some((mut packet, consumed))) => {
                     self.buffer.drain(..consumed);
-                    packet.timestamp_reset = self.reset_next_timestamp;
-                    self.reset_next_timestamp = false;
+                    packet.sync_boundary = self.mark_next_sync_boundary;
+                    self.mark_next_sync_boundary = false;
                     packets.push(packet);
                 }
                 Ok(None) => break,
@@ -833,7 +827,7 @@ fn decode_packet(data: &[u8]) -> Result<Option<(ParsedPacket, usize)>, ()> {
             fields,
             text,
             delta_cycles,
-            timestamp_reset: false,
+            sync_boundary: false,
         },
         payload_end + timestamp_len,
     )))
@@ -915,7 +909,7 @@ fn decode_standard_packet(
             fields,
             text,
             delta_cycles,
-            timestamp_reset: false,
+            sync_boundary: false,
         },
         cursor,
     )))
@@ -1140,21 +1134,21 @@ mod tests {
             fields: vec![2],
             text: None,
             delta_cycles: 10,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 5,
             fields: Vec::new(),
             text: None,
             delta_cycles: 20,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 1,
             fields: vec![4],
             text: None,
             delta_cycles: 1,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         let snapshot = state.snapshot(3);
         assert_eq!(snapshot.tasks[0].runtime_cycles, 20);
@@ -1198,21 +1192,21 @@ mod tests {
             fields: vec![2, 5],
             text: Some("worker".to_string()),
             delta_cycles: 1,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 10,
             fields: Vec::new(),
             text: None,
             delta_cycles: 1,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 4,
             fields: vec![2],
             text: None,
             delta_cycles: 8,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         let before = state.last_target_cycles;
         state.clear();
@@ -1235,42 +1229,42 @@ mod tests {
             fields: vec![2],
             text: None,
             delta_cycles: 10,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 2,
             fields: vec![15],
             text: None,
             delta_cycles: 20,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 2,
             fields: vec![16],
             text: None,
             delta_cycles: 5,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 3,
             fields: Vec::new(),
             text: None,
             delta_cycles: 7,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 3,
             fields: Vec::new(),
             text: None,
             delta_cycles: 8,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
         state.apply(ParsedPacket {
             event_id: 5,
             fields: Vec::new(),
             text: None,
             delta_cycles: 30,
-            timestamp_reset: false,
+            sync_boundary: false,
         });
 
         let snapshot = state.snapshot(0);
@@ -1279,30 +1273,33 @@ mod tests {
     }
 
     #[test]
-    fn sync_rebases_absolute_target_timestamp_instead_of_double_counting() {
+    fn sync_starts_a_new_delta_epoch_without_inventing_absolute_time() {
         let mut decoder = SystemViewDecoder::default();
         let mut state = TraceState::new(7, 1, true);
 
         let mut first = vec![0; 10];
-        first.extend(packet(10, &[], 100));
+        first.extend(packet(10, &[], 0));
         let (packets, errors) = decoder.push(&first);
         assert_eq!(errors, 0);
         assert_eq!(packets.len(), 1);
-        assert!(packets[0].timestamp_reset);
+        assert!(packets[0].sync_boundary);
         state.apply(packets.into_iter().next().unwrap());
 
         let (packets, errors) = decoder.push(&packet(4, &[2], 20));
         assert_eq!(errors, 0);
         state.apply(packets.into_iter().next().unwrap());
-        assert_eq!(state.last_target_cycles, 120);
+        assert_eq!(state.last_target_cycles, 20);
 
         let mut restart = vec![0; 10];
-        restart.extend(packet(10, &[], 150));
+        restart.extend(packet(10, &[], 0));
         let (packets, errors) = decoder.push(&restart);
         assert_eq!(errors, 0);
-        assert!(packets[0].timestamp_reset);
+        assert!(packets[0].sync_boundary);
         state.apply(packets.into_iter().next().unwrap());
 
-        assert_eq!(state.last_target_cycles, 150);
+        let (packets, errors) = decoder.push(&packet(4, &[2], 5));
+        assert_eq!(errors, 0);
+        state.apply(packets.into_iter().next().unwrap());
+        assert_eq!(state.last_target_cycles, 25);
     }
 }
