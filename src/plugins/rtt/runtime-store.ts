@@ -9,16 +9,29 @@ import {
   type RttHistoryResponse,
   type RttSnapshot,
   type RttViewMode,
+  type SystemViewEvent,
+  type SystemViewHistoryResponse,
+  type SystemViewRuntimeEvent,
+  type SystemViewSnapshot,
 } from "./model";
 
 const CLIENT_HISTORY_BYTES_PER_CHANNEL = 512 * 1024;
 const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
+const CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL = 5_000;
+
+export interface RttSystemViewChannelState {
+  snapshot: SystemViewSnapshot | null;
+  events: readonly SystemViewEvent[];
+  loaded: boolean;
+  error: string | null;
+}
 
 export interface RttRuntimeSnapshot {
   snapshot: RttSnapshot | null;
   selectedChannel: number | null;
   viewModes: Readonly<Record<number, RttViewMode>>;
   buffers: Readonly<Record<number, readonly RttChunk[]>>;
+  systemview: Readonly<Record<number, RttSystemViewChannelState>>;
   error: string | null;
 }
 
@@ -27,6 +40,7 @@ const EMPTY: RttRuntimeSnapshot = Object.freeze({
   selectedChannel: null,
   viewModes: Object.freeze({}),
   buffers: Object.freeze({}),
+  systemview: Object.freeze({}),
   error: null,
 });
 
@@ -62,13 +76,14 @@ function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   if (generationChanged) loadedChannels.delete(sessionId);
 
   const selectedChannel = generationChanged
-    ? (snapshot.automation_source_channel ?? chooseViewChannel(snapshot, null))
+    ? chooseViewChannel(snapshot, null)
     : chooseViewChannel(snapshot, prev.selectedChannel);
   publish(sessionId, {
     snapshot,
     selectedChannel,
     viewModes: prev.viewModes,
     buffers: generationChanged ? Object.freeze({}) : prev.buffers,
+    systemview: generationChanged ? Object.freeze({}) : prev.systemview,
     error: snapshot.last_error?.message ?? null,
   });
 }
@@ -168,6 +183,45 @@ function appendBatch(sessionId: string, generation: number, chunks: readonly Rtt
   });
 }
 
+function mergeSystemViewEvents(
+  currentEvents: readonly SystemViewEvent[],
+  incoming: readonly SystemViewEvent[],
+): SystemViewEvent[] {
+  const bySequence = new Map<number, SystemViewEvent>();
+  for (const event of currentEvents) bySequence.set(event.sequence, event);
+  for (const event of incoming) bySequence.set(event.sequence, event);
+  const merged = [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
+  return merged.length <= CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL
+    ? merged
+    : merged.slice(merged.length - CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL);
+}
+
+function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
+  const prev = current(payload.session_id);
+  if (!prev.snapshot || prev.snapshot.generation !== payload.generation) return;
+  const previous = prev.systemview[payload.channel_index] ?? {
+    snapshot: null,
+    events: [],
+    loaded: false,
+    error: null,
+  };
+  const events = payload.kind === "batch"
+    ? mergeSystemViewEvents(previous.events, payload.events)
+    : previous.events;
+  publish(payload.session_id, {
+    ...prev,
+    systemview: Object.freeze({
+      ...prev.systemview,
+      [payload.channel_index]: Object.freeze({
+        snapshot: payload.snapshot,
+        events: Object.freeze(events),
+        loaded: previous.loaded,
+        error: null,
+      }),
+    }),
+  });
+}
+
 function ensureListeners(): Promise<void> {
   if (listenerReady) return listenerReady;
   listenerReady = (async () => {
@@ -179,6 +233,9 @@ function ensureListeners(): Promise<void> {
       } else {
         appendBatch(payload.session_id, payload.generation, payload.chunks);
       }
+    }));
+    registered.push(await listen<SystemViewRuntimeEvent>("rtt-systemview-event", event => {
+      applySystemViewEvent(event.payload);
     }));
     registered.push(await listen<{ session_id: string }>("session-disconnected", event => {
       const prev = sessions.get(event.payload.session_id);
@@ -262,27 +319,22 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
 
 export async function selectRttChannel(sessionId: string, channelIndex: number): Promise<void> {
   const prev = current(sessionId);
-  const expectedGeneration = prev.snapshot?.generation ?? null;
-  const channel = prev.snapshot?.channels.find(item => item.index === channelIndex);
-  if (!isUsableRttDirection(channel?.up)) {
-    if (prev.selectedChannel !== channelIndex) {
-      publish(sessionId, { ...prev, selectedChannel: channelIndex });
-    }
-    return;
+  if (!prev.snapshot?.channels.some(channel => channel.index === channelIndex)) return;
+  if (prev.selectedChannel !== channelIndex) {
+    publish(sessionId, { ...prev, selectedChannel: channelIndex, error: null });
   }
+}
 
+export async function selectRttAutomationSource(
+  sessionId: string,
+  channelIndex: number,
+): Promise<void> {
   try {
     await invoke("rtt_set_automation_source_channel", { sessionId, channelIndex });
-    const latest = current(sessionId);
-    if (latest.snapshot?.generation !== expectedGeneration) {
-      await refreshRttRuntime(sessionId);
-      return;
-    }
-    publish(sessionId, { ...latest, selectedChannel: channelIndex, error: null });
     await refreshRttRuntime(sessionId);
   } catch (cause) {
-    const latest = current(sessionId);
-    publish(sessionId, { ...latest, error: String(cause) });
+    const prev = current(sessionId);
+    publish(sessionId, { ...prev, error: String(cause) });
   }
 }
 
@@ -349,4 +401,93 @@ export function rttChannelChunks(
   channelIndex: number | null,
 ): readonly RttChunk[] {
   return channelIndex == null ? [] : (runtime.buffers[channelIndex] ?? []);
+}
+
+
+export async function ensureSystemViewHistory(
+  sessionId: string,
+  channelIndex: number,
+): Promise<void> {
+  await ensureListeners();
+  const before = current(sessionId);
+  const existing = before.systemview[channelIndex];
+  if (existing?.loaded) return;
+
+  try {
+    const [snapshot, history] = await Promise.all([
+      invoke<SystemViewSnapshot>("rtt_systemview_snapshot", { sessionId, channelIndex }),
+      invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
+        sessionId,
+        channelIndex,
+        limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
+      }),
+    ]);
+    const prev = current(sessionId);
+    if (!prev.snapshot || prev.snapshot.generation !== snapshot.generation) return;
+    const previous = prev.systemview[channelIndex];
+    publish(sessionId, {
+      ...prev,
+      systemview: Object.freeze({
+        ...prev.systemview,
+        [channelIndex]: Object.freeze({
+          snapshot,
+          events: Object.freeze(mergeSystemViewEvents(previous?.events ?? [], history.events)),
+          loaded: true,
+          error: null,
+        }),
+      }),
+    });
+  } catch (cause) {
+    const prev = current(sessionId);
+    publish(sessionId, {
+      ...prev,
+      systemview: Object.freeze({
+        ...prev.systemview,
+        [channelIndex]: Object.freeze({
+          snapshot: prev.systemview[channelIndex]?.snapshot ?? null,
+          events: prev.systemview[channelIndex]?.events ?? Object.freeze([]),
+          loaded: false,
+          error: String(cause),
+        }),
+      }),
+    });
+  }
+}
+
+export async function attachSystemView(
+  sessionId: string,
+  channelIndex: number,
+): Promise<void> {
+  await invoke("rtt_systemview_attach", { sessionId, channelIndex });
+  await refreshRttRuntime(sessionId);
+  await ensureSystemViewHistory(sessionId, channelIndex);
+}
+
+export async function controlSystemView(
+  sessionId: string,
+  channelIndex: number,
+  control: "start" | "stop" | "refresh",
+): Promise<void> {
+  await invoke("rtt_systemview_control", { sessionId, channelIndex, control });
+}
+
+export async function clearSystemView(
+  sessionId: string,
+  channelIndex: number,
+): Promise<void> {
+  await invoke("rtt_systemview_clear", { sessionId, channelIndex });
+  const prev = current(sessionId);
+  publish(sessionId, {
+    ...prev,
+    systemview: Object.freeze({
+      ...prev.systemview,
+      [channelIndex]: Object.freeze({
+        snapshot: prev.systemview[channelIndex]?.snapshot ?? null,
+        events: Object.freeze([]),
+        loaded: false,
+        error: null,
+      }),
+    }),
+  });
+  await ensureSystemViewHistory(sessionId, channelIndex);
 }
