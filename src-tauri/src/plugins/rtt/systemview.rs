@@ -5,19 +5,11 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
-#[cfg(not(test))]
-use std::time::Instant;
-use tauri::AppHandle;
-#[cfg(not(test))]
-use tauri::Emitter;
+use std::time::{Duration, Instant};
 
 const MAX_EVENT_HISTORY: usize = 4096;
-#[cfg(not(test))]
 const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
-#[cfg(not(test))]
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
-#[cfg(not(test))]
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DECODER_BUFFER: usize = 64 * 1024;
 
@@ -86,6 +78,19 @@ pub struct SystemViewHistoryResponse {
     pub channel_index: u32,
     pub events: Vec<SystemViewEvent>,
 }
+
+#[derive(Debug, Clone)]
+pub enum SystemViewPresentation {
+    Batch {
+        events: Vec<SystemViewEvent>,
+        snapshot: SystemViewSnapshot,
+    },
+    Snapshot {
+        snapshot: SystemViewSnapshot,
+    },
+}
+
+pub type SystemViewPresenter = Arc<dyn Fn(SystemViewPresentation) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemViewControl {
@@ -557,8 +562,7 @@ pub struct SystemViewRuntime {
 }
 
 pub struct SystemViewSpawn {
-    pub app: AppHandle,
-    pub session_id: String,
+    pub presenter: SystemViewPresenter,
     pub generation: u64,
     pub channel_index: u32,
     pub control_available: bool,
@@ -569,70 +573,43 @@ pub struct SystemViewSpawn {
 
 impl SystemViewRuntime {
     pub fn spawn(config: SystemViewSpawn) -> Result<Self, String> {
-        #[cfg(test)]
-        {
-            let SystemViewSpawn {
-                generation,
-                channel_index,
-                control_available,
-                decoder_dropped_chunks,
-                ..
-            } = config;
-            return Ok(Self {
-                channel_index,
-                shared: Arc::new(SystemViewShared::new(
-                    generation,
-                    channel_index,
-                    control_available,
-                    decoder_dropped_chunks,
-                )),
-                stopping: Arc::new(AtomicBool::new(false)),
-                worker: Mutex::new(None),
-            });
-        }
-
-        #[cfg(not(test))]
-        {
-            let SystemViewSpawn {
-                app,
-                session_id,
-                generation,
-                channel_index,
-                control_available,
-                bootstrap,
-                subscription,
-                decoder_dropped_chunks,
-            } = config;
-            let shared = Arc::new(SystemViewShared::new(
-                generation,
-                channel_index,
-                control_available,
-                decoder_dropped_chunks,
-            ));
-            let stopping = Arc::new(AtomicBool::new(false));
-            let worker_shared = Arc::clone(&shared);
-            let worker_stopping = Arc::clone(&stopping);
-            let worker = std::thread::Builder::new()
-                .name(format!("sysview-{session_id}-{channel_index}"))
-                .spawn(move || {
-                    run_decoder(
-                        app,
-                        session_id,
-                        bootstrap,
-                        subscription,
-                        worker_shared,
-                        worker_stopping,
-                    )
-                })
-                .map_err(|error| format!("启动 SystemView decoder 失败: {error}"))?;
-
-            Ok(Self {
-                channel_index,
-                shared,
-                stopping,
-                worker: Mutex::new(Some(worker)),
+        let SystemViewSpawn {
+            presenter,
+            generation,
+            channel_index,
+            control_available,
+            bootstrap,
+            subscription,
+            decoder_dropped_chunks,
+        } = config;
+        let shared = Arc::new(SystemViewShared::new(
+            generation,
+            channel_index,
+            control_available,
+            decoder_dropped_chunks,
+        ));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let worker_shared = Arc::clone(&shared);
+        let worker_stopping = Arc::clone(&stopping);
+        let worker = std::thread::Builder::new()
+            .name(format!("sysview-{channel_index}"))
+            .spawn(move || {
+                run_decoder(
+                    presenter,
+                    bootstrap,
+                    subscription,
+                    worker_shared,
+                    worker_stopping,
+                )
             })
-        }
+            .map_err(|error| format!("启动 SystemView decoder 失败: {error}"))?;
+
+        Ok(Self {
+            channel_index,
+            shared,
+            stopping,
+            worker: Mutex::new(Some(worker)),
+        })
     }
 
     pub fn channel_index(&self) -> u32 {
@@ -677,10 +654,8 @@ impl Drop for SystemViewRuntime {
     }
 }
 
-#[cfg(not(test))]
 fn run_decoder(
-    app: AppHandle,
-    session_id: String,
+    presenter: SystemViewPresenter,
     bootstrap: Vec<StoredRttChunk>,
     subscription: ObservationSubscription<StoredRttChunk>,
     shared: Arc<SystemViewShared>,
@@ -722,13 +697,13 @@ fn run_decoder(
         if last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL && !pending.is_empty() {
             let events = pending.drain(..).collect::<Vec<_>>();
             let snapshot = shared.snapshot();
-            emit_batch(&app, &session_id, snapshot, events);
+            presenter(SystemViewPresentation::Batch { events, snapshot });
             last_flush = Instant::now();
             last_snapshot = Instant::now();
             changed = false;
         } else if changed && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
             let snapshot = shared.snapshot();
-            emit_snapshot(&app, &session_id, snapshot);
+            presenter(SystemViewPresentation::Snapshot { snapshot });
             last_snapshot = Instant::now();
             changed = false;
         }
@@ -736,47 +711,11 @@ fn run_decoder(
 
     if !pending.is_empty() {
         let snapshot = shared.snapshot();
-        emit_batch(
-            &app,
-            &session_id,
+        presenter(SystemViewPresentation::Batch {
+            events: pending.drain(..).collect::<Vec<_>>(),
             snapshot,
-            pending.drain(..).collect::<Vec<_>>(),
-        );
+        });
     }
-}
-
-#[cfg(not(test))]
-fn emit_batch(
-    app: &AppHandle,
-    session_id: &str,
-    snapshot: SystemViewSnapshot,
-    events: Vec<SystemViewEvent>,
-) {
-    let _ = app.emit(
-        "rtt-systemview-event",
-        serde_json::json!({
-            "kind": "batch",
-            "session_id": session_id,
-            "generation": snapshot.generation,
-            "channel_index": snapshot.channel_index,
-            "events": events,
-            "snapshot": snapshot,
-        }),
-    );
-}
-
-#[cfg(not(test))]
-fn emit_snapshot(app: &AppHandle, session_id: &str, snapshot: SystemViewSnapshot) {
-    let _ = app.emit(
-        "rtt-systemview-event",
-        serde_json::json!({
-            "kind": "snapshot",
-            "session_id": session_id,
-            "generation": snapshot.generation,
-            "channel_index": snapshot.channel_index,
-            "snapshot": snapshot,
-        }),
-    );
 }
 
 #[derive(Debug, Clone)]
