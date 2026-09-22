@@ -118,22 +118,22 @@ impl KnownHostStore {
         let version = match serde_json::from_str::<KnownHostsVersion>(&raw) {
             Ok(header) => header.version,
             Err(error) => {
+                let detected = format!("SSH known-host 文件损坏: {error}");
+                Self::mark_blocked(path, &detected)?;
                 let quarantine = Self::quarantine_invalid(path)?;
-                let reason = format!(
-                    "SSH known-host 文件损坏: {error}；原文件已隔离至 {:?}",
-                    quarantine
-                );
+                let reason = format!("{detected}；原文件已隔离至 {:?}", quarantine);
                 Self::mark_blocked(path, &reason)?;
                 return Err(format!("{reason}，必须显式重置信任后才能继续"));
             }
         };
 
         if version != KNOWN_HOSTS_VERSION {
-            let quarantine = Self::quarantine_invalid(path)?;
-            let reason = format!(
-                "SSH known-host schema v{version} 不受支持（expected v{KNOWN_HOSTS_VERSION}）；旧文件已隔离至 {:?}",
-                quarantine
+            let detected = format!(
+                "SSH known-host schema v{version} 不受支持（expected v{KNOWN_HOSTS_VERSION}）"
             );
+            Self::mark_blocked(path, &detected)?;
+            let quarantine = Self::quarantine_invalid(path)?;
+            let reason = format!("{detected}；旧文件已隔离至 {:?}", quarantine);
             Self::mark_blocked(path, &reason)?;
             return Err(format!(
                 "{reason}，不会自动降级为新的 TOFU 信任库；必须显式重置"
@@ -143,11 +143,11 @@ impl KnownHostStore {
         match serde_json::from_str::<KnownHostsFile>(&raw) {
             Ok(file) => Ok(file.hosts),
             Err(error) => {
+                let detected =
+                    format!("SSH known-host schema v{KNOWN_HOSTS_VERSION} 文件损坏: {error}");
+                Self::mark_blocked(path, &detected)?;
                 let quarantine = Self::quarantine_invalid(path)?;
-                let reason = format!(
-                    "SSH known-host schema v{KNOWN_HOSTS_VERSION} 文件损坏: {error}；原文件已隔离至 {:?}",
-                    quarantine
-                );
+                let reason = format!("{detected}；原文件已隔离至 {:?}", quarantine);
                 Self::mark_blocked(path, &reason)?;
                 Err(format!("{reason}，必须显式重置信任后才能继续"))
             }
