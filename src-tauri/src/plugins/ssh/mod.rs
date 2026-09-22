@@ -20,7 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Emitter;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use zeroize::Zeroize;
 
 use crate::kernel::plugin_adapter::{
@@ -32,10 +32,9 @@ use crate::session::SessionError;
 use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
 use driver::SshDriver;
 use handler::SshHandler;
-use known_hosts::{HostTrustDecision, KnownHostStore};
+use known_hosts::{HostTrustDecision, KnownHostRecord, KnownHostStore};
 
 const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
-const HOST_KEY_VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
 const SSH_HOME_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SSH_HOME_MAX_BYTES: usize = 4096;
 
@@ -56,37 +55,64 @@ impl SshAuthMethod {
     }
 }
 
-/// SSH 连接配置。
-///
-/// 这是运行时配置，不是持久化模型。认证秘密只在连接期间存在于该对象中，Drop 时会
-/// 主动清零；Session Library 只持久化 credential reference。
-#[derive(Clone, Deserialize)]
-pub struct SshConfig {
-    /// 远程主机地址（IP 或域名）
+/// 非敏感 SSH 连接参数。持久化模型只保留这些字段与 credential reference。
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SshConnectionParams {
     pub host: String,
-    /// SSH 端口（默认 22）
     #[serde(default = "default_ssh_port")]
     pub port: u16,
-    /// 登录用户名
     pub username: String,
-    /// 认证方式
     #[serde(default)]
     pub auth_method: SshAuthMethod,
-    /// 密码（password 认证时使用）
-    pub password: Option<String>,
-    /// SSH 私钥内容（key 认证时使用）
-    pub private_key: Option<String>,
-    /// 私钥密码短语（可选）
-    pub passphrase: Option<String>,
-    /// 数据模式: "text" | "hex" | "dual"
-    #[serde(default = "default_data_mode")]
-    pub data_mode: String,
-    /// 是否启用文件服务
-    #[serde(default)]
-    pub file_service_enabled: bool,
-    /// 文件服务协议: "sftp"
-    #[serde(default = "default_file_service_protocol")]
-    pub file_service_protocol: String,
+}
+
+/// 运行时认证秘密。无效的“密码 + 私钥同时存在”状态无法表示。
+#[derive(Clone)]
+pub(crate) enum SshAuthSecret {
+    Password(String),
+    Key {
+        private_key: String,
+        passphrase: Option<String>,
+    },
+}
+
+impl fmt::Debug for SshAuthSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Password(_) => f.write_str("Password(<redacted>)"),
+            Self::Key { passphrase, .. } => f
+                .debug_struct("Key")
+                .field("private_key", &"<redacted>")
+                .field("passphrase", &passphrase.as_ref().map(|_| "<redacted>"))
+                .finish(),
+        }
+    }
+}
+
+impl Drop for SshAuthSecret {
+    fn drop(&mut self) {
+        match self {
+            Self::Password(password) => password.zeroize(),
+            Self::Key {
+                private_key,
+                passphrase,
+            } => {
+                private_key.zeroize();
+                if let Some(passphrase) = passphrase.as_mut() {
+                    passphrase.zeroize();
+                }
+            }
+        }
+    }
+}
+
+/// 已 hydrate 的 SSH 运行时配置。认证秘密只在连接生命周期内存在。
+#[derive(Clone)]
+pub struct SshConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub(crate) auth: SshAuthSecret,
 }
 
 impl fmt::Debug for SshConfig {
@@ -95,38 +121,45 @@ impl fmt::Debug for SshConfig {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("username", &self.username)
-            .field("auth_method", &self.auth_method)
-            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
-            .field(
-                "private_key",
-                &self.private_key.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "passphrase",
-                &self.passphrase.as_ref().map(|_| "<redacted>"),
-            )
-            .field("data_mode", &self.data_mode)
-            .field("file_service_enabled", &self.file_service_enabled)
-            .field("file_service_protocol", &self.file_service_protocol)
+            .field("auth_method", &self.auth_method())
+            .field("auth", &self.auth)
             .finish()
     }
 }
 
-impl Drop for SshConfig {
-    fn drop(&mut self) {
-        if let Some(password) = self.password.as_mut() {
-            password.zeroize();
-        }
-        if let Some(private_key) = self.private_key.as_mut() {
-            private_key.zeroize();
-        }
-        if let Some(passphrase) = self.passphrase.as_mut() {
-            passphrase.zeroize();
+impl SshConfig {
+    pub(crate) fn password(params: SshConnectionParams, password: String) -> Self {
+        Self {
+            host: params.host,
+            port: params.port,
+            username: params.username,
+            auth: SshAuthSecret::Password(password),
         }
     }
-}
 
-impl SshConfig {
+    pub(crate) fn key(
+        params: SshConnectionParams,
+        private_key: String,
+        passphrase: Option<String>,
+    ) -> Self {
+        Self {
+            host: params.host,
+            port: params.port,
+            username: params.username,
+            auth: SshAuthSecret::Key {
+                private_key,
+                passphrase,
+            },
+        }
+    }
+
+    pub(crate) fn auth_method(&self) -> SshAuthMethod {
+        match self.auth {
+            SshAuthSecret::Password(_) => SshAuthMethod::Password,
+            SshAuthSecret::Key { .. } => SshAuthMethod::Key,
+        }
+    }
+
     fn validate(&self) -> Result<(), SessionError> {
         if normalize_ssh_host(&self.host).is_empty() {
             return Err(SessionError::InvalidParameter(
@@ -141,29 +174,18 @@ impl SshConfig {
         if self.username.trim().is_empty() {
             return Err(SessionError::InvalidParameter("SSH 用户名不能为空".into()));
         }
-        match self.auth_method {
-            SshAuthMethod::Password if self.password.as_deref().unwrap_or_default().is_empty() => {
+        match &self.auth {
+            SshAuthSecret::Password(password) if password.is_empty() => {
                 return Err(SessionError::InvalidParameter(
                     "SSH 密码认证缺少密码凭据".into(),
                 ));
             }
-            SshAuthMethod::Key
-                if self
-                    .private_key
-                    .as_deref()
-                    .is_none_or(|key| key.trim().is_empty()) =>
-            {
+            SshAuthSecret::Key { private_key, .. } if private_key.trim().is_empty() => {
                 return Err(SessionError::InvalidParameter(
                     "SSH 密钥认证缺少私钥凭据".into(),
                 ));
             }
             _ => {}
-        }
-        if self.file_service_enabled && self.file_service_protocol != "sftp" {
-            return Err(SessionError::InvalidParameter(format!(
-                "不支持的 SSH 文件服务协议: {}",
-                self.file_service_protocol
-            )));
         }
         Ok(())
     }
@@ -171,12 +193,6 @@ impl SshConfig {
 
 fn default_ssh_port() -> u16 {
     22
-}
-fn default_data_mode() -> String {
-    "text".into()
-}
-fn default_file_service_protocol() -> String {
-    "sftp".into()
 }
 
 fn normalize_ssh_host(host: &str) -> &str {
@@ -324,6 +340,26 @@ impl SshAdapter {
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<SshRuntime>> {
         self.runtimes.get(session_id)
+    }
+
+    pub fn replace_known_host(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> Result<(), String> {
+        self.host_key_verifier
+            .known_hosts
+            .replace(host, port, algorithm, fingerprint)
+    }
+
+    pub fn forget_known_host(&self, host: &str, port: u16) -> Result<bool, String> {
+        self.host_key_verifier.known_hosts.forget(host, port)
+    }
+
+    pub fn known_hosts(&self) -> Result<Vec<KnownHostRecord>, String> {
+        self.host_key_verifier.known_hosts.list()
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
