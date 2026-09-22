@@ -13,7 +13,7 @@ use crate::security::credential_store::{
     CredentialStore, CredentialStoreError, CredentialType, CredentialValue,
 };
 
-use super::SshConfig;
+use super::{SshConfig, SshConnectionParams};
 
 const CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
 
@@ -184,12 +184,16 @@ pub(crate) fn session_config_handler() -> SessionConfigHandler {
     }
 }
 
-fn apply_credential(config: &mut SshConfig, credential: CredentialValue) -> Result<(), String> {
-    match (config.auth_method.as_str(), credential) {
+fn runtime_config(
+    params: &Value,
+    credential: CredentialValue,
+) -> Result<SshConfig, String> {
+    let connection: SshConnectionParams = serde_json::from_value(params.clone())
+        .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
+
+    match (connection.auth_method.as_str(), credential) {
         ("password", CredentialValue::Password(password)) => {
-            config.password = Some(password);
-            config.private_key = None;
-            config.passphrase = None;
+            Ok(SshConfig::password(connection, password))
         }
         (
             "key",
@@ -197,24 +201,15 @@ fn apply_credential(config: &mut SshConfig, credential: CredentialValue) -> Resu
                 private_key,
                 passphrase,
             },
-        ) => {
-            config.password = None;
-            config.private_key = Some(private_key);
-            config.passphrase = passphrase;
-        }
-        _ => {
-            return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
-        }
+        ) => Ok(SshConfig::key(connection, private_key, passphrase)),
+        _ => Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into()),
     }
-    Ok(())
 }
 
 pub(crate) fn hydrate_config(
     credential_store: &CredentialStore,
     params: &Value,
 ) -> Result<SshConfig, String> {
-    let mut config: SshConfig = serde_json::from_value(params.clone())
-        .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
     let account = params
         .get(CREDENTIAL_ACCOUNT_KEY)
         .and_then(Value::as_str)
@@ -223,8 +218,7 @@ pub(crate) fn hydrate_config(
     let credential = credential_store
         .get_credential(account)
         .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
-    apply_credential(&mut config, credential)?;
-    Ok(config)
+    runtime_config(params, credential)
 }
 
 pub(crate) fn hydrate_config_with_pending(
@@ -233,10 +227,7 @@ pub(crate) fn hydrate_config_with_pending(
     pending: Option<&PendingSshCredential>,
 ) -> Result<SshConfig, String> {
     if let Some(pending) = pending {
-        let mut config: SshConfig = serde_json::from_value(params.clone())
-            .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
-        apply_credential(&mut config, pending.value.clone())?;
-        Ok(config)
+        runtime_config(params, pending.value.clone())
     } else {
         hydrate_config(credential_store, params)
     }
