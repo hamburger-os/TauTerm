@@ -15,7 +15,6 @@ interface Props {
   controlAvailable: boolean;
   onStart: () => void;
   onStop: () => void;
-  onRefreshTasks: () => void;
   onClear: () => void;
 }
 
@@ -31,6 +30,163 @@ function formatCycles(value: number): string {
   if (value >= 1000000) return (value / 1000000).toFixed(2) + "M";
   if (value >= 1000) return (value / 1000).toFixed(1) + "k";
   return String(value);
+}
+
+function formatTargetTime(
+  cycles: number,
+  originCycles: number,
+  sysFrequency: number | null | undefined,
+): string {
+  if (!sysFrequency) return formatCycles(cycles);
+  const seconds = Math.max(0, cycles - originCycles) / sysFrequency;
+  if (seconds >= 1) return `+${seconds.toFixed(seconds >= 10 ? 2 : 3)} s`;
+  const milliseconds = seconds * 1_000;
+  if (milliseconds >= 1) return `+${milliseconds.toFixed(milliseconds >= 10 ? 1 : 2)} ms`;
+  const microseconds = seconds * 1_000_000;
+  return `+${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
+}
+
+function formatTargetDuration(
+  cycles: number,
+  sysFrequency: number | null | undefined,
+): string {
+  if (!sysFrequency) return formatCycles(cycles);
+  const seconds = cycles / sysFrequency;
+  if (seconds >= 1) return `${seconds.toFixed(seconds >= 10 ? 2 : 3)} s`;
+  const milliseconds = seconds * 1_000;
+  if (milliseconds >= 1) return `${milliseconds.toFixed(milliseconds >= 10 ? 1 : 2)} ms`;
+  const microseconds = seconds * 1_000_000;
+  return `${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
+}
+
+function restoreTargetId(
+  taskId: number,
+  snapshot: SystemViewSnapshot | null,
+): string | null {
+  if (snapshot?.ram_base == null || snapshot.id_shift == null) return null;
+  const restored = BigInt(snapshot.ram_base) + (BigInt(taskId) << BigInt(snapshot.id_shift));
+  return `0x${restored.toString(16).toUpperCase()}`;
+}
+
+interface TimelineSeed {
+  activeTaskId: number | null;
+  interruptedTaskId: number | null;
+  interruptedIdle: boolean;
+  irqDepth: number;
+  idleActive: boolean;
+}
+
+function timelineSeed(
+  events: readonly SystemViewEvent[],
+  initial: SystemViewSnapshot["history_entry_state"] | null | undefined,
+): TimelineSeed {
+  const seed: TimelineSeed = {
+    activeTaskId: initial?.active_task_id ?? null,
+    interruptedTaskId: initial?.interrupted_task_id ?? null,
+    interruptedIdle: initial?.interrupted_idle ?? false,
+    irqDepth: initial?.irq_depth ?? 0,
+    idleActive: initial?.idle_active ?? false,
+  };
+
+  const reset = () => {
+    seed.activeTaskId = null;
+    seed.interruptedTaskId = null;
+    seed.interruptedIdle = false;
+    seed.irqDepth = 0;
+    seed.idleActive = false;
+  };
+
+  for (const event of events) {
+    if (event.sync_boundary) reset();
+    switch (event.event_id) {
+      case 1:
+      case 10:
+      case 11:
+        reset();
+        break;
+      case 2:
+        if (seed.irqDepth === 0) {
+          seed.interruptedTaskId = seed.activeTaskId;
+          seed.interruptedIdle = seed.idleActive;
+          seed.activeTaskId = null;
+          seed.idleActive = false;
+        }
+        seed.irqDepth += 1;
+        break;
+      case 3:
+        seed.irqDepth = Math.max(0, seed.irqDepth - 1);
+        if (seed.irqDepth === 0) {
+          seed.activeTaskId = seed.interruptedTaskId;
+          seed.idleActive = seed.interruptedIdle;
+          seed.interruptedTaskId = null;
+          seed.interruptedIdle = false;
+        }
+        break;
+      case 4:
+        seed.activeTaskId = event.context_id ?? null;
+        seed.interruptedTaskId = null;
+        seed.interruptedIdle = false;
+        seed.irqDepth = 0;
+        seed.idleActive = false;
+        break;
+      case 5:
+        seed.activeTaskId = null;
+        break;
+      case 17:
+        seed.activeTaskId = null;
+        seed.idleActive = true;
+        break;
+      case 18:
+        reset();
+        break;
+      case 29:
+        if (event.context_id != null && seed.activeTaskId === event.context_id) {
+          seed.activeTaskId = null;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return seed;
+}
+
+function selectTimelineTasks(
+  snapshot: SystemViewSnapshot | null,
+  visibleEvents: readonly SystemViewEvent[],
+  seed: TimelineSeed,
+): SystemViewSnapshot["tasks"] {
+  const tasks = snapshot?.tasks ?? [];
+  if (tasks.length <= MAX_TASK_LANES) return [...tasks].sort((left, right) => left.id - right.id);
+
+  const lastExecution = new Map<number, number>();
+  visibleEvents.forEach((event, index) => {
+    if (event.event_id === 4 && event.context_id != null) {
+      lastExecution.set(event.context_id, index);
+    }
+  });
+  const pinned = new Set<number>();
+  if (seed.activeTaskId != null) pinned.add(seed.activeTaskId);
+  if (seed.interruptedTaskId != null) pinned.add(seed.interruptedTaskId);
+
+  const selected = [...tasks]
+    .sort((left, right) => {
+      const leftPinned = pinned.has(left.id) ? 1 : 0;
+      const rightPinned = pinned.has(right.id) ? 1 : 0;
+      if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+
+      const leftRecent = lastExecution.get(left.id) ?? -1;
+      const rightRecent = lastExecution.get(right.id) ?? -1;
+      const leftVisible = leftRecent >= 0 ? 1 : 0;
+      const rightVisible = rightRecent >= 0 ? 1 : 0;
+      if (leftVisible !== rightVisible) return rightVisible - leftVisible;
+      if (leftRecent !== rightRecent) return rightRecent - leftRecent;
+
+      return right.runtime_cycles - left.runtime_cycles || left.id - right.id;
+    })
+    .slice(0, MAX_TASK_LANES);
+
+  return selected.sort((left, right) => left.id - right.id);
 }
 
 function eventLabel(event: SystemViewEvent): string {
@@ -71,7 +227,8 @@ function drawTimeline(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-  const visible = events.slice(-MAX_RENDER_EVENTS);
+  const visibleStart = Math.max(0, events.length - MAX_RENDER_EVENTS);
+  const visible = events.slice(visibleStart);
   if (visible.length === 0) {
     ctx.fillStyle = textMuted;
     ctx.font = `${fontSize} ${fontFamily}`;
@@ -79,9 +236,11 @@ function drawTimeline(
     return;
   }
 
-  const tasks = [...(snapshot?.tasks ?? [])]
-    .sort((left, right) => left.id - right.id)
-    .slice(0, MAX_TASK_LANES);
+  const seed = timelineSeed(
+    events.slice(0, visibleStart),
+    snapshot?.history_entry_state,
+  );
+  const tasks = selectTimelineTasks(snapshot, visible, seed);
   const taskIds = new Set(tasks.map(task => task.id));
   const laneFor = new Map<number, number>();
   tasks.forEach((task, index) => laneFor.set(task.id, index));
@@ -120,14 +279,15 @@ function drawTimeline(
   ctx.fillText(labels.isr, 12, irqY + laneHeight * 0.68);
   ctx.fillText(labels.idle, 12, idleY + laneHeight * 0.68);
 
-  let activeTaskId: number | null = null;
-  let activeTaskStart = 0;
-  let interruptedTaskId: number | null = null;
+  let activeTaskId: number | null = seed.activeTaskId;
+  let activeTaskStart = startCycles;
+  let interruptedTaskId: number | null = seed.interruptedTaskId;
+  let interruptedIdle = seed.interruptedIdle;
   const taskIntervals: Array<{ id: number; start: number; end: number }> = [];
-  let irqDepth = 0;
-  let irqStart: number | null = null;
+  let irqDepth = seed.irqDepth;
+  let irqStart: number | null = seed.irqDepth > 0 ? startCycles : null;
   const irqIntervals: Array<{ start: number; end: number }> = [];
-  let idleStart: number | null = null;
+  let idleStart: number | null = seed.idleActive ? startCycles : null;
   const idleIntervals: Array<{ start: number; end: number }> = [];
   const gapIntervals: Array<{ start: number; end: number }> = [];
 
@@ -155,16 +315,44 @@ function drawTimeline(
       }
       irqDepth = 0;
       interruptedTaskId = null;
+      interruptedIdle = false;
       gapIntervals.push({ start: gapStart, end: event.target_cycles });
+    } else if (event.event_id === 10) {
+      closeTask(event.target_cycles);
+      closeIdle(event.target_cycles);
+      if (irqStart != null) {
+        irqIntervals.push({ start: irqStart, end: event.target_cycles });
+        irqStart = null;
+      }
+      irqDepth = 0;
+      interruptedTaskId = null;
+      interruptedIdle = false;
     } else if (event.event_id === 4) {
       closeTask(event.target_cycles);
+      closeIdle(event.target_cycles);
+      if (irqStart != null) {
+        irqIntervals.push({ start: irqStart, end: event.target_cycles });
+        irqStart = null;
+      }
+      irqDepth = 0;
+      interruptedTaskId = null;
+      interruptedIdle = false;
       if (event.context_id != null) {
         activeTaskId = event.context_id;
         activeTaskStart = event.target_cycles;
       }
-      closeIdle(event.target_cycles);
-    } else if (event.event_id === 5 || event.event_id === 11) {
+    } else if (event.event_id === 5) {
       closeTask(event.target_cycles);
+    } else if (event.event_id === 11) {
+      closeTask(event.target_cycles);
+      closeIdle(event.target_cycles);
+      if (irqStart != null) {
+        irqIntervals.push({ start: irqStart, end: event.target_cycles });
+        irqStart = null;
+      }
+      irqDepth = 0;
+      interruptedTaskId = null;
+      interruptedIdle = false;
     } else if (event.event_id === 17) {
       closeTask(event.target_cycles);
       if (idleStart == null) idleStart = event.target_cycles;
@@ -172,7 +360,9 @@ function drawTimeline(
       if (irqDepth === 0) {
         irqStart = event.target_cycles;
         interruptedTaskId = activeTaskId;
+        interruptedIdle = idleStart != null;
         closeTask(event.target_cycles);
+        closeIdle(event.target_cycles);
       }
       irqDepth += 1;
     } else if (event.event_id === 3) {
@@ -185,8 +375,11 @@ function drawTimeline(
         if (interruptedTaskId != null) {
           activeTaskId = interruptedTaskId;
           activeTaskStart = event.target_cycles;
-          interruptedTaskId = null;
+        } else if (interruptedIdle) {
+          idleStart = event.target_cycles;
         }
+        interruptedTaskId = null;
+        interruptedIdle = false;
       }
     } else if (event.event_id === 18) {
       if (irqStart != null) {
@@ -195,6 +388,13 @@ function drawTimeline(
       }
       irqDepth = 0;
       interruptedTaskId = null;
+      interruptedIdle = false;
+    } else if (
+      event.event_id === 29
+      && event.context_id != null
+      && activeTaskId === event.context_id
+    ) {
+      closeTask(event.target_cycles);
     }
   }
   closeTask(endCycles);
@@ -231,7 +431,7 @@ function drawTimeline(
   for (let tick = 0; tick <= 4; tick += 1) {
     const cycles = Math.round(startCycles + span * (tick / 4));
     const x = xFor(cycles);
-    ctx.fillText(formatCycles(cycles), x - 18, cssHeight - 7);
+    ctx.fillText(formatTargetTime(cycles, startCycles, snapshot?.sys_freq_hz), x - 22, cssHeight - 7);
   }
 }
 
@@ -241,45 +441,44 @@ export default function SystemViewTraceView({
   controlAvailable,
   onStart,
   onStop,
-  onRefreshTasks,
   onClear,
 }: Props) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const metadataRefreshKeyRef = useRef("");
-  const onRefreshTasksRef = useRef(onRefreshTasks);
-  onRefreshTasksRef.current = onRefreshTasks;
   const snapshot = state?.snapshot ?? null;
   const events = state?.events ?? [];
-  const unknownTasks = useMemo(
-    () => (snapshot?.tasks ?? []).filter(task => !task.name || task.priority == null),
-    [snapshot?.tasks],
-  );
-  const unknownTaskKey = useMemo(
-    () => unknownTasks.map(task => task.id).sort((a, b) => a - b).join(","),
-    [unknownTasks],
-  );
+  const metadataSync = state?.metadataSync;
   const integrityCompromised = Boolean(snapshot && (
     snapshot.target_overflow_packets > 0
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
     || snapshot.presentation_dropped_events > 0
   ));
-
-  useEffect(() => {
-    if (!controlAvailable || !unknownTaskKey || !snapshot) return;
-    const key = `${snapshot.generation}:${unknownTaskKey}`;
-    if (metadataRefreshKeyRef.current === key) return;
-    metadataRefreshKeyRef.current = key;
-
-    // Metadata can arrive after the task's first execution event. Retry a small bounded sequence
-    // instead of polling forever; any resolved/changed unknown-task set cancels the old sequence.
-    const timers = [350, 2500, 10000].map(delay => window.setTimeout(
-      () => onRefreshTasksRef.current(),
-      delay,
-    ));
-    return () => timers.forEach(timer => window.clearTimeout(timer));
-  }, [controlAvailable, snapshot?.generation, unknownTaskKey]);
+  const taskStatsIncomplete = Boolean(snapshot && (
+    snapshot.target_overflow_packets > 0
+    || snapshot.target_dropped_events > 0
+    || snapshot.decoder_dropped_chunks > 0
+    || snapshot.decoder_errors > 0
+  ));
+  const metadataStatus = useMemo(() => {
+    if (!metadataSync || metadataSync.unresolved_tasks === 0) {
+      return snapshot?.system_description?.[0] ?? "";
+    }
+    if (metadataSync.phase === "unavailable") {
+      return t("rtt.traceMetadataUnavailable", { count: metadataSync.unresolved_tasks });
+    }
+    if (metadataSync.phase === "incomplete") {
+      return t("rtt.traceMetadataIncomplete", {
+        count: metadataSync.unresolved_tasks,
+        attempts: metadataSync.attempts,
+      });
+    }
+    return t("rtt.traceMetadataSyncing", {
+      count: metadataSync.unresolved_tasks,
+      attempts: metadataSync.attempts,
+      max: metadataSync.max_attempts,
+    });
+  }, [metadataSync, snapshot?.system_description, t]);
 
   useEffect(() => {
     if (mode !== "trace" || !canvasRef.current) return;
@@ -314,6 +513,7 @@ export default function SystemViewTraceView({
   }, [events, mode, snapshot, t]);
 
   const visibleEvents = useMemo(() => events.slice(-MAX_EVENT_ROWS).reverse(), [events]);
+  const eventTimeOrigin = events[0]?.target_cycles ?? 0;
   const windowCycles = useMemo(() => {
     if (!snapshot) return 0;
     return Math.max(0, snapshot.last_target_cycles - snapshot.window_start_cycles);
@@ -351,15 +551,31 @@ export default function SystemViewTraceView({
 
       {state?.error && <div className={styles.error}>{state.error}</div>}
       {integrityCompromised && (
-        <div className={styles.integrityWarning}>{t("rtt.traceIncomplete")}</div>
+        <div className={styles.integrityWarning}>
+          <span>{t("rtt.traceIncomplete")}</span>
+          <span className={styles.integrityDetails}>
+            {t("rtt.traceIntegrityDetails", {
+              target: snapshot?.target_dropped_events ?? 0,
+              decoder: snapshot?.decoder_dropped_chunks ?? 0,
+              errors: snapshot?.decoder_errors ?? 0,
+              presentation: snapshot?.presentation_dropped_events ?? 0,
+            })}
+          </span>
+        </div>
       )}
 
       <div className={styles.metrics}>
         <div className={styles.metric}><span>{t("rtt.traceEvents")}</span><strong>{snapshot?.event_count ?? 0}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{snapshot?.task_count ?? 0}</strong></div>
-        <div className={styles.metric}><span>{t("rtt.traceTargetOverflow")}</span><strong>{snapshot?.target_dropped_events ?? 0}</strong></div>
+        <div
+          className={styles.metric}
+          title={t("rtt.traceTargetOverflowHint", { packets: snapshot?.target_overflow_packets ?? 0 })}
+        >
+          <span>{t("rtt.traceTargetOverflow")}</span><strong>{snapshot?.target_dropped_events ?? 0}</strong>
+        </div>
         <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{snapshot?.decoder_dropped_chunks ?? 0}</strong></div>
-        <div className={styles.metric}><span>{t("rtt.traceClock")}</span><strong>{formatFrequency(snapshot?.cpu_freq_hz ?? snapshot?.sys_freq_hz)}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceTimestampClock")}</span><strong>{formatFrequency(snapshot?.sys_freq_hz)}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceClock")}</span><strong>{formatFrequency(snapshot?.cpu_freq_hz)}</strong></div>
       </div>
 
       {mode === "trace" ? (
@@ -381,11 +597,7 @@ export default function SystemViewTraceView({
           <section className={styles.tasksSection}>
             <div className={styles.sectionHeader}>
               <strong>{t("rtt.traceTaskStats")}</strong>
-              <span>
-                {unknownTasks.length > 0
-                  ? t("rtt.traceMetadataSyncing", { count: unknownTasks.length })
-                  : snapshot?.system_description?.[0] ?? ""}
-              </span>
+              <span title={metadataStatus}>{metadataStatus}</span>
             </div>
             <div className={styles.taskTable}>
               <div className={`${styles.taskRow} ${styles.taskHeader} liquid-control-surface`}>
@@ -398,10 +610,23 @@ export default function SystemViewTraceView({
                 const percent = windowCycles > 0 ? (task.runtime_cycles / windowCycles) * 100 : 0;
                 return (
                   <div key={task.id} className={styles.taskRow}>
-                    <span>{task.name || `${t("rtt.traceUnknownTask")} 0x${task.id.toString(16)}`}</span>
+                    <span
+                      title={(() => {
+                        const compressed = `0x${task.id.toString(16).toUpperCase()}`;
+                        const restored = restoreTargetId(task.id, snapshot);
+                        const identity = restored
+                          ? t("rtt.traceTaskIdDetails", { compressed, restored })
+                          : t("rtt.traceTaskIdOnly", { compressed });
+                        return task.name ? `${task.name} · ${identity}` : identity;
+                      })()}
+                    >
+                      {task.name || `${t("rtt.traceUnknownTask")} · ID 0x${task.id.toString(16).toUpperCase()}`}
+                    </span>
                     <span>{task.priority ?? "—"}</span>
                     <span>{task.switches}</span>
-                    <span>{formatCycles(task.runtime_cycles)} · {percent.toFixed(1)}%</span>
+                    <span>
+                      {formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz)} · {taskStatsIncomplete ? "≥" : ""}{percent.toFixed(1)}%
+                    </span>
                   </div>
                 );
               })}
@@ -415,9 +640,19 @@ export default function SystemViewTraceView({
             <div className={styles.empty}>{t("rtt.traceWaiting")}</div>
           ) : visibleEvents.map(event => (
             <div key={event.sequence} className={styles.eventRow}>
-              <span className={styles.eventMeta}>#{event.sequence} · {formatCycles(event.target_cycles)}</span>
+              <span
+                className={styles.eventMeta}
+                title={`${event.target_cycles} cycles`}
+              >
+                #{event.sequence} · {formatTargetTime(event.target_cycles, eventTimeOrigin, snapshot?.sys_freq_hz)}
+              </span>
               <span className={styles.eventName}>{eventLabel(event)}</span>
-              <span className={styles.eventDelta}>+{formatCycles(event.delta_cycles)}</span>
+              <span
+                className={styles.eventDelta}
+                title={`+${event.delta_cycles} cycles`}
+              >
+                +{formatTargetDuration(event.delta_cycles, snapshot?.sys_freq_hz)}
+              </span>
             </div>
           ))}
         </div>

@@ -455,6 +455,14 @@ impl RttShared {
             .unwrap_or_default()
     }
 
+    fn systemview_control_channel(&self) -> Option<u32> {
+        self.channel_claims.lock().ok().and_then(|claims| {
+            claims.iter().find_map(|(channel_index, owner)| {
+                (owner == "SystemView").then_some(*channel_index)
+            })
+        })
+    }
+
     fn validate_user_write(&self, channel_index: u32) -> Result<(), RttError> {
         if let Some(owner) = self
             .channel_claims
@@ -976,8 +984,31 @@ impl RttRuntime {
         #[cfg(test)]
         let presenter = super::systemview::discard_presenter();
 
+        let command_tx = self
+            .command_tx
+            .lock()
+            .map_err(|error| RttError::backend(error.to_string()))?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| RttError::new(RttErrorCode::Cancelled, "RTT worker 不可用"))?;
+        let control_shared = Arc::clone(&self.shared);
+        let metadata_refresh = Arc::new(move || {
+            let Some(control_channel) = control_shared.systemview_control_channel() else {
+                return false;
+            };
+            let (reply_tx, _reply_rx) = mpsc::sync_channel(1);
+            command_tx
+                .try_send(WorkerCommand::Write {
+                    channel_index: control_channel,
+                    data: SystemViewControl::RefreshTasks.bytes().to_vec(),
+                    reply: reply_tx,
+                })
+                .is_ok()
+        });
+
         let runtime = match SystemViewRuntime::spawn(SystemViewSpawn {
             presenter,
+            metadata_refresh,
             generation: snapshot.generation,
             channel_index,
             control_available: false,

@@ -7,11 +7,14 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-const MAX_EVENT_HISTORY: usize = 4096;
+const MAX_EVENT_HISTORY: usize = 8192;
 const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DECODER_BUFFER: usize = 64 * 1024;
+const METADATA_RETRY_DELAYS_MS: [u64; 10] = [
+    350, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 45_000, 60_000, 90_000,
+];
 
 const COMMAND_START: u8 = 1;
 const COMMAND_STOP: u8 = 2;
@@ -46,6 +49,67 @@ pub struct SystemViewEvent {
     pub context_id: Option<u32>,
     pub value: Option<u64>,
     pub text: Option<String>,
+    pub sync_boundary: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SystemViewExecutionState {
+    pub active_task_id: Option<u32>,
+    pub interrupted_task_id: Option<u32>,
+    pub interrupted_idle: bool,
+    pub irq_depth: u32,
+    pub idle_active: bool,
+}
+
+impl SystemViewExecutionState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn apply_event(&mut self, event: &SystemViewEvent) {
+        if event.sync_boundary {
+            self.reset();
+        }
+        match event.event_id {
+            1 | 10 | 11 | 18 => self.reset(),
+            2 => {
+                if self.irq_depth == 0 {
+                    self.interrupted_task_id = self.active_task_id.take();
+                    self.interrupted_idle = self.idle_active;
+                    self.idle_active = false;
+                }
+                self.irq_depth = self.irq_depth.saturating_add(1);
+            }
+            3 => {
+                self.irq_depth = self.irq_depth.saturating_sub(1);
+                if self.irq_depth == 0 {
+                    self.active_task_id = self.interrupted_task_id.take();
+                    self.idle_active = self.active_task_id.is_none() && self.interrupted_idle;
+                    self.interrupted_idle = false;
+                }
+            }
+            4 => {
+                self.reset();
+                self.active_task_id = event.context_id;
+            }
+            5 => {
+                self.active_task_id = None;
+            }
+            17 => {
+                self.active_task_id = None;
+                self.idle_active = true;
+            }
+            29 => {
+                if event.context_id == self.active_task_id {
+                    self.active_task_id = None;
+                }
+                if event.context_id == self.interrupted_task_id {
+                    self.interrupted_task_id = None;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,6 +120,8 @@ pub struct SystemViewSnapshot {
     pub control_available: bool,
     pub event_count: u64,
     pub task_count: usize,
+    pub metadata_sync_attempts: u32,
+    pub metadata_sync_max_attempts: u32,
     pub target_overflow_packets: u64,
     pub target_dropped_events: u64,
     pub decoder_dropped_chunks: u64,
@@ -67,6 +133,7 @@ pub struct SystemViewSnapshot {
     pub ram_base: Option<u32>,
     pub id_shift: Option<u32>,
     pub system_description: Vec<String>,
+    pub history_entry_state: SystemViewExecutionState,
     pub window_start_cycles: u64,
     pub last_target_cycles: u64,
     pub tasks: Vec<SystemViewTaskSnapshot>,
@@ -91,6 +158,7 @@ pub enum SystemViewPresentation {
 }
 
 pub type SystemViewPresenter = Arc<dyn Fn(SystemViewPresentation) + Send + Sync + 'static>;
+pub type SystemViewMetadataRefresh = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
 
 #[cfg(test)]
 pub fn discard_presenter() -> SystemViewPresenter {
@@ -143,6 +211,7 @@ struct TaskState {
     priority: Option<u32>,
     runtime_cycles: u64,
     switches: u64,
+    terminated: bool,
 }
 
 struct TraceState {
@@ -151,6 +220,7 @@ struct TraceState {
     control_available: bool,
     phase: SystemViewPhase,
     event_count: u64,
+    metadata_sync_attempts: u32,
     target_overflow_packets: u64,
     target_dropped_events: u64,
     decoder_errors: u64,
@@ -167,6 +237,7 @@ struct TraceState {
     interrupted_task: Option<u32>,
     isr_depth: u32,
     tasks: BTreeMap<u32, TaskState>,
+    history_entry_state: SystemViewExecutionState,
     events: VecDeque<SystemViewEvent>,
     next_event_sequence: u64,
 }
@@ -179,6 +250,7 @@ impl TraceState {
             control_available,
             phase: SystemViewPhase::Idle,
             event_count: 0,
+            metadata_sync_attempts: 0,
             target_overflow_packets: 0,
             target_dropped_events: 0,
             decoder_errors: 0,
@@ -195,6 +267,7 @@ impl TraceState {
             interrupted_task: None,
             isr_depth: 0,
             tasks: BTreeMap::new(),
+            history_entry_state: SystemViewExecutionState::default(),
             events: VecDeque::new(),
             next_event_sequence: 1,
         }
@@ -273,8 +346,32 @@ impl TraceState {
                 self.close_active_task(self.last_target_cycles);
                 self.interrupted_task = None;
             }
-            6 | 8 | 15 | 16 | 19 | 29 => {
+            6 | 15 | 16 | 19 => {
                 context_id = packet.fields.first().copied();
+            }
+            8 => {
+                if let Some(task_id) = packet.fields.first().copied() {
+                    let task = self.tasks.entry(task_id).or_default();
+                    if task.terminated {
+                        *task = TaskState::default();
+                    }
+                    context_id = Some(task_id);
+                }
+            }
+            29 => {
+                if let Some(task_id) = packet.fields.first().copied() {
+                    if self
+                        .active_task
+                        .is_some_and(|(active_id, _)| active_id == task_id)
+                    {
+                        self.close_active_task(self.last_target_cycles);
+                    }
+                    if self.interrupted_task == Some(task_id) {
+                        self.interrupted_task = None;
+                    }
+                    self.tasks.entry(task_id).or_default().terminated = true;
+                    context_id = Some(task_id);
+                }
             }
             7 => {
                 context_id = packet.fields.first().copied();
@@ -365,11 +462,14 @@ impl TraceState {
             context_id,
             value,
             text,
+            sync_boundary: packet.sync_boundary,
         };
         self.next_event_sequence = self.next_event_sequence.saturating_add(1);
         self.events.push_back(event.clone());
         while self.events.len() > MAX_EVENT_HISTORY {
-            self.events.pop_front();
+            if let Some(evicted) = self.events.pop_front() {
+                self.history_entry_state.apply_event(&evicted);
+            }
         }
         event
     }
@@ -412,6 +512,8 @@ impl TraceState {
             control_available: self.control_available,
             event_count: self.event_count,
             task_count: tasks.len(),
+            metadata_sync_attempts: self.metadata_sync_attempts,
+            metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
             target_overflow_packets: self.target_overflow_packets,
             target_dropped_events: self.target_dropped_events,
             decoder_dropped_chunks,
@@ -423,6 +525,7 @@ impl TraceState {
             ram_base: self.ram_base,
             id_shift: self.id_shift,
             system_description: self.system_description.clone(),
+            history_entry_state: self.history_entry_state.clone(),
             window_start_cycles: self.window_start_cycles,
             last_target_cycles: self.last_target_cycles,
             tasks,
@@ -451,6 +554,10 @@ impl TraceState {
         let active_task_id = self.active_task.map(|(task_id, _)| task_id);
         let interrupted_task = self.interrupted_task;
         let isr_depth = self.isr_depth;
+        let mut history_entry_state = self.history_entry_state.clone();
+        for event in &self.events {
+            history_entry_state.apply_event(event);
+        }
         let task_metadata = self
             .tasks
             .iter()
@@ -462,6 +569,7 @@ impl TraceState {
                         priority: task.priority,
                         runtime_cycles: 0,
                         switches: 0,
+                        terminated: task.terminated,
                     },
                 )
             })
@@ -473,6 +581,7 @@ impl TraceState {
         self.decoder_errors = 0;
         self.presentation_dropped_events = 0;
         self.events.clear();
+        self.history_entry_state = history_entry_state;
         self.cleared_through_sequence = self.next_event_sequence.saturating_sub(1);
         self.tasks = task_metadata;
         self.active_task = active_task_id.map(|task_id| (task_id, last_target_cycles));
@@ -545,6 +654,8 @@ impl SystemViewShared {
                 control_available: false,
                 event_count: 0,
                 task_count: 0,
+                metadata_sync_attempts: 0,
+                metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
                 target_overflow_packets: 0,
                 target_dropped_events: 0,
                 decoder_dropped_chunks: drops,
@@ -556,6 +667,7 @@ impl SystemViewShared {
                 ram_base: None,
                 id_shift: None,
                 system_description: Vec::new(),
+                history_entry_state: SystemViewExecutionState::default(),
                 window_start_cycles: 0,
                 last_target_cycles: 0,
                 tasks: Vec::new(),
@@ -571,6 +683,12 @@ impl SystemViewShared {
                 channel_index: 0,
                 events: Vec::new(),
             })
+    }
+
+    fn set_metadata_sync_attempts(&self, attempts: usize) {
+        if let Ok(mut state) = self.state.lock() {
+            state.metadata_sync_attempts = attempts.min(u32::MAX as usize) as u32;
+        }
     }
 
     fn clear(&self) {
@@ -600,6 +718,7 @@ pub struct SystemViewRuntime {
 
 pub struct SystemViewSpawn {
     pub presenter: SystemViewPresenter,
+    pub metadata_refresh: SystemViewMetadataRefresh,
     pub generation: u64,
     pub channel_index: u32,
     pub control_available: bool,
@@ -612,6 +731,7 @@ impl SystemViewRuntime {
     pub fn spawn(config: SystemViewSpawn) -> Result<Self, String> {
         let SystemViewSpawn {
             presenter,
+            metadata_refresh,
             generation,
             channel_index,
             control_available,
@@ -633,6 +753,7 @@ impl SystemViewRuntime {
             .spawn(move || {
                 run_decoder(
                     presenter,
+                    metadata_refresh,
                     bootstrap,
                     subscription,
                     worker_shared,
@@ -691,8 +812,59 @@ impl Drop for SystemViewRuntime {
     }
 }
 
+#[derive(Debug, Default)]
+struct MetadataRetryCoordinator {
+    unknown_tasks: Vec<u32>,
+    attempts: usize,
+    next_retry: Option<Instant>,
+}
+
+impl MetadataRetryCoordinator {
+    fn update(&mut self, snapshot: &SystemViewSnapshot, now: Instant) -> bool {
+        let mut unknown_tasks = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.name.is_none() || task.priority.is_none())
+            .map(|task| task.id)
+            .collect::<Vec<_>>();
+        unknown_tasks.sort_unstable();
+
+        if unknown_tasks != self.unknown_tasks {
+            self.unknown_tasks = unknown_tasks;
+            self.attempts = 0;
+            self.next_retry = None;
+        }
+
+        if self.unknown_tasks.is_empty() || !snapshot.control_available {
+            self.next_retry = None;
+            return false;
+        }
+
+        if self.attempts >= METADATA_RETRY_DELAYS_MS.len() {
+            self.next_retry = None;
+            return false;
+        }
+
+        let next_retry = self.next_retry.get_or_insert_with(|| {
+            now + Duration::from_millis(METADATA_RETRY_DELAYS_MS[self.attempts])
+        });
+        now >= *next_retry
+    }
+
+    fn mark_dispatched(&mut self, now: Instant) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.next_retry = (self.attempts < METADATA_RETRY_DELAYS_MS.len())
+            .then(|| now + Duration::from_millis(METADATA_RETRY_DELAYS_MS[self.attempts]));
+    }
+
+    fn defer(&mut self, now: Instant) {
+        self.next_retry = Some(now + Duration::from_millis(250));
+    }
+}
+
 fn run_decoder(
     presenter: SystemViewPresenter,
+    metadata_refresh: SystemViewMetadataRefresh,
     bootstrap: Vec<StoredRttChunk>,
     subscription: ObservationSubscription<StoredRttChunk>,
     shared: Arc<SystemViewShared>,
@@ -716,6 +888,7 @@ fn run_decoder(
 
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
+    let mut metadata_retry = MetadataRetryCoordinator::default();
     let mut changed = true;
 
     while !stopping.load(Ordering::Acquire) {
@@ -745,6 +918,21 @@ fn run_decoder(
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        let now = Instant::now();
+        let metadata_snapshot = shared.snapshot();
+        let attempts_before = metadata_retry.attempts;
+        if metadata_retry.update(&metadata_snapshot, now) {
+            if metadata_refresh() {
+                metadata_retry.mark_dispatched(now);
+            } else {
+                metadata_retry.defer(now);
+            }
+        }
+        if metadata_retry.attempts != attempts_before {
+            shared.set_metadata_sync_attempts(metadata_retry.attempts);
+            changed = true;
         }
 
         if last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL && !pending.is_empty() {
@@ -1403,6 +1591,95 @@ mod tests {
         let snapshot = state.snapshot(0);
         assert_eq!(snapshot.tasks[0].runtime_cycles, 50);
         assert_eq!(snapshot.last_target_cycles, 80);
+    }
+
+    #[test]
+    fn metadata_retry_resets_after_task_metadata_progress() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+
+        let mut retry = MetadataRetryCoordinator::default();
+        let start = Instant::now();
+        let snapshot = state.snapshot(0);
+        assert!(!retry.update(&snapshot, start));
+        assert!(retry.update(
+            &snapshot,
+            start + Duration::from_millis(METADATA_RETRY_DELAYS_MS[0])
+        ));
+        retry.mark_dispatched(start + Duration::from_millis(METADATA_RETRY_DELAYS_MS[0]));
+        assert_eq!(retry.attempts, 1);
+
+        state.apply(ParsedPacket {
+            event_id: 9,
+            fields: vec![2, 5],
+            text: Some("worker".to_string()),
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        assert!(!retry.update(&state.snapshot(0), start + Duration::from_secs(1)));
+        assert_eq!(retry.attempts, 0);
+        assert!(retry.unknown_tasks.is_empty());
+
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![3],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        assert!(!retry.update(&state.snapshot(0), start + Duration::from_secs(2)));
+        assert_eq!(retry.attempts, 0);
+        assert_eq!(retry.unknown_tasks, vec![3]);
+    }
+
+    #[test]
+    fn task_create_resets_state_after_terminated_id_is_reused() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 9,
+            fields: vec![2, 5],
+            text: Some("old-worker".to_string()),
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 10,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 29,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 20,
+            sync_boundary: false,
+        });
+        let before_reuse = state.snapshot(0);
+        assert_eq!(before_reuse.tasks[0].runtime_cycles, 20);
+        assert_eq!(before_reuse.tasks[0].name.as_deref(), Some("old-worker"));
+
+        state.apply(ParsedPacket {
+            event_id: 8,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        let after_reuse = state.snapshot(0);
+        assert_eq!(after_reuse.tasks.len(), 1);
+        assert_eq!(after_reuse.tasks[0].id, 2);
+        assert_eq!(after_reuse.tasks[0].runtime_cycles, 0);
+        assert_eq!(after_reuse.tasks[0].switches, 0);
+        assert!(after_reuse.tasks[0].name.is_none());
+        assert!(after_reuse.tasks[0].priority.is_none());
     }
 
     #[test]
