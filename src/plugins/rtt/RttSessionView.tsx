@@ -296,6 +296,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     state={systemViewState}
                     mode={mode}
                     controlAvailable={observer.control_channel_index != null}
+                    upBufferSize={channel.up?.buffer_size}
                     onStart={() => void controlSystemView(sessionId, channel.index, "start")}
                     onStop={() => void controlSystemView(sessionId, channel.index, "stop")}
                     onClear={() => void clearSystemView(sessionId, channel.index)}
