@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "../../context/ThemeContext";
+import { createManagedXTermHost } from "../../components/Terminal/xtermLifecycle";
 import { base64ToBytes, type RttChunk } from "./model";
 import styles from "./RttSessionView.module.css";
 
@@ -31,49 +32,49 @@ export default function RttTerminalView({ chunks, connected, onData }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const terminal = new XTerm({
-      convertEol: true,
-      allowTransparency: true,
-      cursorBlink: true,
-      cursorStyle: "underline",
-      scrollback: Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
-      fontSize: Number(localStorage.getItem("tauterm-font-size") || "14"),
-      fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace',
-      theme: {
-        background: "transparent",
-        foreground: readToken("--text-primary", "#f1f3f6"),
-        cursor: readToken("--accent-primary", "#0b8aff"),
-        selectionBackground: "rgba(128, 128, 128, 0.28)",
+
+    const layout = createManagedXTermHost({
+      host,
+      create: () => {
+        const terminal = new XTerm({
+          convertEol: true,
+          allowTransparency: true,
+          cursorBlink: true,
+          cursorStyle: "underline",
+          scrollback: Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
+          fontSize: Number(localStorage.getItem("tauterm-font-size") || "14"),
+          fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace',
+          theme: {
+            background: "transparent",
+            foreground: readToken("--text-primary", "#f1f3f6"),
+            cursor: readToken("--accent-primary", "#0b8aff"),
+            selectionBackground: "rgba(128, 128, 128, 0.28)",
+          },
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        return { terminal, fitAddon };
+      },
+      onOpen: ({ terminal }) => {
+        terminalRef.current = terminal;
+        const input = terminal.onData(data => {
+          if (connectedRef.current) onDataRef.current(new TextEncoder().encode(data));
+        });
+
+        for (const chunk of chunksRef.current) {
+          terminal.write(base64ToBytes(chunk.data_b64));
+          lastSequenceRef.current = Math.max(lastSequenceRef.current, chunk.sequence);
+        }
+
+        return () => {
+          input.dispose();
+          if (terminalRef.current === terminal) terminalRef.current = null;
+          lastSequenceRef.current = 0;
+        };
       },
     });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(host);
-    terminalRef.current = terminal;
 
-    const input = terminal.onData(data => {
-      if (connectedRef.current) onDataRef.current(new TextEncoder().encode(data));
-    });
-    for (const chunk of chunksRef.current) {
-      terminal.write(base64ToBytes(chunk.data_b64));
-      lastSequenceRef.current = Math.max(lastSequenceRef.current, chunk.sequence);
-    }
-
-    const fitTerminal = () => {
-      if (host.clientWidth > 0 && host.clientHeight > 0) {
-        try { fit.fit(); } catch { /* hidden pane */ }
-      }
-    };
-    const observer = new ResizeObserver(fitTerminal);
-    observer.observe(host);
-    requestAnimationFrame(fitTerminal);
-    return () => {
-      observer.disconnect();
-      input.dispose();
-      terminal.dispose();
-      terminalRef.current = null;
-      lastSequenceRef.current = 0;
-    };
+    return () => layout.dispose();
   }, []);
 
   useEffect(() => {
