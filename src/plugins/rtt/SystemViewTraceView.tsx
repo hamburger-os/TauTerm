@@ -46,6 +46,19 @@ function formatTargetTime(
   return `+${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
 }
 
+function formatTargetDuration(
+  cycles: number,
+  sysFrequency: number | null | undefined,
+): string {
+  if (!sysFrequency) return formatCycles(cycles);
+  const seconds = cycles / sysFrequency;
+  if (seconds >= 1) return `${seconds.toFixed(seconds >= 10 ? 2 : 3)} s`;
+  const milliseconds = seconds * 1_000;
+  if (milliseconds >= 1) return `${milliseconds.toFixed(milliseconds >= 10 ? 1 : 2)} ms`;
+  const microseconds = seconds * 1_000_000;
+  return `${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
+}
+
 function restoreTargetId(
   taskId: number,
   snapshot: SystemViewSnapshot | null,
@@ -63,25 +76,33 @@ interface TimelineSeed {
   idleActive: boolean;
 }
 
-function timelineSeed(events: readonly SystemViewEvent[]): TimelineSeed {
+function timelineSeed(
+  events: readonly SystemViewEvent[],
+  initial: SystemViewSnapshot["history_entry_state"] | null | undefined,
+): TimelineSeed {
   const seed: TimelineSeed = {
-    activeTaskId: null,
-    interruptedTaskId: null,
-    interruptedIdle: false,
-    irqDepth: 0,
-    idleActive: false,
+    activeTaskId: initial?.active_task_id ?? null,
+    interruptedTaskId: initial?.interrupted_task_id ?? null,
+    interruptedIdle: initial?.interrupted_idle ?? false,
+    irqDepth: initial?.irq_depth ?? 0,
+    idleActive: initial?.idle_active ?? false,
+  };
+
+  const reset = () => {
+    seed.activeTaskId = null;
+    seed.interruptedTaskId = null;
+    seed.interruptedIdle = false;
+    seed.irqDepth = 0;
+    seed.idleActive = false;
   };
 
   for (const event of events) {
+    if (event.sync_boundary) reset();
     switch (event.event_id) {
       case 1:
       case 10:
       case 11:
-        seed.activeTaskId = null;
-        seed.interruptedTaskId = null;
-        seed.interruptedIdle = false;
-        seed.irqDepth = 0;
-        seed.idleActive = false;
+        reset();
         break;
       case 2:
         if (seed.irqDepth === 0) {
@@ -116,11 +137,7 @@ function timelineSeed(events: readonly SystemViewEvent[]): TimelineSeed {
         seed.idleActive = true;
         break;
       case 18:
-        seed.activeTaskId = null;
-        seed.interruptedTaskId = null;
-        seed.interruptedIdle = false;
-        seed.irqDepth = 0;
-        seed.idleActive = false;
+        reset();
         break;
       case 29:
         if (event.context_id != null && seed.activeTaskId === event.context_id) {
@@ -219,7 +236,10 @@ function drawTimeline(
     return;
   }
 
-  const seed = timelineSeed(events.slice(0, visibleStart));
+  const seed = timelineSeed(
+    events.slice(0, visibleStart),
+    snapshot?.history_entry_state,
+  );
   const tasks = selectTimelineTasks(snapshot, visible, seed);
   const taskIds = new Set(tasks.map(task => task.id));
   const laneFor = new Map<number, number>();
@@ -493,6 +513,7 @@ export default function SystemViewTraceView({
   }, [events, mode, snapshot, t]);
 
   const visibleEvents = useMemo(() => events.slice(-MAX_EVENT_ROWS).reverse(), [events]);
+  const eventTimeOrigin = events[0]?.target_cycles ?? 0;
   const windowCycles = useMemo(() => {
     if (!snapshot) return 0;
     return Math.max(0, snapshot.last_target_cycles - snapshot.window_start_cycles);
@@ -604,7 +625,7 @@ export default function SystemViewTraceView({
                     <span>{task.priority ?? "—"}</span>
                     <span>{task.switches}</span>
                     <span>
-                      {formatCycles(task.runtime_cycles)} · {taskStatsIncomplete ? "≥" : ""}{percent.toFixed(1)}%
+                      {formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz)} · {taskStatsIncomplete ? "≥" : ""}{percent.toFixed(1)}%
                     </span>
                   </div>
                 );
@@ -619,9 +640,19 @@ export default function SystemViewTraceView({
             <div className={styles.empty}>{t("rtt.traceWaiting")}</div>
           ) : visibleEvents.map(event => (
             <div key={event.sequence} className={styles.eventRow}>
-              <span className={styles.eventMeta}>#{event.sequence} · {formatCycles(event.target_cycles)}</span>
+              <span
+                className={styles.eventMeta}
+                title={`${event.target_cycles} cycles`}
+              >
+                #{event.sequence} · {formatTargetTime(event.target_cycles, eventTimeOrigin, snapshot?.sys_freq_hz)}
+              </span>
               <span className={styles.eventName}>{eventLabel(event)}</span>
-              <span className={styles.eventDelta}>+{formatCycles(event.delta_cycles)}</span>
+              <span
+                className={styles.eventDelta}
+                title={`+${event.delta_cycles} cycles`}
+              >
+                +{formatTargetDuration(event.delta_cycles, snapshot?.sys_freq_hz)}
+              </span>
             </div>
           ))}
         </div>
