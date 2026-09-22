@@ -113,7 +113,7 @@ function markdownFiles() {
     "THIRD_PARTY_LICENSES.md",
   ].filter(exists);
   const docs = walk("docs", (rel) => rel.endsWith(".md"));
-  const skills = walk(".agents/skills", (rel) => rel.endsWith("/SKILL.md"));
+  const skills = walk(".agents/skills", (rel) => rel.endsWith(".md"));
   return [...new Set([...rootDocs, ...docs, ...skills])];
 }
 
