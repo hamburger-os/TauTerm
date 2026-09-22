@@ -496,9 +496,9 @@ impl TraceState {
             .iter()
             .filter(|(at, _)| now.saturating_duration_since(*at) <= TARGET_DROP_RATE_WINDOW)
             .fold(0u64, |sum, (_, dropped)| sum.saturating_add(*dropped));
-        let target_drop_rate_per_sec = ((recent_target_drops as u128) * 1_000
-            / TARGET_DROP_RATE_WINDOW.as_millis())
-        .min(u64::MAX as u128) as u64;
+        let target_drop_rate = (u128::from(recent_target_drops) * 1_000)
+            .div_ceil(TARGET_DROP_RATE_WINDOW.as_millis());
+        let target_drop_rate_per_sec = u64::try_from(target_drop_rate).unwrap_or(u64::MAX);
 
         let mut tasks = self
             .tasks
