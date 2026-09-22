@@ -603,6 +603,7 @@ export default function SystemViewTraceView({
     presentationRecovered,
     snapshot,
     t,
+    traceRates.eventsPerSecond,
     traceRates.targetDropsPerSecond,
   ]);
 
