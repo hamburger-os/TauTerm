@@ -209,10 +209,11 @@
   top: 0;
   z-index: 2;
   color: var(--text-muted);
-  background:
+  background-color: var(--bg-base);
+  background-image:
     var(--liquid-specular-content-fill),
     var(--theme-content-header-veil),
-    var(--performance-content-fill);
+    var(--liquid-clear-content-fill);
   border: 0;
   border-bottom: 1px solid var(--content-divider);
   border-radius: 0;
