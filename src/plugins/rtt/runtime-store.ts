@@ -282,6 +282,15 @@ function hasSystemViewSequenceGap(
   return previousLast != null && incomingFirst != null && incomingFirst > previousLast + 1;
 }
 
+function hasInternalSystemViewSequenceGap(
+  events: readonly SystemViewEvent[],
+): boolean {
+  for (let index = 1; index < events.length; index += 1) {
+    if (events[index].sequence > events[index - 1].sequence + 1) return true;
+  }
+  return false;
+}
+
 async function recoverSystemViewHistory(
   sessionId: string,
   channelIndex: number,
@@ -320,10 +329,12 @@ async function recoverSystemViewHistory(
         channel.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
         history.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
       );
-      const recoveredThroughDrops = Math.max(
-        channel.presentationRecovery.recovered_through_drops,
-        recoverThroughDrops,
-      );
+      const recoveredThroughDrops = hasInternalSystemViewSequenceGap(events)
+        ? channel.presentationRecovery.recovered_through_drops
+        : Math.max(
+          channel.presentationRecovery.recovered_through_drops,
+          recoverThroughDrops,
+        );
       publish(sessionId, {
         ...prev,
         systemview: Object.freeze({
@@ -624,24 +635,27 @@ export async function ensureSystemViewHistory(
     const snapshot = previous?.snapshot?.generation === snapshotAtStart.generation
       ? previous.snapshot
       : snapshotAtStart;
-    const recoveredThroughDrops = Math.max(
-      previous?.presentationRecovery.recovered_through_drops ?? 0,
-      recoverThroughDrops,
+    const events = mergeSystemViewEvents(
+      (previous?.events ?? []).filter(
+        event => event.sequence > snapshot.cleared_through_sequence,
+      ),
+      history.events.filter(
+        event => event.sequence > snapshot.cleared_through_sequence,
+      ),
     );
+    const recoveredThroughDrops = hasInternalSystemViewSequenceGap(events)
+      ? (previous?.presentationRecovery.recovered_through_drops ?? 0)
+      : Math.max(
+        previous?.presentationRecovery.recovered_through_drops ?? 0,
+        recoverThroughDrops,
+      );
     publish(sessionId, {
       ...prev,
       systemview: Object.freeze({
         ...prev.systemview,
         [channelIndex]: Object.freeze({
           snapshot,
-          events: Object.freeze(mergeSystemViewEvents(
-            (previous?.events ?? []).filter(
-              event => event.sequence > snapshot.cleared_through_sequence,
-            ),
-            history.events.filter(
-              event => event.sequence > snapshot.cleared_through_sequence,
-            ),
-          )),
+          events: Object.freeze(events),
           loaded: true,
           error: null,
           metadataSync: Object.freeze(
