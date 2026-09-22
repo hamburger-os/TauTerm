@@ -603,17 +603,31 @@ export async function ensureSystemViewHistory(
   if (existing?.loaded) return;
 
   try {
-    const [snapshot, history] = await Promise.all([
-      invoke<SystemViewSnapshot>("rtt_systemview_snapshot", { sessionId, channelIndex }),
-      invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
-        sessionId,
-        channelIndex,
-        limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
-      }),
-    ]);
+    // Snapshot first, then request history. Only drops already visible in that snapshot can be
+    // proven covered by the following history response; newer drops remain pending and trigger
+    // their own recovery pass instead of being accidentally acknowledged.
+    const snapshotAtStart = await invoke<SystemViewSnapshot>(
+      "rtt_systemview_snapshot",
+      { sessionId, channelIndex },
+    );
+    const recoverThroughDrops = snapshotAtStart.presentation_dropped_events;
+    const history = await invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
+      sessionId,
+      channelIndex,
+      limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
+    });
+    if (history.generation !== snapshotAtStart.generation) return;
+
     const prev = current(sessionId);
-    if (!prev.snapshot || prev.snapshot.generation !== snapshot.generation) return;
+    if (!prev.snapshot || prev.snapshot.generation !== snapshotAtStart.generation) return;
     const previous = prev.systemview[channelIndex];
+    const snapshot = previous?.snapshot?.generation === snapshotAtStart.generation
+      ? previous.snapshot
+      : snapshotAtStart;
+    const recoveredThroughDrops = Math.max(
+      previous?.presentationRecovery.recovered_through_drops ?? 0,
+      recoverThroughDrops,
+    );
     publish(sessionId, {
       ...prev,
       systemview: Object.freeze({
@@ -634,7 +648,7 @@ export async function ensureSystemViewHistory(
             metadataSyncState(snapshot),
           ),
           presentationRecovery: Object.freeze(
-            presentationRecoveryState(snapshot, snapshot.presentation_dropped_events),
+            presentationRecoveryState(snapshot, recoveredThroughDrops),
           ),
         }),
       }),
