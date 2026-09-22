@@ -165,7 +165,7 @@ SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根�
 - 支持同一 RTT Session 同时存在多个 observer，因此数据模型不把 SystemView 写死为“唯一 Channel”，可自然扩展到多核/多 trace source；
 - 多 observer 场景只选择一个可用的同索引 Down Channel 作为共享 SystemView controller，并只对该通道声明 `SystemView` claim；所有 observer 的 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME 都经该内部控制路径发送，其余 observer 保持纯 Up 被动语义，避免无谓占用无关 Down Channel；完全没有可用 Down 时仍可被动解析已经在运行的 trace；
 - 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计；target overflow 发生时把 overflow packet 的 delta 区间视为未知，不归属给此前运行任务。Runtime 额外维护一个短窗口目标端丢失速率，用来区分“历史上曾溢出”与“当前仍在持续溢出”；UI 同时显示已知事件覆盖率与当前 SysView Up Buffer 大小，便于判断应优先增大目标 buffer、提高稳定的调试接口速度或减少 Trace 事件量。subscriber drop 会清空半包 decoder 状态并重新等待下一次 10-byte sync marker，禁止在缺口后继续猜包边界；
-- WebView presentation queue 的历史 drop 不是永久的数据缺口结论。前端利用单调 event sequence 检测展示缺口并从 Rust 有界 history 回补：回补完成后只保留“曾发生且已恢复”的中性诊断；只有历史窗口也无法补齐的 sequence gap 才计入当前 Trace incomplete。目标端/decoder 的真实缺口仍保持独立告警，可定位的 overflow 区间作为未知时间带展示。缺口发生后不继续把未知执行时间归属给此前任务，也不把缺失事件伪装成连续任务执行或精确 CPU 占比。
+- WebView presentation queue 的历史 drop 不是永久的数据缺口结论。前端利用单调 event sequence 检测展示缺口并优先从 Rust 有界 history 回补；当前可见窗口仍存在 sequence gap 时才计入 Trace incomplete。若缺口已经补齐或已离开有界可见窗口，只保留“曾发生 presentation drop、当前窗口无未回补缺口”的中性诊断，不声称已永久恢复历史数据。目标端/decoder 的真实缺口仍保持独立告警，可定位的 overflow 区间作为未知时间带展示。缺口发生后不继续把未知执行时间归属给此前任务，也不把缺失事件伪装成连续任务执行或精确 CPU 占比。
 
 前端 Canvas 时间线只消费已经解码的 target-time event model；React 不承担二进制协议解码，也不为每个 trace event 创建时间线 DOM。Events 视图仅挂载有界近期事件，Raw 视图继续读取原 RTT 历史用于协议诊断。
 
