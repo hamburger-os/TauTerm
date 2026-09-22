@@ -950,7 +950,7 @@ fn run_decoder(
         }
 
         let now = Instant::now();
-        let metadata_snapshot = shared.snapshot();
+        let mut metadata_snapshot = shared.snapshot();
         let attempts_before = metadata_retry.attempts;
         if metadata_retry.update(&metadata_snapshot, now) {
             if metadata_refresh() {
@@ -961,6 +961,7 @@ fn run_decoder(
         }
         if metadata_retry.attempts != attempts_before {
             shared.set_metadata_sync_attempts(metadata_retry.attempts);
+            metadata_snapshot = shared.snapshot();
             changed = true;
         }
 
