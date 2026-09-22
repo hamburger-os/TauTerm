@@ -57,6 +57,15 @@ async fn connect_session(
         .get("journald_enabled")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let file_service_enabled_val = params
+        .get("file_service_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let file_service_protocol_val = params
+        .get("file_service_protocol")
+        .and_then(Value::as_str)
+        .unwrap_or("sftp")
+        .to_string();
 
     // SSH 插件自己持有 known-host 验证状态；AppState 只通过 PluginRuntime 取得 contribution。
     let ssh_adapter =
@@ -109,57 +118,73 @@ async fn connect_session(
         )?
     };
 
-    let host_key_fingerprint = state
-        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
-        .runtime(&parent_id)
-        .and_then(|runtime| runtime.host_key_fingerprint.clone());
-    if let Some(ref fp) = host_key_fingerprint {
-        log::info!("SSH 主机密钥指纹: {}", fp);
-    }
-
-    // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
-    let channel0_id =
-        create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
-            .await
-            .inspect_err(|e| {
-                // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
-                log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
-                if let Ok(mut store) = state.session_store.lock() {
-                    if let Err(cleanup_error) = store.close_session(&parent_id) {
-                        log::warn!(
-                            "SSH 通道 0 失败后的父会话清理也失败 {}: {}",
-                            parent_id,
-                            cleanup_error
-                        );
-                    }
-                }
-            })?;
-
-    // 3. 在凭据提交前完成全部可失败的运行态校验与事件快照。
-    // 这样凭据提交就是连接流程最后一个可失败步骤，不会在“运行态已消失”后留下新凭据。
-    let (actual_name, actual_params) = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let handle = store
-            .get_session(&parent_id)
-            .ok_or_else(|| format!("SSH 父会话 {} 已在连接完成前关闭", parent_id))?;
-        if handle.state != SessionState::Connected {
-            return Err("SSH 父会话已在连接完成前断开".to_string());
+    // 2. 建立首个 PTY、验证运行态并激活 DataPlane。父 Session 创建后到凭据提交前，
+    // 任意失败都统一回滚父 Session，避免分散的半连接清理分支。
+    let setup_result: Result<_, String> = async {
+        let host_key_fingerprint = state
+            .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+            .runtime(&parent_id)
+            .and_then(|runtime| runtime.host_key_fingerprint.clone());
+        if let Some(ref fp) = host_key_fingerprint {
+            log::info!("SSH 主机密钥指纹: {}", fp);
         }
-        (handle.name.clone(), handle.params.clone())
-    };
-    let channel0_connected =
-        terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
 
-    // Persist transient credentials only after the SSH parent and channel 0 are both
-    // registered and readable. A credential failure rolls back the newly-created runtime Session.
-    if let Some(pending) = pending_ssh_credential {
-        if let Err(error) =
-            crate::plugins::ssh::application::commit_credential(&state.credential_store, pending)
-        {
+        let channel0_id =
+            create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
+                .await?;
+
+        let (actual_name, actual_params) = {
+            let store = state.session_store.lock().map_err(|e| e.to_string())?;
+            let handle = store
+                .get_session(&parent_id)
+                .ok_or_else(|| format!("SSH 父会话 {} 已在连接完成前关闭", parent_id))?;
+            if handle.state != SessionState::Connected {
+                return Err("SSH 父会话已在连接完成前断开".to_string());
+            }
+            (handle.name.clone(), handle.params.clone())
+        };
+
+        let channel0_connected =
+            terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
+
+        state
+            .session_store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .activate_data_plane(&channel0_id)?;
+
+        // 凭据提交是连接事务的最后一个可失败步骤。失败时外层统一关闭父 Session。
+        if let Some(pending) = pending_ssh_credential {
+            crate::plugins::ssh::application::commit_credential(
+                &state.credential_store,
+                pending,
+            )?;
+        }
+
+        Ok((
+            host_key_fingerprint,
+            channel0_id,
+            actual_name,
+            actual_params,
+            channel0_connected,
+        ))
+    }
+    .await;
+
+    let (
+        host_key_fingerprint,
+        channel0_id,
+        actual_name,
+        actual_params,
+        channel0_connected,
+    ) = match setup_result {
+        Ok(value) => value,
+        Err(error) => {
+            log::error!("SSH 连接事务失败，回滚父会话 {}: {}", parent_id, error);
             if let Ok(mut store) = state.session_store.lock() {
                 if let Err(cleanup_error) = store.close_session(&parent_id) {
                     log::warn!(
-                        "SSH 凭据提交失败后的父会话清理也失败 {}: {}",
+                        "SSH 连接事务回滚父会话失败 {}: {}",
                         parent_id,
                         cleanup_error
                     );
@@ -167,7 +192,7 @@ async fn connect_session(
             }
             return Err(error);
         }
-    }
+    };
 
     let connected_at = Some(
         std::time::SystemTime::now()
@@ -197,19 +222,14 @@ async fn connect_session(
             "transfer_enabled": transfer_enabled_val,
             "transfer_protocol": transfer_protocol_val,
             "send_bar_enabled": send_bar_enabled_val,
-            "file_service_enabled": ssh_config.file_service_enabled,
-            "file_service_protocol": ssh_config.file_service_protocol,
+            "file_service_enabled": file_service_enabled_val,
+            "file_service_protocol": file_service_protocol_val,
             "journald_enabled": journald_enabled_val,
             "host_key_fingerprint": host_key_fingerprint,
             "is_container": true,
         }),
     );
     let _ = app.emit("session-connected", channel0_connected);
-    state
-        .session_store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .activate_data_plane(&channel0_id)?;
 
     Ok(parent_id)
 }
@@ -243,6 +263,36 @@ pub async fn confirm_host_key(
             "已拒绝"
         },
         &request_id[..request_id.len().min(16)]
+    );
+    Ok(())
+}
+
+/// 主机密钥发生变化时，只有显式安全确认流程可以替换同算法的旧信任。
+/// 当前连接仍保持拒绝；更新成功后用户需要重新发起连接。
+#[tauri::command]
+pub fn replace_host_key(
+    state: tauri::State<'_, AppState>,
+    host: String,
+    port: u16,
+    algorithm: String,
+    fingerprint: String,
+) -> Result<(), String> {
+    if host.trim().is_empty()
+        || algorithm.trim().is_empty()
+        || fingerprint.trim().is_empty()
+        || port == 0
+    {
+        return Err("SSH 主机密钥替换参数无效".into());
+    }
+
+    state
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+        .replace_known_host(&host, port, &algorithm, &fingerprint)?;
+    log::warn!(
+        "SSH 主机信任已由用户显式替换: {}:{} ({})",
+        host,
+        port,
+        algorithm
     );
     Ok(())
 }
@@ -413,16 +463,18 @@ pub async fn sftp_delete_recursive_cmd(
     sftp_delete_recursive(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
-/// 获取 SSH 会话的远程用户 home 目录
+/// 获取 SSH 会话的远程用户 home 目录。
 ///
-/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshRuntime.home_dir`。
-/// 若获取失败或值为 None，回退到 `"/"`。
+/// 第一次真正使用文件服务时按需解析并缓存；基础 SSH 建连不执行额外远端命令。
 #[tauri::command]
-pub fn get_ssh_home_dir(state: State<'_, AppState>, session_id: String) -> Result<String, String> {
+pub async fn get_ssh_home_dir(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     Ok(ssh_runtime
-        .home_dir
-        .clone()
+        .resolve_home_dir()
+        .await
         .unwrap_or_else(|| "/".to_string()))
 }
 
