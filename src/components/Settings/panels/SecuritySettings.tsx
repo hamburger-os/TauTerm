@@ -119,8 +119,8 @@ function TrustedHostManager() {
         await invoke("reset_ssh_known_hosts");
       }
       if (!mountedRef.current) return;
-      await refreshHosts(true);
-      if (mountedRef.current) setState("ready");
+      const refreshed = await refreshHosts(true);
+      if (mountedRef.current) setState(refreshed ? "ready" : "error");
     } catch (invokeError) {
       if (!mountedRef.current) return;
       setError(String(invokeError));
