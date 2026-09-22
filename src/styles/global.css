@@ -220,6 +220,13 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
     var(--liquid-clear-content-fill);
 }
 
+.liquid-glass-content-header {
+  background:
+    var(--liquid-specular-content-fill),
+    var(--theme-content-header-veil),
+    var(--liquid-clear-content-fill);
+}
+
 /* 高密度交互工作台：参数表单 / 编辑工具。
    SendBar / TargetBar 外壳使用 Structural Panel；Control 只用于确实需要更稳定底色的内部区域。 */
 .liquid-control-surface {
@@ -864,7 +871,8 @@ html[data-performance="performance"] .liquid-glass-panel {
 
 html[data-performance="performance"] .liquid-glass-content,
 html[data-performance="performance"] .liquid-glass-content-active,
-html[data-performance="performance"] .liquid-glass-content-inactive {
+html[data-performance="performance"] .liquid-glass-content-inactive,
+html[data-performance="performance"] .liquid-glass-content-header {
   background: var(--performance-content-fill);
   box-shadow: none;
 }
