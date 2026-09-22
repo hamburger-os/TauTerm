@@ -78,7 +78,8 @@ const EMPTY_PRESENTATION_RECOVERY: SystemViewPresentationRecoveryState = Object.
 
 const sessions = new Map<string, RttRuntimeSnapshot>();
 const loadedChannels = new Map<string, Set<number>>();
-const systemViewHistoryRecoveries = new Set<string>();
+// value=true means another presentation gap arrived while the current history read was in flight.
+const systemViewHistoryRecoveries = new Map<string, boolean>();
 const listeners = new Set<() => void>();
 let revision = 0;
 let listenerReady: Promise<void> | null = null;
@@ -301,8 +302,11 @@ async function recoverSystemViewHistory(
   generation: number,
 ): Promise<void> {
   const key = systemViewRecoveryKey(sessionId, channelIndex, generation);
-  if (systemViewHistoryRecoveries.has(key)) return;
-  systemViewHistoryRecoveries.add(key);
+  if (systemViewHistoryRecoveries.has(key)) {
+    systemViewHistoryRecoveries.set(key, true);
+    return;
+  }
+  systemViewHistoryRecoveries.set(key, false);
   try {
     const history = await invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
       sessionId,
@@ -338,7 +342,11 @@ async function recoverSystemViewHistory(
   } catch (cause) {
     console.warn("[rtt/runtime-store] SystemView history recovery failed:", cause);
   } finally {
+    const rerun = systemViewHistoryRecoveries.get(key) === true;
     systemViewHistoryRecoveries.delete(key);
+    if (rerun) {
+      void recoverSystemViewHistory(sessionId, channelIndex, generation);
+    }
   }
 }
 
@@ -442,7 +450,7 @@ export const rttRuntimeStore: PluginRuntimeStore = {
   revision: () => revision,
   release(sessionId) {
     loadedChannels.delete(sessionId);
-    for (const key of systemViewHistoryRecoveries) {
+    for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:`)) systemViewHistoryRecoveries.delete(key);
     }
     if (sessions.delete(sessionId)) {
@@ -671,7 +679,7 @@ export async function detachSystemView(
   try {
     await invoke("rtt_systemview_detach", { sessionId, channelIndex });
     await refreshRttRuntime(sessionId);
-    for (const key of systemViewHistoryRecoveries) {
+    for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:${channelIndex}:`)) systemViewHistoryRecoveries.delete(key);
     }
     const prev = current(sessionId);
