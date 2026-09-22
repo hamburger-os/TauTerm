@@ -15,7 +15,8 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 已知算法且 fingerprint 一致：自动通过，并只更新该算法/指纹记录的 `last_seen`；
 - 已知 endpoint 出现新的 host-key 算法：进入独立的 **Additional Key** 状态，界面明确提示该主机已经有其它受信算法；必须再次核对设备身份并确认，不能伪装成“首次见到主机”；
 - 同一 host-key 算法的 fingerprint 变化：当前连接始终先拒绝。后端为这次实际观察到的 mismatch 生成一次性 `request_id`；只有对应安全确认对话框仍在有效期内时才能替换该算法的旧信任，替换后必须重新发起连接，不能用任意 host/fingerprint 参数直接覆写信任；
-- `known_hosts.json` 使用当前 schema v2。加载时先只读取 schema version：非当前版本或当前版本内容损坏都会隔离原文件，同时写入持久化 blocked marker；以后重启仍保持 fail-closed，不会把被隔离的信任库静默降级成 fresh TOFU。只有用户在主题安全确认框中显式“重置信任库”后才创建空的当前信任库，此后所有主机都必须重新核对 fingerprint；
+- `known_hosts.json` 使用当前 schema v2。加载时先只读取 schema version：非当前版本或当前版本内容损坏都会先写入持久化 blocked marker，再隔离原文件；因此即使隔离过程中异常退出，以后重启也继续 fail-closed，不会把被隔离的信任库静默降级成 fresh TOFU。只有用户在主题安全确认框中显式“重置信任库”后才创建空的当前信任库，此后所有主机都必须重新核对 fingerprint；
+- 设置 → 安全提供 SSH 受信主机管理器：展示 endpoint、算法与 fingerprint，可显式删除单个 endpoint 的全部信任或重置整个信任库；两类破坏性操作都复用公共 `ConfirmDialog`，不会通过普通 Toast 或无确认按钮直接改写信任；
 - endpoint key 对 IPv6 做标准化，不让带/不带方括号的同一地址形成两份信任记录；
 - 首次/新增算法确认与 Host Key Changed 替换都以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
 - 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走应用层注册的受信连接 contribution；
