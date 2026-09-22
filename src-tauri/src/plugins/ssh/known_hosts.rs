@@ -368,22 +368,68 @@ impl KnownHostStore {
         })
     }
 
-    pub fn replace(
+    pub fn replace_if_matches(
         &self,
         host: &str,
         port: u16,
         algorithm: &str,
+        expected_fingerprints: &[String],
         fingerprint: &str,
     ) -> Result<(), String> {
-        self.mutate_record(host, port, |record, now| {
-            record.keys.retain(|known| known.algorithm != algorithm);
-            record.keys.push(KnownHostKeyRecord {
-                algorithm: algorithm.to_string(),
-                fingerprint: fingerprint.to_string(),
-                first_seen_ms: now,
-                last_seen_ms: now,
-            });
-        })
+        if !self.available.load(Ordering::Acquire) {
+            return Err("SSH known-host 存储不可用，不能修改主机信任".to_string());
+        }
+
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
+        let key = Self::key(host, port);
+        let now = Self::now_ms();
+        let mut next = self
+            .hosts
+            .read()
+            .map_err(|_| "SSH known-host 锁错误".to_string())?
+            .clone();
+        let record = next
+            .get_mut(&key)
+            .ok_or_else(|| "SSH 主机信任已在确认期间变化，请重新连接并重新验证".to_string())?;
+
+        let mut current: Vec<String> = record
+            .keys
+            .iter()
+            .filter(|known| known.algorithm == algorithm)
+            .map(|known| known.fingerprint.clone())
+            .collect();
+        current.sort();
+        current.dedup();
+
+        let mut expected = expected_fingerprints.to_vec();
+        expected.sort();
+        expected.dedup();
+        if current != expected {
+            return Err("SSH 主机信任已在确认期间变化，请重新连接并重新验证".to_string());
+        }
+
+        record.keys.retain(|known| known.algorithm != algorithm);
+        record.keys.push(KnownHostKeyRecord {
+            algorithm: algorithm.to_string(),
+            fingerprint: fingerprint.to_string(),
+            first_seen_ms: now,
+            last_seen_ms: now,
+        });
+        record.keys.sort_by(|left, right| {
+            left.algorithm
+                .cmp(&right.algorithm)
+                .then_with(|| left.fingerprint.cmp(&right.fingerprint))
+        });
+
+        self.persist_snapshot(&next)?;
+        *self
+            .hosts
+            .write()
+            .map_err(|_| "SSH known-host 锁错误".to_string())? = next;
+        Ok(())
     }
 
     pub fn forget(&self, host: &str, port: u16) -> Result<bool, String> {
@@ -684,7 +730,13 @@ mod tests {
         );
 
         store
-            .replace("example.test", 22, "ssh-ed25519", "SHA256:ed-changed")
+            .replace_if_matches(
+                "example.test",
+                22,
+                "ssh-ed25519",
+                &["SHA256:ed-first".to_string()],
+                "SHA256:ed-changed",
+            )
             .unwrap();
         assert_eq!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-changed"),
@@ -695,6 +747,43 @@ mod tests {
         reopened.configure(path).unwrap();
         assert_eq!(
             reopened.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-changed"),
+            HostTrustDecision::Trusted
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_changed_key_confirmation_cannot_overwrite_newer_trust() {
+        let dir = temp_path();
+        let path = dir.join("known_hosts.json");
+        let store = KnownHostStore::new();
+        store.configure(path).unwrap();
+        store
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:old")
+            .unwrap();
+
+        store
+            .replace_if_matches(
+                "example.test",
+                22,
+                "ssh-ed25519",
+                &["SHA256:old".to_string()],
+                "SHA256:newer",
+            )
+            .unwrap();
+
+        assert!(store
+            .replace_if_matches(
+                "example.test",
+                22,
+                "ssh-ed25519",
+                &["SHA256:old".to_string()],
+                "SHA256:stale",
+            )
+            .is_err());
+        assert_eq!(
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:newer"),
             HostTrustDecision::Trusted
         );
 
