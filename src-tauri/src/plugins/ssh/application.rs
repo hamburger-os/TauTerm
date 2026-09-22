@@ -184,10 +184,7 @@ pub(crate) fn session_config_handler() -> SessionConfigHandler {
     }
 }
 
-fn runtime_config(
-    params: &Value,
-    credential: CredentialValue,
-) -> Result<SshConfig, String> {
+fn runtime_config(params: &Value, credential: CredentialValue) -> Result<SshConfig, String> {
     let connection: SshConnectionParams = serde_json::from_value(params.clone())
         .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
 
