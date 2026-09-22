@@ -69,10 +69,10 @@ export function createManagedXTermHost({
     bundle = next;
     try {
       next.terminal.open(host);
-    } catch {
+    } catch (error) {
       next.terminal.dispose();
       bundle = null;
-      return;
+      throw error;
     }
     if (disposed) {
       next.terminal.dispose();
@@ -111,11 +111,14 @@ export function createManagedXTermHost({
       if (fitRaf !== null) cancelAnimationFrame(fitRaf);
       initRaf = null;
       fitRaf = null;
-      openCleanup?.();
-      openCleanup = null;
-      bundle?.terminal.dispose();
-      bundle = null;
-      opened = false;
+      try {
+        openCleanup?.();
+      } finally {
+        openCleanup = null;
+        bundle?.terminal.dispose();
+        bundle = null;
+        opened = false;
+      }
     },
   };
 }
