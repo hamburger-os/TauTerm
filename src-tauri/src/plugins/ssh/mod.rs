@@ -351,6 +351,10 @@ impl SshAdapter {
         self.host_key_verifier.respond_to_change(request_id, accepted)
     }
 
+    pub fn reset_known_hosts(&self) -> Result<(), String> {
+        self.host_key_verifier.known_hosts.reset()
+    }
+
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
     ///
     /// `connect_session_ssh` 已在前端参数验证阶段反序列化 `SshConfig`，
@@ -885,6 +889,12 @@ async fn build_connection_with_config(
                         .await
                     }
                     HostTrustDecision::Unavailable { reason } => {
+                        let _ = app_handle.emit(
+                            "ssh-host-trust-store-unavailable",
+                            serde_json::json!({
+                                "reason": reason,
+                            }),
+                        );
                         log::error!(
                             "SSH known-host 存储不可用，拒绝连接 {}: {}",
                             format_ssh_endpoint(&connect_host, config.port),
