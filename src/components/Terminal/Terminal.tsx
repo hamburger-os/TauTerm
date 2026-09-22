@@ -346,6 +346,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         nextTerm.attachCustomKeyEventHandler((e) => {
           const isKeyDown = e.type === "keydown";
           const lowerKey = e.key.toLowerCase();
+          // Terminal compatibility aliases remain explicit at the xterm boundary:
+          // Ctrl+Insert = copy, Shift+Insert = paste, Meta+C = copy, Meta+V = paste.
+          // Ctrl+C / Ctrl+V keep their PTY meanings and are never remapped here.
           const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
           const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
           const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
