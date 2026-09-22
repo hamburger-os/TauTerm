@@ -26,6 +26,10 @@ function formatFrequency(value: number | null | undefined): string {
   return String(value) + " Hz";
 }
 
+function formatInteger(value: number | null | undefined): string {
+  return (value ?? 0).toLocaleString();
+}
+
 function formatCycles(value: number): string {
   if (value >= 1000000000) return (value / 1000000000).toFixed(2) + "G";
   if (value >= 1000000) return (value / 1000000).toFixed(2) + "M";
@@ -602,10 +606,10 @@ export default function SystemViewTraceView({
           <span>{t("rtt.traceIncomplete")}</span>
           <span className={styles.integrityDetails}>
             {t("rtt.traceIntegrityDetails", {
-              target: snapshot?.target_dropped_events ?? 0,
-              decoder: snapshot?.decoder_dropped_chunks ?? 0,
-              errors: snapshot?.decoder_errors ?? 0,
-              presentation: presentationUnresolved,
+              target: formatInteger(snapshot?.target_dropped_events),
+              decoder: formatInteger(snapshot?.decoder_dropped_chunks),
+              errors: formatInteger(snapshot?.decoder_errors),
+              presentation: formatInteger(presentationUnresolved),
             })}
           </span>
         </div>
@@ -615,7 +619,7 @@ export default function SystemViewTraceView({
         && presentationRecovery?.phase === "ok" && (
           <div className={styles.recoveryNote}>
             {t("rtt.tracePresentationRecovered", {
-              count: presentationRecovery.historical_dropped_events,
+              count: formatInteger(presentationRecovery.historical_dropped_events),
             })}
           </div>
         )}
@@ -623,12 +627,12 @@ export default function SystemViewTraceView({
       <div className={styles.metrics}>
         <div className={styles.metric}>
           <span>{t("rtt.traceEvents")}</span>
-          <strong>{snapshot?.event_count ?? 0}</strong>
+          <strong>{formatInteger(snapshot?.event_count)}</strong>
           {targetCoverage != null && (snapshot?.target_dropped_events ?? 0) > 0 && (
             <small>{t("rtt.traceObservedCoverage", { percent: targetCoverage.toFixed(1) })}</small>
           )}
         </div>
-        <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{snapshot?.task_count ?? 0}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{formatInteger(snapshot?.task_count)}</strong></div>
         <div
           className={styles.metric}
           title={t("rtt.traceTargetOverflowHint", {
@@ -637,16 +641,16 @@ export default function SystemViewTraceView({
           })}
         >
           <span>{t("rtt.traceTargetOverflow")}</span>
-          <strong>{snapshot?.target_dropped_events ?? 0}</strong>
+          <strong>{formatInteger(snapshot?.target_dropped_events)}</strong>
           {(snapshot?.target_drop_rate_per_sec ?? 0) > 0 ? (
             <small className={styles.lossActive}>
-              {t("rtt.traceTargetLossActive", { rate: snapshot?.target_drop_rate_per_sec ?? 0 })}
+              {t("rtt.traceTargetLossActive", { rate: formatInteger(snapshot?.target_drop_rate_per_sec) })}
             </small>
           ) : (snapshot?.target_dropped_events ?? 0) > 0 ? (
             <small>{t("rtt.traceTargetLossQuiet")}</small>
           ) : null}
         </div>
-        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{snapshot?.decoder_dropped_chunks ?? 0}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{formatInteger(snapshot?.decoder_dropped_chunks)}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceTimestampClock")}</span><strong>{formatFrequency(snapshot?.sys_freq_hz)}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceClock")}</span><strong>{formatFrequency(snapshot?.cpu_freq_hz)}</strong></div>
       </div>
