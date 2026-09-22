@@ -4,14 +4,13 @@ This file is the repository-level contract for AI coding agents. It is intention
 
 ## Instruction order
 
-Apply instructions in this order:
+Apply instructions with this precedence:
 
 1. the user's current request;
-2. the nearest applicable `AGENTS.md` when nested files exist;
-3. this root `AGENTS.md`;
-4. task-specific skills under `.agents/skills/`.
+2. repository `AGENTS.md` files from the root toward the working directory, with the closest applicable file winning on conflicts;
+3. task-specific skills under `.agents/skills/` as scoped supplements to the repository contract.
 
-Do not create tool-specific copies of these rules. A tool adapter may point here, but it must not become a second source of truth.
+Skills must not redefine repository-wide invariants from `AGENTS.md`. Do not create tool-specific copies of these rules. A tool adapter may point here, but it must not become a second source of truth.
 
 ## Project
 
@@ -95,6 +94,18 @@ If a change spans modules, update each affected owner document, but keep each fa
 - UI text changes must keep `src/i18n/locales/en-US.json` and `zh-CN.json` keys aligned.
 - Theme changes must follow `.agents/skills/tauterm-theme/SKILL.md`; do not restate the theme spec elsewhere.
 
+## Agent configuration hygiene
+
+Keep the root `AGENTS.md` focused on durable repository-wide rules. Put specialized workflows in `.agents/skills/` so agents can load them only when relevant.
+
+Each skill must follow the portable Agent Skills structure: matching kebab-case directory/name, concise routing description, and a `SKILL.md` of at most 500 lines. Move long command references, lookup tables, and implementation maps into one-level-deep `references/` files and link them from the skill.
+
+After changing `AGENTS.md`, a skill, or a skill reference, run:
+
+```bash
+npm run check:agents
+```
+
 ## Documentation procedure
 
 For any documentation-related change, read `.agents/skills/tauterm-docs/SKILL.md`.
@@ -114,6 +125,7 @@ The documentation check is a required CI gate.
 Choose checks that match the change. The normal baseline is:
 
 ```bash
+npm run check:agents
 npm run docs:check
 npx tsc --noEmit
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
