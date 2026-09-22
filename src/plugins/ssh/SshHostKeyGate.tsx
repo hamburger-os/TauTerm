@@ -48,6 +48,7 @@ export default function SshHostKeyGate() {
   const { showToast } = useToast();
   const [pending, setPending] = useState<PendingHostTrustAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const settlingRef = useRef(false);
   const queueRef = useRef<PendingHostTrustAction[]>([]);
 
   const enqueue = useCallback((request: PendingHostTrustAction) => {
@@ -64,8 +65,9 @@ export default function SshHostKeyGate() {
 
   const settle = useCallback(async (accepted: boolean) => {
     const current = pending;
-    if (!current || busy) return;
+    if (!current || settlingRef.current) return;
 
+    settlingRef.current = true;
     setBusy(true);
     try {
       if (current.kind === "verify") {
@@ -94,10 +96,11 @@ export default function SshHostKeyGate() {
         showToast("error", t("ssh.hostKeyError", { error: message }));
       }
     } finally {
+      settlingRef.current = false;
       setBusy(false);
       advance();
     }
-  }, [advance, busy, pending, showToast, t]);
+  }, [advance, pending, showToast, t]);
 
   useEffect(() => {
     let cancelled = false;
