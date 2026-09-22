@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:agents": "node scripts/check-agent-config.mjs",
     "docs:check": "node scripts/check-docs.js",
     "license:check": "node scripts/check-third-party.js",
     "license:cargo": "node scripts/check-cargo-licenses.js",

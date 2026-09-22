@@ -106,6 +106,9 @@ jobs:
       - name: Verify synchronized version metadata
         run: npm run version:check
 
+      - name: Validate agent configuration
+        run: npm run check:agents
+
       - name: Validate documentation contract
         run: npm run docs:check
 

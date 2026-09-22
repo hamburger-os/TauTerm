@@ -20,7 +20,8 @@
 | `npm run tauri dev` | **最常用开发入口。** 构建 TRDP native helper 后启动完整桌面应用 |
 | `npm run dev` | 只需要 Vite 前端时使用；不代表完整 TauTerm |
 | `npm run build` | TypeScript 检查并生成前端生产资源 |
-| `npm run preview` | 本地预览已经生成的前端资源 |
+| `npm run check:agents` | 校验根 `AGENTS.md`、`.agents/skills/*/SKILL.md` frontmatter、命名、行数与按需参考资料引用 |
+| `npm run preview` | 本地预览已经生成的前端生产资源 |
 | `npm run docs:check` | 检查文档层级、链接、资产引用、README 对齐等 |
 | `npm run license:check` | 检查第三方许可证、来源记录和分发 notice 契约 |
 | `npm run license:cargo` | 读取完整 Cargo dependency metadata，检查缺失或需人工复核的许可证表达式 |
