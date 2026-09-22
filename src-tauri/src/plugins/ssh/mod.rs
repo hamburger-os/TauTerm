@@ -817,11 +817,12 @@ async fn build_connection_with_config(
     let connect_host = normalize_ssh_host(&config.host).to_string();
     let addr = format_ssh_endpoint(&connect_host, config.port);
     let (socket, mut socket_abort) = connect_ssh_socket(&connect_host, config.port).await?;
-    let mut transport_config = russh::client::Config::default();
-    transport_config.keepalive_interval = Some(Duration::from_secs(30));
-    transport_config.inactivity_timeout = Some(Duration::from_secs(300));
-    transport_config.nodelay = true;
-    let russh_config = Arc::new(transport_config);
+    let russh_config = Arc::new(russh::client::Config {
+        keepalive_interval: Some(Duration::from_secs(30)),
+        inactivity_timeout: Some(Duration::from_secs(300)),
+        nodelay: true,
+        ..Default::default()
+    });
 
     // 初始 KEX 的 server key 通过 Handler 交给当前连接建立协程验证。russh 在后续
     // re-key 中沿用已建立的 server identity，不重新触发 TOFU 用户确认。
@@ -1186,10 +1187,8 @@ mod tests {
     #[test]
     fn changed_host_key_replacement_requires_bound_request() {
         let verifier = HostKeyVerifier::new();
-        let dir = std::env::temp_dir().join(format!(
-            "tauterm-host-key-change-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tauterm-host-key-change-{}", uuid::Uuid::new_v4()));
         let path = dir.join("known_hosts.json");
         verifier.configure_known_hosts(path).unwrap();
         verifier
@@ -1208,8 +1207,7 @@ mod tests {
             }
         );
 
-        let request_id =
-            verifier.register_change("example.test", 22, "ssh-ed25519", "SHA256:new");
+        let request_id = verifier.register_change("example.test", 22, "ssh-ed25519", "SHA256:new");
         assert!(verifier.respond_to_change(&request_id, true).unwrap());
         assert_eq!(
             verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
