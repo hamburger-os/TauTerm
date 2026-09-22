@@ -5,20 +5,44 @@ import { useTranslation } from "react-i18next";
 import ConfirmDialog from "../../components/common/ConfirmDialog";
 import { useToast } from "../../context/ToastContext";
 
+type HostTrustReason = "first_seen" | "additional_key";
+
 interface PendingHostKeyVerification {
+  kind: "verify";
   requestId: string;
   host: string;
   port: number;
+  algorithm: string;
   fingerprint: string;
+  reason: HostTrustReason;
+  knownAlgorithms: string[];
+}
+
+interface PendingHostKeyChange {
+  kind: "changed";
+  requestId: string;
+  host: string;
+  port: number;
+  algorithm: string;
+  expectedFingerprints: string[];
+  actualFingerprint: string;
+}
+
+type PendingHostTrustAction = PendingHostKeyVerification | PendingHostKeyChange;
+
+function endpoint(host: string, port: number): string {
+  const normalized = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${normalized}:${port}`;
 }
 
 export default function SshHostKeyGate() {
   const { t } = useTranslation();
   const { showToast } = useToast();
-  const [pending, setPending] = useState<PendingHostKeyVerification | null>(null);
-  const queueRef = useRef<PendingHostKeyVerification[]>([]);
+  const [pending, setPending] = useState<PendingHostTrustAction | null>(null);
+  const [busy, setBusy] = useState(false);
+  const queueRef = useRef<PendingHostTrustAction[]>([]);
 
-  const enqueue = useCallback((request: PendingHostKeyVerification) => {
+  const enqueue = useCallback((request: PendingHostTrustAction) => {
     setPending(current => {
       if (!current) return request;
       queueRef.current.push(request);
@@ -26,18 +50,43 @@ export default function SshHostKeyGate() {
     });
   }, []);
 
+  const advance = useCallback(() => {
+    setPending(queueRef.current.shift() ?? null);
+  }, []);
+
   const settle = useCallback(async (accepted: boolean) => {
     const current = pending;
-    if (!current) return;
-    setPending(queueRef.current.shift() ?? null);
+    if (!current || busy) return;
+
+    setBusy(true);
     try {
-      await invoke("confirm_host_key", { requestId: current.requestId, accepted });
+      if (current.kind === "verify") {
+        await invoke("confirm_host_key", {
+          requestId: current.requestId,
+          accepted,
+        });
+      } else {
+        await invoke("confirm_host_key_change", {
+          requestId: current.requestId,
+          accepted,
+        });
+        if (accepted) {
+          showToast("success", t("ssh.hostKeyTrustUpdated"));
+        }
+      }
     } catch (error) {
       const message = String(error);
-      if (message.includes("未找到或已过期") || message.includes("not found") || message.includes("expired")) return;
-      showToast("error", t("ssh.hostKeyError", { error: message }));
+      const stale = message.includes("未找到或已过期")
+        || message.includes("not found")
+        || message.includes("expired");
+      if (!stale) {
+        showToast("error", t("ssh.hostKeyError", { error: message }));
+      }
+    } finally {
+      setBusy(false);
+      advance();
     }
-  }, [pending, showToast, t]);
+  }, [advance, busy, pending, showToast, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,15 +95,36 @@ export default function SshHostKeyGate() {
       request_id: string;
       host: string;
       port: number;
+      algorithm: string;
       fingerprint: string;
+      reason: HostTrustReason;
+      known_algorithms: string[];
     }>("ssh-host-key-verify", event => {
       if (cancelled) return;
-      const { request_id: requestId, host, port, fingerprint } = event.payload;
-      enqueue({ requestId, host, port, fingerprint });
+      const {
+        request_id: requestId,
+        host,
+        port,
+        algorithm,
+        fingerprint,
+        reason,
+        known_algorithms: knownAlgorithms,
+      } = event.payload;
+      enqueue({
+        kind: "verify",
+        requestId,
+        host,
+        port,
+        algorithm,
+        fingerprint,
+        reason,
+        knownAlgorithms,
+      });
     }).then(fn => {
       if (cancelled) fn();
       else unlisten = fn;
     }).catch(() => {});
+
     return () => {
       cancelled = true;
       unlisten?.();
@@ -65,39 +135,76 @@ export default function SshHostKeyGate() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listen<{
+      request_id: string;
       host: string;
       port: number;
-      expected_fingerprint: string;
+      algorithm: string;
+      expected_fingerprint?: string;
+      expected_fingerprints: string[];
       actual_fingerprint: string;
     }>("ssh-host-key-changed", event => {
       if (cancelled) return;
-      showToast("error", t("ssh.hostKeyChanged", {
-        defaultValue: "SSH host key changed for {{host}}:{{port}}. Connection was refused. Expected {{expected}}, received {{actual}}.",
-        host: event.payload.host,
-        port: event.payload.port,
-        expected: event.payload.expected_fingerprint,
-        actual: event.payload.actual_fingerprint,
-      }));
+      const {
+        request_id: requestId,
+        host,
+        port,
+        algorithm,
+        expected_fingerprint: expectedFingerprint,
+        expected_fingerprints: expectedFingerprints,
+        actual_fingerprint: actualFingerprint,
+      } = event.payload;
+      enqueue({
+        kind: "changed",
+        requestId,
+        host,
+        port,
+        algorithm,
+        expectedFingerprints: expectedFingerprints.length > 0
+          ? expectedFingerprints
+          : expectedFingerprint ? [expectedFingerprint] : [],
+        actualFingerprint,
+      });
     }).then(fn => {
       if (cancelled) fn();
       else unlisten = fn;
     }).catch(() => {});
+
     return () => {
       cancelled = true;
       unlisten?.();
     };
-  }, [showToast, t]);
+  }, [enqueue]);
+
+  const message = pending
+    ? pending.kind === "changed"
+      ? t("ssh.hostKeyChangedPrompt", {
+          host: endpoint(pending.host, pending.port),
+          algorithm: pending.algorithm,
+          expected: pending.expectedFingerprints.join("\n"),
+          actual: pending.actualFingerprint,
+        })
+      : t(
+          pending.reason === "additional_key"
+            ? "ssh.hostKeyAdditionalPrompt"
+            : "ssh.hostKeyFirstSeenPrompt",
+          {
+            host: endpoint(pending.host, pending.port),
+            algorithm: pending.algorithm,
+            fingerprint: pending.fingerprint,
+            knownAlgorithms: pending.knownAlgorithms.join(", "),
+          },
+        )
+    : undefined;
 
   return (
     <ConfirmDialog
       open={pending !== null}
-      title={t("ssh.hostKeyTitle")}
-      message={pending
-        ? `${t("ssh.hostKeyHost", { defaultValue: "Host" })}: ${pending.host}:${pending.port}
-${t("ssh.hostKeyFingerprint")}: ${pending.fingerprint}
-
-${t("ssh.hostKeyPrompt")}`
-        : undefined}
+      title={pending?.kind === "changed"
+        ? t("ssh.hostKeyChangedTitle")
+        : t("ssh.hostKeyTitle")}
+      message={message}
+      intent={pending?.kind === "changed" ? "danger" : "primary"}
+      busy={busy}
       onConfirm={() => void settle(true)}
       onCancel={() => void settle(false)}
     />
