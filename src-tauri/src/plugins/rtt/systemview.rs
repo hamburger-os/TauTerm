@@ -1486,7 +1486,11 @@ mod tests {
         assert_eq!(snapshot.tasks[0].runtime_cycles, 20);
         assert_eq!(snapshot.target_overflow_packets, 1);
         assert_eq!(snapshot.target_dropped_events, 4);
+        assert_eq!(snapshot.target_drop_rate_per_sec, 2);
         assert_eq!(snapshot.decoder_dropped_chunks, 3);
+
+        state.clear();
+        assert_eq!(state.snapshot(0).target_drop_rate_per_sec, 0);
     }
 
     #[test]
