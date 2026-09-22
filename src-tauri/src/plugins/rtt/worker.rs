@@ -25,6 +25,7 @@ const PRESENTATION_QUEUE_MAX_BYTES: usize = 256 * 1024;
 const MAX_COMMANDS_PER_TICK: usize = 8;
 const MAX_PENDING_WRITES: usize = 32;
 const WRITE_QUANTUM_BYTES: usize = 4 * 1024;
+const MAX_BUSY_POLLS_BEFORE_SLEEP: usize = 8;
 
 pub(super) enum WorkerCommand {
     Write {
@@ -159,6 +160,7 @@ pub(super) fn run(
     let mut writes = VecDeque::<PendingWrite>::new();
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
+    let mut busy_poll_streak = 0usize;
     let mut fatal_error: Option<RttError> = None;
     let mut shutdown_reply: Option<mpsc::SyncSender<()>> = None;
 
@@ -226,6 +228,7 @@ pub(super) fn run(
                 break;
             }
         }
+        let had_reads = !reads.is_empty();
         for read in reads {
             let chunk = shared.record_rx(read.channel_index, read.data);
             if let Some(sender) = log_tx.as_ref() {
@@ -275,7 +278,16 @@ pub(super) fn run(
             last_snapshot = Instant::now();
         }
 
-        std::thread::sleep(config.poll_interval);
+        if had_reads && busy_poll_streak < MAX_BUSY_POLLS_BEFORE_SLEEP {
+            // High-rate RTT streams (notably SystemView) should be drained in short bounded bursts.
+            // Commands and writes are still serviced on every loop, so busy draining cannot starve
+            // control traffic or another scheduled operation indefinitely.
+            busy_poll_streak += 1;
+            std::thread::yield_now();
+        } else {
+            busy_poll_streak = 0;
+            std::thread::sleep(config.poll_interval);
+        }
     }
 
     emit_presentation_batch(
