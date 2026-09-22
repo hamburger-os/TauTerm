@@ -50,6 +50,36 @@ pub enum CredentialValue {
     Token(String),
 }
 
+impl Zeroize for CredentialValue {
+    fn zeroize(&mut self) {
+        match self {
+            Self::Password(secret) | Self::Token(secret) => secret.zeroize(),
+            Self::SshKey {
+                private_key,
+                passphrase,
+            } => {
+                private_key.zeroize();
+                if let Some(passphrase) = passphrase.as_mut() {
+                    passphrase.zeroize();
+                }
+            }
+            Self::Certificate {
+                cert_data,
+                key_data,
+            } => {
+                cert_data.zeroize();
+                key_data.zeroize();
+            }
+        }
+    }
+}
+
+impl Drop for CredentialValue {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Stored {
     entry: CredentialEntry,
