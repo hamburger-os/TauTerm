@@ -49,6 +49,67 @@ pub struct SystemViewEvent {
     pub context_id: Option<u32>,
     pub value: Option<u64>,
     pub text: Option<String>,
+    pub sync_boundary: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SystemViewExecutionState {
+    pub active_task_id: Option<u32>,
+    pub interrupted_task_id: Option<u32>,
+    pub interrupted_idle: bool,
+    pub irq_depth: u32,
+    pub idle_active: bool,
+}
+
+impl SystemViewExecutionState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn apply_event(&mut self, event: &SystemViewEvent) {
+        if event.sync_boundary {
+            self.reset();
+        }
+        match event.event_id {
+            1 | 10 | 11 | 18 => self.reset(),
+            2 => {
+                if self.irq_depth == 0 {
+                    self.interrupted_task_id = self.active_task_id.take();
+                    self.interrupted_idle = self.idle_active;
+                    self.idle_active = false;
+                }
+                self.irq_depth = self.irq_depth.saturating_add(1);
+            }
+            3 => {
+                self.irq_depth = self.irq_depth.saturating_sub(1);
+                if self.irq_depth == 0 {
+                    self.active_task_id = self.interrupted_task_id.take();
+                    self.idle_active = self.active_task_id.is_none() && self.interrupted_idle;
+                    self.interrupted_idle = false;
+                }
+            }
+            4 => {
+                self.reset();
+                self.active_task_id = event.context_id;
+            }
+            5 => {
+                self.active_task_id = None;
+            }
+            17 => {
+                self.active_task_id = None;
+                self.idle_active = true;
+            }
+            29 => {
+                if event.context_id == self.active_task_id {
+                    self.active_task_id = None;
+                }
+                if event.context_id == self.interrupted_task_id {
+                    self.interrupted_task_id = None;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +133,7 @@ pub struct SystemViewSnapshot {
     pub ram_base: Option<u32>,
     pub id_shift: Option<u32>,
     pub system_description: Vec<String>,
+    pub history_entry_state: SystemViewExecutionState,
     pub window_start_cycles: u64,
     pub last_target_cycles: u64,
     pub tasks: Vec<SystemViewTaskSnapshot>,
@@ -175,6 +237,7 @@ struct TraceState {
     interrupted_task: Option<u32>,
     isr_depth: u32,
     tasks: BTreeMap<u32, TaskState>,
+    history_entry_state: SystemViewExecutionState,
     events: VecDeque<SystemViewEvent>,
     next_event_sequence: u64,
 }
@@ -204,6 +267,7 @@ impl TraceState {
             interrupted_task: None,
             isr_depth: 0,
             tasks: BTreeMap::new(),
+            history_entry_state: SystemViewExecutionState::default(),
             events: VecDeque::new(),
             next_event_sequence: 1,
         }
@@ -398,11 +462,14 @@ impl TraceState {
             context_id,
             value,
             text,
+            sync_boundary: packet.sync_boundary,
         };
         self.next_event_sequence = self.next_event_sequence.saturating_add(1);
         self.events.push_back(event.clone());
         while self.events.len() > MAX_EVENT_HISTORY {
-            self.events.pop_front();
+            if let Some(evicted) = self.events.pop_front() {
+                self.history_entry_state.apply_event(&evicted);
+            }
         }
         event
     }
@@ -458,6 +525,7 @@ impl TraceState {
             ram_base: self.ram_base,
             id_shift: self.id_shift,
             system_description: self.system_description.clone(),
+            history_entry_state: self.history_entry_state.clone(),
             window_start_cycles: self.window_start_cycles,
             last_target_cycles: self.last_target_cycles,
             tasks,
@@ -486,6 +554,10 @@ impl TraceState {
         let active_task_id = self.active_task.map(|(task_id, _)| task_id);
         let interrupted_task = self.interrupted_task;
         let isr_depth = self.isr_depth;
+        let mut history_entry_state = self.history_entry_state.clone();
+        for event in &self.events {
+            history_entry_state.apply_event(event);
+        }
         let task_metadata = self
             .tasks
             .iter()
@@ -509,6 +581,7 @@ impl TraceState {
         self.decoder_errors = 0;
         self.presentation_dropped_events = 0;
         self.events.clear();
+        self.history_entry_state = history_entry_state;
         self.cleared_through_sequence = self.next_event_sequence.saturating_sub(1);
         self.tasks = task_metadata;
         self.active_task = active_task_id.map(|task_id| (task_id, last_target_cycles));
@@ -594,6 +667,7 @@ impl SystemViewShared {
                 ram_base: None,
                 id_shift: None,
                 system_description: Vec::new(),
+                history_entry_state: SystemViewExecutionState::default(),
                 window_start_cycles: 0,
                 last_target_cycles: 0,
                 tasks: Vec::new(),
