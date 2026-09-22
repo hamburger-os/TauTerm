@@ -28,12 +28,18 @@ export interface SystemViewMetadataSyncState {
   max_attempts: number;
 }
 
+export interface SystemViewPresentationRecoveryState {
+  recovered_through_drops: number;
+  pending_drops: number;
+}
+
 export interface RttSystemViewChannelState {
   snapshot: SystemViewSnapshot | null;
   events: readonly SystemViewEvent[];
   loaded: boolean;
   error: string | null;
   metadataSync: SystemViewMetadataSyncState;
+  presentationRecovery: SystemViewPresentationRecoveryState;
 }
 
 export interface RttRuntimeSnapshot {
@@ -60,6 +66,25 @@ const EMPTY_METADATA_SYNC: SystemViewMetadataSyncState = Object.freeze({
   attempts: 0,
   max_attempts: 0,
 });
+
+const EMPTY_PRESENTATION_RECOVERY: SystemViewPresentationRecoveryState = Object.freeze({
+  recovered_through_drops: 0,
+  pending_drops: 0,
+});
+
+function presentationRecoveryState(
+  snapshot: SystemViewSnapshot,
+  recoveredThroughDrops: number,
+): SystemViewPresentationRecoveryState {
+  const recovered = Math.min(
+    recoveredThroughDrops,
+    snapshot.presentation_dropped_events,
+  );
+  return {
+    recovered_through_drops: recovered,
+    pending_drops: Math.max(0, snapshot.presentation_dropped_events - recovered),
+  };
+}
 
 const sessions = new Map<string, RttRuntimeSnapshot>();
 const loadedChannels = new Map<string, Set<number>>();
@@ -290,6 +315,9 @@ async function recoverSystemViewHistory(
           events: Object.freeze(events),
           loaded: true,
           error: null,
+          presentationRecovery: Object.freeze(
+            presentationRecoveryState(snapshot, snapshot.presentation_dropped_events),
+          ),
         }),
       }),
     });
@@ -309,6 +337,7 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
     loaded: false,
     error: null,
     metadataSync: EMPTY_METADATA_SYNC,
+    presentationRecovery: EMPTY_PRESENTATION_RECOVERY,
   };
   const visibleEvents = payload.kind === "batch"
     ? payload.events.filter(
@@ -336,6 +365,12 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
         error: null,
         metadataSync: Object.freeze(
           metadataSyncState(payload.snapshot),
+        ),
+        presentationRecovery: Object.freeze(
+          presentationRecoveryState(
+            payload.snapshot,
+            previous.presentationRecovery.recovered_through_drops,
+          ),
         ),
       }),
     }),
@@ -574,6 +609,9 @@ export async function ensureSystemViewHistory(
           metadataSync: Object.freeze(
             metadataSyncState(snapshot),
           ),
+          presentationRecovery: Object.freeze(
+            presentationRecoveryState(snapshot, snapshot.presentation_dropped_events),
+          ),
         }),
       }),
     });
@@ -589,6 +627,8 @@ export async function ensureSystemViewHistory(
           loaded: false,
           error: String(cause),
           metadataSync: prev.systemview[channelIndex]?.metadataSync ?? EMPTY_METADATA_SYNC,
+          presentationRecovery: prev.systemview[channelIndex]?.presentationRecovery
+            ?? EMPTY_PRESENTATION_RECOVERY,
         }),
       }),
     });
@@ -666,6 +706,8 @@ export async function clearSystemView(
           loaded: false,
           error: null,
           metadataSync: prev.systemview[channelIndex]?.metadataSync ?? EMPTY_METADATA_SYNC,
+          presentationRecovery: prev.systemview[channelIndex]?.presentationRecovery
+            ?? EMPTY_PRESENTATION_RECOVERY,
         }),
       }),
     });
