@@ -89,6 +89,7 @@ function presentationRecoveryState(
 const sessions = new Map<string, RttRuntimeSnapshot>();
 const loadedChannels = new Map<string, Set<number>>();
 const systemViewHistoryRecoveries = new Set<string>();
+const systemViewHistoryRecoveryRequests = new Map<string, number>();
 const listeners = new Set<() => void>();
 let revision = 0;
 let listenerReady: Promise<void> | null = null;
@@ -285,46 +286,65 @@ async function recoverSystemViewHistory(
   sessionId: string,
   channelIndex: number,
   generation: number,
+  requestedThroughDrops: number,
 ): Promise<void> {
   const key = systemViewRecoveryKey(sessionId, channelIndex, generation);
+  const queuedThroughDrops = systemViewHistoryRecoveryRequests.get(key) ?? 0;
+  systemViewHistoryRecoveryRequests.set(
+    key,
+    Math.max(queuedThroughDrops, requestedThroughDrops),
+  );
   if (systemViewHistoryRecoveries.has(key)) return;
+
   systemViewHistoryRecoveries.add(key);
   try {
-    const history = await invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
-      sessionId,
-      channelIndex,
-      limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
-    });
-    if (history.generation !== generation) return;
+    while (systemViewHistoryRecoveryRequests.has(key)) {
+      // Capture the recovery watermark *before* requesting history. Drops that happen while
+      // the command is in flight enqueue another pass instead of being falsely marked recovered.
+      const recoverThroughDrops = systemViewHistoryRecoveryRequests.get(key) ?? 0;
+      systemViewHistoryRecoveryRequests.delete(key);
 
-    const prev = current(sessionId);
-    const channel = prev.systemview[channelIndex];
-    const snapshot = channel?.snapshot;
-    if (!channel || !snapshot || snapshot.generation !== generation) return;
+      const history = await invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
+        sessionId,
+        channelIndex,
+        limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
+      });
+      if (history.generation !== generation) return;
 
-    const events = mergeSystemViewEvents(
-      channel.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
-      history.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
-    );
-    publish(sessionId, {
-      ...prev,
-      systemview: Object.freeze({
-        ...prev.systemview,
-        [channelIndex]: Object.freeze({
-          ...channel,
-          events: Object.freeze(events),
-          loaded: true,
-          error: null,
-          presentationRecovery: Object.freeze(
-            presentationRecoveryState(snapshot, snapshot.presentation_dropped_events),
-          ),
+      const prev = current(sessionId);
+      const channel = prev.systemview[channelIndex];
+      const snapshot = channel?.snapshot;
+      if (!channel || !snapshot || snapshot.generation !== generation) return;
+
+      const events = mergeSystemViewEvents(
+        channel.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
+        history.events.filter(event => event.sequence > snapshot.cleared_through_sequence),
+      );
+      const recoveredThroughDrops = Math.max(
+        channel.presentationRecovery.recovered_through_drops,
+        recoverThroughDrops,
+      );
+      publish(sessionId, {
+        ...prev,
+        systemview: Object.freeze({
+          ...prev.systemview,
+          [channelIndex]: Object.freeze({
+            ...channel,
+            events: Object.freeze(events),
+            loaded: true,
+            error: null,
+            presentationRecovery: Object.freeze(
+              presentationRecoveryState(snapshot, recoveredThroughDrops),
+            ),
+          }),
         }),
-      }),
-    });
+      });
+    }
   } catch (cause) {
     console.warn("[rtt/runtime-store] SystemView history recovery failed:", cause);
   } finally {
     systemViewHistoryRecoveries.delete(key);
+    systemViewHistoryRecoveryRequests.delete(key);
   }
 }
 
@@ -380,6 +400,7 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
       payload.session_id,
       payload.channel_index,
       payload.generation,
+      payload.snapshot.presentation_dropped_events,
     );
   }
 }
@@ -432,6 +453,9 @@ export const rttRuntimeStore: PluginRuntimeStore = {
     loadedChannels.delete(sessionId);
     for (const key of systemViewHistoryRecoveries) {
       if (key.startsWith(`${sessionId}:`)) systemViewHistoryRecoveries.delete(key);
+    }
+    for (const key of systemViewHistoryRecoveryRequests.keys()) {
+      if (key.startsWith(`${sessionId}:`)) systemViewHistoryRecoveryRequests.delete(key);
     }
     if (sessions.delete(sessionId)) {
       revision += 1;
@@ -660,6 +684,11 @@ export async function detachSystemView(
     await refreshRttRuntime(sessionId);
     for (const key of systemViewHistoryRecoveries) {
       if (key.startsWith(`${sessionId}:${channelIndex}:`)) systemViewHistoryRecoveries.delete(key);
+    }
+    for (const key of systemViewHistoryRecoveryRequests.keys()) {
+      if (key.startsWith(`${sessionId}:${channelIndex}:`)) {
+        systemViewHistoryRecoveryRequests.delete(key);
+      }
     }
     const prev = current(sessionId);
     const { [channelIndex]: _detached, ...systemview } = prev.systemview;
