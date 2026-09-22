@@ -76,6 +76,7 @@ macro_rules! tauterm_invoke_handler {
             $crate::plugins::ssh::commands::get_ssh_home_dir,
             $crate::plugins::ssh::commands::confirm_host_key,
             $crate::plugins::ssh::commands::confirm_host_key_change,
+            $crate::plugins::ssh::commands::reset_ssh_known_hosts,
             $crate::plugins::tftp::commands::tftp_server_start,
             $crate::plugins::tftp::commands::tftp_server_stop,
             $crate::plugins::tftp::commands::tftp_client_get,
