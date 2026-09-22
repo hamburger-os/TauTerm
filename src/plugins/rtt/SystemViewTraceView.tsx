@@ -65,7 +65,7 @@ function formatTargetDuration(
 }
 
 function formatPercent(value: number, lowerBound: boolean): string {
-  if (!Number.isFinite(value) || value <= 0) return lowerBound ? "≥0%" : "0%";
+  if (!Number.isFinite(value) || value <= 0) return "0%";
   let formatted: string;
   if (value < 0.001) formatted = value.toExponential(1);
   else if (value < 0.01) formatted = value.toFixed(3);
