@@ -67,16 +67,18 @@ async fn connect_session(
         .unwrap_or("sftp")
         .to_string();
 
+    let default_session_name = format!("{}@{}", ssh_config.username, ssh_config.host);
+
     // SSH 插件自己持有 known-host 验证状态；AppState 只通过 PluginRuntime 取得 contribution。
+    // 运行时认证秘密直接 move 给连接流程，避免为了会话名称再复制一份密码/私钥。
     let ssh_adapter =
         state.plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID);
     let conn = ssh_adapter
-        .connect_with_config(ssh_config.clone(), app.clone())
+        .connect_with_config(ssh_config, app.clone())
         .await
         .map_err(|e| e.to_string())?;
 
-    let session_name =
-        name.unwrap_or_else(|| format!("{}@{}", ssh_config.username, ssh_config.host));
+    let session_name = name.unwrap_or(default_session_name);
     let transfer_enabled_val = transfer_enabled.unwrap_or(true);
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "sftp".into());
     let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
