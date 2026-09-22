@@ -28,7 +28,15 @@ interface PendingHostKeyChange {
   actualFingerprint: string;
 }
 
-type PendingHostTrustAction = PendingHostKeyVerification | PendingHostKeyChange;
+interface PendingTrustStoreReset {
+  kind: "storeUnavailable";
+  reason: string;
+}
+
+type PendingHostTrustAction =
+  | PendingHostKeyVerification
+  | PendingHostKeyChange
+  | PendingTrustStoreReset;
 
 function endpoint(host: string, port: number): string {
   const normalized = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
@@ -65,7 +73,7 @@ export default function SshHostKeyGate() {
           requestId: current.requestId,
           accepted,
         });
-      } else {
+      } else if (current.kind === "changed") {
         await invoke("confirm_host_key_change", {
           requestId: current.requestId,
           accepted,
@@ -73,6 +81,9 @@ export default function SshHostKeyGate() {
         if (accepted) {
           showToast("success", t("ssh.hostKeyTrustUpdated"));
         }
+      } else if (accepted) {
+        await invoke("reset_ssh_known_hosts");
+        showToast("success", t("ssh.hostTrustStoreResetDone"));
       }
     } catch (error) {
       const message = String(error);
@@ -175,35 +186,61 @@ export default function SshHostKeyGate() {
     };
   }, [enqueue]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ reason: string }>("ssh-host-trust-store-unavailable", event => {
+      if (cancelled) return;
+      enqueue({
+        kind: "storeUnavailable",
+        reason: event.payload.reason,
+      });
+    }).then(fn => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [enqueue]);
+
   const message = pending
-    ? pending.kind === "changed"
-      ? t("ssh.hostKeyChangedPrompt", {
-          host: endpoint(pending.host, pending.port),
-          algorithm: pending.algorithm,
-          expected: pending.expectedFingerprints.join("\n"),
-          actual: pending.actualFingerprint,
-        })
-      : t(
-          pending.reason === "additional_key"
-            ? "ssh.hostKeyAdditionalPrompt"
-            : "ssh.hostKeyFirstSeenPrompt",
-          {
+    ? pending.kind === "storeUnavailable"
+      ? t("ssh.hostTrustStoreResetPrompt", { reason: pending.reason })
+      : pending.kind === "changed"
+        ? t("ssh.hostKeyChangedPrompt", {
             host: endpoint(pending.host, pending.port),
             algorithm: pending.algorithm,
-            fingerprint: pending.fingerprint,
-            knownAlgorithms: pending.knownAlgorithms.join(", "),
-          },
-        )
+            expected: pending.expectedFingerprints.join("\n"),
+            actual: pending.actualFingerprint,
+          })
+        : t(
+            pending.reason === "additional_key"
+              ? "ssh.hostKeyAdditionalPrompt"
+              : "ssh.hostKeyFirstSeenPrompt",
+            {
+              host: endpoint(pending.host, pending.port),
+              algorithm: pending.algorithm,
+              fingerprint: pending.fingerprint,
+              knownAlgorithms: pending.knownAlgorithms.join(", "),
+            },
+          )
     : undefined;
 
   return (
     <ConfirmDialog
       open={pending !== null}
-      title={pending?.kind === "changed"
-        ? t("ssh.hostKeyChangedTitle")
-        : t("ssh.hostKeyTitle")}
+      title={pending?.kind === "storeUnavailable"
+        ? t("ssh.hostTrustStoreBlockedTitle")
+        : pending?.kind === "changed"
+          ? t("ssh.hostKeyChangedTitle")
+          : t("ssh.hostKeyTitle")}
       message={message}
-      intent={pending?.kind === "changed" ? "danger" : "primary"}
+      intent={pending?.kind === "changed" || pending?.kind === "storeUnavailable"
+        ? "danger"
+        : "primary"}
       busy={busy}
       onConfirm={() => void settle(true)}
       onCancel={() => void settle(false)}
