@@ -97,10 +97,22 @@ assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.
 assert.doesNotMatch(terminalSource, /clipboardHasText/);
 assert.match(terminalSource, /\(!isConnected \|\| !isActive\) && pendingPaste !== null/);
 assert.match(terminalSource, /剪贴板访问必须由明确的 Paste 动作触发/);
-assert.match(terminalSource, /Ctrl\+Insert/);
-assert.match(terminalSource, /Shift\+Insert/);
-assert.match(terminalSource, /Meta\+C/);
-assert.match(terminalSource, /Meta\+V/);
+assert.match(
+  terminalSource,
+  /compatibilityCopy\s*=\s*e\.ctrlKey[\s\S]{0,180}e\.key === "Insert"/,
+);
+assert.match(
+  terminalSource,
+  /compatibilityPaste\s*=\s*e\.shiftKey[\s\S]{0,180}e\.key === "Insert"/,
+);
+assert.match(
+  terminalSource,
+  /macCopy\s*=\s*e\.metaKey[\s\S]{0,220}lowerKey === "c"/,
+);
+assert.match(
+  terminalSource,
+  /macPaste\s*=\s*e\.metaKey[\s\S]{0,220}lowerKey === "v"/,
+);
 assert.doesNotMatch(
   terminalSource,
   /case "paste":[\s\S]{0,220}onData\(/,
