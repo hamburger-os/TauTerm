@@ -1295,6 +1295,39 @@ mod tests {
         assert!(debug.contains("<redacted>"));
     }
 
+    #[tokio::test]
+    async fn stale_first_seen_approval_cannot_overwrite_newer_trust() {
+        let verifier = HostKeyVerifier::new();
+        let dir =
+            std::env::temp_dir().join(format!("tauterm-host-key-tofu-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("known_hosts.json");
+        verifier.configure_known_hosts(path).unwrap();
+
+        let (request_id, response) = verifier
+            .register(
+                "example.test",
+                22,
+                "ssh-ed25519",
+                "SHA256:first",
+                "first_seen",
+                Vec::new(),
+            )
+            .await;
+        verifier
+            .known_hosts
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:newer")
+            .unwrap();
+
+        assert!(verifier.respond(&request_id, true).await.is_err());
+        assert!(!response.await.unwrap());
+        assert_eq!(
+            verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:newer"),
+            HostTrustDecision::Trusted
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn changed_host_key_replacement_requires_bound_request() {
         let verifier = HostKeyVerifier::new();
