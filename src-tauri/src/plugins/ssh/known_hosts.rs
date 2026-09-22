@@ -186,11 +186,14 @@ impl KnownHostStore {
 
     fn normalized_host(host: &str) -> String {
         let trimmed = host.trim();
-        trimmed
+        let unbracketed = trimmed
             .strip_prefix('[')
             .and_then(|value| value.strip_suffix(']'))
-            .unwrap_or(trimmed)
-            .to_ascii_lowercase()
+            .unwrap_or(trimmed);
+        if let Ok(ip) = unbracketed.parse::<std::net::IpAddr>() {
+            return ip.to_string();
+        }
+        unbracketed.trim_end_matches('.').to_ascii_lowercase()
     }
 
     fn key(host: &str, port: u16) -> String {
@@ -725,7 +728,7 @@ mod tests {
             .trust("[2001:db8::1]", 2222, "ssh-ed25519", "SHA256:first")
             .unwrap();
         assert_eq!(
-            store.evaluate("2001:db8::1", 2222, "ssh-ed25519", "SHA256:first"),
+            store.evaluate("2001:0db8:0:0:0:0:0:1", 2222, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Trusted
         );
         let _ = std::fs::remove_dir_all(dir);
