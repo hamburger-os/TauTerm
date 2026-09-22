@@ -17,7 +17,7 @@ import {
 
 const CLIENT_HISTORY_BYTES_PER_CHANNEL = 512 * 1024;
 const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
-const CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL = 5_000;
+const CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL = 8_192;
 
 export type SystemViewMetadataSyncPhase = "idle" | "syncing" | "incomplete" | "unavailable";
 
