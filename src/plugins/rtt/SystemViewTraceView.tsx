@@ -113,6 +113,11 @@ function timelineSeed(events: readonly SystemViewEvent[]): TimelineSeed {
         seed.irqDepth = 0;
         seed.idleActive = false;
         break;
+      case 29:
+        if (event.context_id != null && seed.activeTaskId === event.context_id) {
+          seed.activeTaskId = null;
+        }
+        break;
       default:
         break;
     }
@@ -271,8 +276,18 @@ function drawTimeline(
         activeTaskId = event.context_id;
         activeTaskStart = event.target_cycles;
       }
-    } else if (event.event_id === 5 || event.event_id === 11) {
+    } else if (event.event_id === 5) {
       closeTask(event.target_cycles);
+    } else if (event.event_id === 11) {
+      closeTask(event.target_cycles);
+      closeIdle(event.target_cycles);
+      if (irqStart != null) {
+        irqIntervals.push({ start: irqStart, end: event.target_cycles });
+        irqStart = null;
+      }
+      irqDepth = 0;
+      interruptedTaskId = null;
+      interruptedIdle = false;
     } else if (event.event_id === 17) {
       closeTask(event.target_cycles);
       if (idleStart == null) idleStart = event.target_cycles;
@@ -309,6 +324,12 @@ function drawTimeline(
       irqDepth = 0;
       interruptedTaskId = null;
       interruptedIdle = false;
+    } else if (
+      event.event_id === 29
+      && event.context_id != null
+      && activeTaskId === event.context_id
+    ) {
+      closeTask(event.target_cycles);
     }
   }
   closeTask(endCycles);
