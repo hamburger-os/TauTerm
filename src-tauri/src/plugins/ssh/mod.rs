@@ -412,6 +412,8 @@ struct PendingHostKeyVerification {
     port: u16,
     algorithm: String,
     fingerprint: String,
+    reason: String,
+    known_algorithms: Vec<String>,
 }
 
 struct PendingHostKeyChange {
@@ -483,6 +485,8 @@ impl HostKeyVerifier {
         port: u16,
         algorithm: &str,
         fingerprint: &str,
+        reason: &str,
+        known_algorithms: Vec<String>,
     ) -> (String, tokio::sync::oneshot::Receiver<bool>) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -497,6 +501,8 @@ impl HostKeyVerifier {
                     port,
                     algorithm: algorithm.to_string(),
                     fingerprint: fingerprint.to_string(),
+                    reason: reason.to_string(),
+                    known_algorithms,
                 },
             );
         (request_id, rx)
@@ -522,14 +528,52 @@ impl HostKeyVerifier {
         };
 
         if accept {
-            if let Err(error) = self.known_hosts.trust(
+            let current = self.known_hosts.evaluate(
                 &pending.host,
                 pending.port,
                 &pending.algorithm,
                 &pending.fingerprint,
-            ) {
+            );
+            let still_valid = match current {
+                HostTrustDecision::Trusted => true,
+                HostTrustDecision::FirstSeen => pending.reason == "first_seen",
+                HostTrustDecision::AdditionalKey {
+                    mut known_algorithms,
+                } => {
+                    let mut expected = pending.known_algorithms.clone();
+                    known_algorithms.sort();
+                    known_algorithms.dedup();
+                    expected.sort();
+                    expected.dedup();
+                    pending.reason == "additional_key" && known_algorithms == expected
+                }
+                HostTrustDecision::Changed { .. } | HostTrustDecision::Unavailable { .. } => false,
+            };
+            if !still_valid {
                 let _ = pending.response.send(false);
-                return Err(error);
+                return Err(
+                    "SSH 主机信任已在确认期间变化，请重新连接并重新验证主机密钥".to_string(),
+                );
+            }
+
+            if !matches!(
+                self.known_hosts.evaluate(
+                    &pending.host,
+                    pending.port,
+                    &pending.algorithm,
+                    &pending.fingerprint,
+                ),
+                HostTrustDecision::Trusted
+            ) {
+                if let Err(error) = self.known_hosts.trust(
+                    &pending.host,
+                    pending.port,
+                    &pending.algorithm,
+                    &pending.fingerprint,
+                ) {
+                    let _ = pending.response.send(false);
+                    return Err(error);
+                }
             }
         }
 
@@ -737,6 +781,8 @@ async fn wait_for_host_trust(
             port,
             &verification.algorithm,
             &verification.fingerprint,
+            reason,
+            known_algorithms.clone(),
         )
         .await;
     let _pending_guard = PendingRequestGuard::new(verifier, &request_id);
