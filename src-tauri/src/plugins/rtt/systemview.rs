@@ -12,6 +12,8 @@ const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DECODER_BUFFER: usize = 64 * 1024;
+const TARGET_DROP_RATE_WINDOW: Duration = Duration::from_secs(2);
+const MAX_TARGET_DROP_SAMPLES: usize = 512;
 const METADATA_RETRY_DELAYS_MS: [u64; 10] = [
     350, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 45_000, 60_000, 90_000,
 ];
@@ -124,6 +126,7 @@ pub struct SystemViewSnapshot {
     pub metadata_sync_max_attempts: u32,
     pub target_overflow_packets: u64,
     pub target_dropped_events: u64,
+    pub target_drop_rate_per_sec: u64,
     pub decoder_dropped_chunks: u64,
     pub decoder_errors: u64,
     pub presentation_dropped_events: u64,
@@ -223,6 +226,7 @@ struct TraceState {
     metadata_sync_attempts: u32,
     target_overflow_packets: u64,
     target_dropped_events: u64,
+    target_drop_samples: VecDeque<(Instant, u64)>,
     decoder_errors: u64,
     presentation_dropped_events: u64,
     cleared_through_sequence: u64,
@@ -253,6 +257,7 @@ impl TraceState {
             metadata_sync_attempts: 0,
             target_overflow_packets: 0,
             target_dropped_events: 0,
+            target_drop_samples: VecDeque::new(),
             decoder_errors: 0,
             presentation_dropped_events: 0,
             cleared_through_sequence: 0,
@@ -314,6 +319,16 @@ impl TraceState {
                 self.target_overflow_packets = self.target_overflow_packets.saturating_add(1);
                 let dropped = packet.fields.first().copied().unwrap_or_default() as u64;
                 self.target_dropped_events = self.target_dropped_events.saturating_add(dropped);
+                let now = Instant::now();
+                self.target_drop_samples.push_back((now, dropped));
+                while self.target_drop_samples.front().is_some_and(|(at, _)| {
+                    now.saturating_duration_since(*at) > TARGET_DROP_RATE_WINDOW
+                }) {
+                    self.target_drop_samples.pop_front();
+                }
+                while self.target_drop_samples.len() > MAX_TARGET_DROP_SAMPLES {
+                    self.target_drop_samples.pop_front();
+                }
                 value = Some(dropped);
             }
             2 => {
@@ -475,6 +490,16 @@ impl TraceState {
     }
 
     fn snapshot(&self, decoder_dropped_chunks: u64) -> SystemViewSnapshot {
+        let now = Instant::now();
+        let recent_target_drops = self
+            .target_drop_samples
+            .iter()
+            .filter(|(at, _)| now.saturating_duration_since(*at) <= TARGET_DROP_RATE_WINDOW)
+            .fold(0u64, |sum, (_, dropped)| sum.saturating_add(*dropped));
+        let target_drop_rate_per_sec = ((recent_target_drops as u128) * 1_000
+            / TARGET_DROP_RATE_WINDOW.as_millis())
+            .min(u64::MAX as u128) as u64;
+
         let mut tasks = self
             .tasks
             .iter()
@@ -516,6 +541,7 @@ impl TraceState {
             metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
             target_overflow_packets: self.target_overflow_packets,
             target_dropped_events: self.target_dropped_events,
+            target_drop_rate_per_sec,
             decoder_dropped_chunks,
             decoder_errors: self.decoder_errors,
             presentation_dropped_events: self.presentation_dropped_events,
@@ -578,6 +604,7 @@ impl TraceState {
         self.event_count = 0;
         self.target_overflow_packets = 0;
         self.target_dropped_events = 0;
+        self.target_drop_samples.clear();
         self.decoder_errors = 0;
         self.presentation_dropped_events = 0;
         self.events.clear();
@@ -658,6 +685,7 @@ impl SystemViewShared {
                 metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
                 target_overflow_packets: 0,
                 target_dropped_events: 0,
+                target_drop_rate_per_sec: 0,
                 decoder_dropped_chunks: drops,
                 decoder_errors: 0,
                 presentation_dropped_events: 0,
