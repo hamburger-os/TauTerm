@@ -191,6 +191,8 @@ Content 与 Structural Panel **必须同宗**：
 
 终端不应复制 Structural Panel 的强壳体感，否则会增加视觉噪音；它是“同一玻璃的内容级版本”。
 
+内容区内需要覆盖滚动正文的 Header 统一使用 `.liquid-glass-content-header`：Quality 复用 content clear/specular 并只替换为 `--theme-content-header-veil`，Performance 退化到同一个 `--performance-content-fill`；业务组件只拥有 header 的几何、分隔线与滚动层级，不复制材质背景。
+
 ### Control Surface — `.liquid-control-surface`
 
 高密度表单/参数编辑内部区域。仍使用 clear control base + theme control veil，但 veil 可以更实以确保可读性。
