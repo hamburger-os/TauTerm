@@ -76,11 +76,13 @@ const fitCalls = terminalHost.match(/\.fitAddon\.fit\(\)/g) ?? [];
 if (fitCalls.length !== 1 || !terminalHost.includes("current.fitAddon.fit();")) {
   fail("Shared xterm host must route every fit through one guarded RAF path.");
 }
-const disconnectObserver = terminalHost.indexOf("resizeObserver?.disconnect()");
-const cancelFit = terminalHost.indexOf("cancelAnimationFrame(fitRaf)");
-const disposeTerminal = terminalHost.indexOf("current.terminal.dispose()");
+const hostCleanup = terminalHost.indexOf("dispose() {");
+const disconnectObserver = terminalHost.indexOf("resizeObserver?.disconnect()", hostCleanup);
+const cancelFit = terminalHost.indexOf("cancelAnimationFrame(fitRaf)", hostCleanup);
+const disposeTerminal = terminalHost.indexOf("current.terminal.dispose()", hostCleanup);
 if (
-  disconnectObserver < 0
+  hostCleanup < 0
+  || disconnectObserver < hostCleanup
   || cancelFit < disconnectObserver
   || disposeTerminal < cancelFit
 ) {
