@@ -269,32 +269,26 @@ pub async fn confirm_host_key(
     Ok(())
 }
 
-/// 主机密钥发生变化时，只有显式安全确认流程可以替换同算法的旧信任。
-/// 当前连接仍保持拒绝；更新成功后用户需要重新发起连接。
+/// 响应一次由后端实际观察到的 Host Key Changed 事件。
+///
+/// 连接本身始终先被拒绝；只有仍有效的 mismatch request 可以修改对应 endpoint/algorithm
+/// 的信任记录。更新成功后用户需要重新发起连接。
 #[tauri::command]
-pub fn replace_host_key(
+pub fn confirm_host_key_change(
     state: tauri::State<'_, AppState>,
-    host: String,
-    port: u16,
-    algorithm: String,
-    fingerprint: String,
+    request_id: String,
+    accepted: bool,
 ) -> Result<(), String> {
-    if host.trim().is_empty()
-        || algorithm.trim().is_empty()
-        || fingerprint.trim().is_empty()
-        || port == 0
-    {
-        return Err("SSH 主机密钥替换参数无效".into());
-    }
-
-    state
+    let ok = state
         .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
-        .replace_known_host(&host, port, &algorithm, &fingerprint)?;
+        .respond_to_host_key_change(&request_id, accepted)?;
+    if !ok {
+        return Err("主机密钥变化确认请求未找到或已过期".into());
+    }
     log::warn!(
-        "SSH 主机信任已由用户显式替换: {}:{} ({})",
-        host,
-        port,
-        algorithm
+        "SSH 主机密钥变化请求 {}: {}",
+        &request_id[..request_id.len().min(16)],
+        if accepted { "已显式更新信任" } else { "已拒绝" }
     );
     Ok(())
 }
