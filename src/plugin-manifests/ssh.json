@@ -10,7 +10,6 @@
   "capabilities": [
     "connection",
     "transfer",
-    "endpoint_discovery",
     "multi_session",
     "session_logging"
   ],

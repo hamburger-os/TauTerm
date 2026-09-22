@@ -6,6 +6,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -35,7 +36,7 @@ pub struct CredentialEntry {
     pub credential_type: CredentialType,
     pub description: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum CredentialValue {
     Password(String),
@@ -49,6 +50,56 @@ pub enum CredentialValue {
     },
     Token(String),
 }
+
+impl fmt::Debug for CredentialValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Password(_) => f.write_str("Password(<redacted>)"),
+            Self::SshKey { passphrase, .. } => f
+                .debug_struct("SshKey")
+                .field("private_key", &"<redacted>")
+                .field("passphrase", &passphrase.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::Certificate { .. } => f
+                .debug_struct("Certificate")
+                .field("cert_data", &"<redacted>")
+                .field("key_data", &"<redacted>")
+                .finish(),
+            Self::Token(_) => f.write_str("Token(<redacted>)"),
+        }
+    }
+}
+
+impl Zeroize for CredentialValue {
+    fn zeroize(&mut self) {
+        match self {
+            Self::Password(secret) | Self::Token(secret) => secret.zeroize(),
+            Self::SshKey {
+                private_key,
+                passphrase,
+            } => {
+                private_key.zeroize();
+                if let Some(passphrase) = passphrase.as_mut() {
+                    passphrase.zeroize();
+                }
+            }
+            Self::Certificate {
+                cert_data,
+                key_data,
+            } => {
+                cert_data.zeroize();
+                key_data.zeroize();
+            }
+        }
+    }
+}
+
+impl Drop for CredentialValue {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Stored {
     entry: CredentialEntry,

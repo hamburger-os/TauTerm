@@ -21,7 +21,7 @@ fn unlock_fallback_if_needed(store: &CredentialStore) {
 }
 
 fn assert_password(value: CredentialValue, expected: &str) {
-    match value {
+    match &value {
         CredentialValue::Password(actual) => assert_eq!(actual, expected),
         other => panic!("expected password credential, got {other:?}"),
     }

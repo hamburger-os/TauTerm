@@ -13,25 +13,26 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 首次连接：展示 `host:port`、主机密钥算法与 SHA-256 fingerprint，用户明确接受后才持久化；
 - 一个 endpoint 可以同时保存多个已经明确接受的 host-key 算法/指纹，不把服务器新增另一种合法算法误判为原密钥发生变化；
 - 已知算法且 fingerprint 一致：自动通过，并只更新该算法/指纹记录的 `last_seen`；
-- 已知 endpoint 出现新的 host-key 算法：按独立 TOFU 信任处理，必须再次由用户明确接受；
-- 同一 host-key 算法的 fingerprint 变化：默认拒绝，不允许普通“继续”确认静默覆盖旧信任；
-- `known_hosts.json` 使用当前 schema v2。加载时先只读取 schema version：非当前版本不迁移旧信任，原文件从工作路径隔离后以空的当前信任库重新开始，所有主机都必须重新完成 TOFU 确认；当前版本内容损坏则同样隔离原文件，但本次进程保持 fail-closed，避免把损坏/篡改静默降级成新的信任起点；
+- 已知 endpoint 出现新的 host-key 算法：进入独立的 **Additional Key** 状态，界面明确提示该主机已经有其它受信算法；必须再次核对设备身份并确认，不能伪装成“首次见到主机”；
+- 同一 host-key 算法的 fingerprint 变化：当前连接始终先拒绝。后端为这次实际观察到的 mismatch 生成一次性 `request_id`；只有对应安全确认对话框仍在有效期内时才能替换该算法的旧信任，替换后必须重新发起连接，不能用任意 host/fingerprint 参数直接覆写信任；
+- `known_hosts.json` 使用当前 schema v2。加载时先只读取 schema version：非当前版本或当前版本内容损坏都会先写入持久化 blocked marker，再隔离原文件；因此即使隔离过程中异常退出，以后重启也继续 fail-closed，不会把被隔离的信任库静默降级成 fresh TOFU。只有用户在主题安全确认框中显式“重置信任库”后才创建空的当前信任库，此后所有主机都必须重新核对 fingerprint；
+- 设置 → 安全提供 SSH 受信主机管理器：展示 endpoint、算法与 fingerprint，可显式删除单个 endpoint 的全部信任或重置整个信任库；两类破坏性操作都复用公共 `ConfirmDialog`，不会通过普通 Toast 或无确认按钮直接改写信任；
 - endpoint key 对 IPv6 做标准化，不让带/不带方括号的同一地址形成两份信任记录；
-- 并发验证以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
-- 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径；
-- TCP/KEX 网络阶段与用户 Host Key 确认分别计时。用户阅读和确认指纹的时间不占用网络阶段超时预算，确认完成后网络阶段重新获得完整 deadline；确认事件无法送达、确认超时或信任存储不可用都 fail-closed。
+- 首次/新增算法确认与 Host Key Changed 替换都以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
+- 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走应用层注册的受信连接 contribution；
+- TCP/KEX 网络阶段与用户 Host Key 确认分别计时。网络阶段固定 deadline 不包含用户阅读时间；用户安全决策拥有独立的较长上限，确认完成后 KEX 重新获得完整网络 deadline。确认事件无法送达、用户确认过期、信任存储不可用都 fail-closed。
 
 `known_hosts.json` 只保存公开主机身份信息，不保存密码、私钥或 passphrase。
 
 ### 认证与连接建立
 
-SSH 运行时认证配置使用类型化认证方式，当前产品只开放密码和私钥两种方式，不允许任意字符串穿透到协议核心。认证失败时保留 russh 返回的 `partial_success` 与可继续认证方法信息用于诊断，不能把多阶段认证要求误报成普通密码错误。
+SSH 把非敏感连接参数与运行时认证秘密拆开：持久化参数只包含 host / port / username / auth method 与 credential reference，hydrate 后再构造 `SshAuthSecret::Password` 或 `SshAuthSecret::Key`。因此“密码和私钥同时存在”这类无效运行态不能进入协议核心。连接流程直接 move 这份运行时秘密，不为会话名称等展示元数据额外 clone 密码/私钥；秘密对象销毁时主动 zeroize。认证失败仍保留 russh 返回的 `partial_success` 与可继续认证方法信息用于诊断，不能把多阶段认证要求误报成普通密码错误。
 
-RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端提供 `server-sig-algs` 时按协商结果选择 `rsa-sha2-*`；未提供 EXT_INFO 时以 `rsa-sha2-512` 做现代算法 best-effort。服务端若明确只接受旧式 `ssh-rsa`/SHA-1，TauTerm 默认拒绝静默降级。
+RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端提供 `server-sig-algs` 时按协商结果选择 `rsa-sha2-*`；未提供 EXT_INFO 时以 `rsa-sha2-512` 做现代算法 best-effort。服务端若明确只接受旧式 `ssh-rsa`/SHA-1，TauTerm 默认拒绝静默降级。客户端握手配置也显式从 russh 默认集合中移除包含 SHA-1 的 KEX/MAC 与 `ssh-rsa` 主机密钥算法，不把上游默认值变化当作安全策略。
 
 连接目标始终以独立的 host + port 传给 socket resolver，不通过字符串拼接构造网络地址；错误消息和界面展示再单独格式化 endpoint。IPv6 因此使用 `[host]:port` 展示，但 resolver 接收不带方括号的原始 IPv6 host。
 
-连接建立 future 直接受调用方生命周期管理，不再额外 spawn 一个可能脱离 Tauri 命令生命周期的后台 connect task；命令取消、超时或 Host Key 拒绝都会通过 drop 取消尚未完成的连接过程，不留下孤儿连接任务。
+连接建立 future 直接受调用方生命周期管理，不再额外 spawn 一个可能脱离 Tauri 命令生命周期的后台 connect task；命令取消、超时或 Host Key 拒绝都会通过 drop 取消尚未完成的连接过程，不留下孤儿连接任务。父 Session 一旦创建，首个 PTY 注册、运行态快照、DataPlane 激活和瞬时凭据提交被视为同一个连接事务；commit 前任一阶段失败都会统一关闭父 Session，而不是在多个错误分支分别补偿。
 
 认证秘密只存在于瞬时连接配置和平台安全凭据存储中。运行时 SSH 配置的 Debug 输出会主动隐藏密码、私钥和 passphrase，并在对象销毁时清零这些字符串缓冲区；Session/Workspace 仍然只保存凭据引用。
 
@@ -43,7 +44,7 @@ RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端�
 
 `SshRuntime` 的强引用只由 SessionStore 持有的 service / file-transfer / channel-factory capability graph 管理。注册到 `PluginRuntime` 的 `SshAdapter` 自己持有 `SessionRuntimeRegistry<SshRuntime>` 弱索引；该索引不拥有连接、不能延长连接生命周期，失效 weak entry 会被视为运行时不可用并清理。SSH 不使用模块级静态 runtime registry，因此插件实例与其私有运行态索引具有明确 ownership，SessionStore 仍是运行时资源生命周期的单一强 ownership source。
 
-SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理或日志读取伪装成终端字节流。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
+SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理或日志读取伪装成终端字节流。远程 `$HOME` 也属于文件工作流的辅助元数据，不再阻塞基础 SSH 登录；第一次真正请求文件管理器 home 时才通过独立 exec channel 查询，并在 `SshRuntime` 中缓存。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
 
 ### 远程文档查看与编辑
 
@@ -95,14 +96,15 @@ flowchart TB
 ## 设计边界
 
 - 身份认证与 host-key 校验属于 SSH 连接边界，不能由前端绕过。
-- Host Key 信任以 `endpoint + key algorithm + fingerprint` 为核心；同 endpoint 可以信任多个算法，但同算法的指纹变化必须 fail-closed。
+- Host Key 信任以 `endpoint + key algorithm + fingerprint` 为核心；同 endpoint 可以信任多个算法，但新增算法必须和首次 TOFU 区分展示，同算法的指纹变化必须先 fail-closed，再通过后端实际 mismatch request 做显式替换。
+- 信任库损坏/未知 schema 必须跨重启保持 blocked；只有显式 reset 可以清空信任库，不能自动回退到 fresh TOFU。
 - 用户交互等待和网络阶段 timeout 必须是不同生命周期，不能重新把 Host Key 对话框等待时间包进 TCP/KEX 固定超时。
 - host 与 port 是结构化网络目标；IPv6 连接不能依赖 `host + ":" + port` 拼接。
 - RSA 签名算法优先遵循服务器 `server-sig-algs`，默认不允许静默退回 `ssh-rsa`/SHA-1。
 - SSH connect future 必须受发起命令本身的 cancellation 生命周期约束，不创建脱离调用方的孤儿连接任务。
 - 多终端共享认证连接，但每个 child terminal 有独立 PTY/I/O 生命周期；远端 EOF 是方向性半关闭，真正 Close 与本端 EOF/Close 握手必须区分。
 - SessionStore capability graph 是 SSH 运行时资源的强 owner；任何按协议维护的 session-id lookup 只能是非持有索引，不能形成第二套资源 ownership。
-- 文件传输、远程文档和远端日志都通过 side-channel/专用服务实现，不侵入终端流；Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。
+- 文件传输、远程文档和远端日志都通过 side-channel/专用服务实现，不侵入终端流；Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。文件服务辅助元数据必须 lazy 获取，不能让未使用的 side capability 增加基础 SSH 建连步骤。
 - journald 的 cursor、排序方向、stderr/exit status 与 command-line 参数属于后端数据源实现细节；React 只消费规范化页面/批量事件。
 - journald 实时任务的停止必须等后端 operation 完成后才允许同一 Session 重新启动；不要恢复基于固定间隔 polling 或“已在运行中”字符串补偿的旧模型。
 - SFTP 浏览/属性/Remote Document 使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。文档读取只打开普通文件，并在取得远端 handle 后释放 SFTP cache mutex，避免小文件编辑阻塞目录浏览。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
