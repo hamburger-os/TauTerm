@@ -659,11 +659,7 @@ impl SystemViewShared {
         }
     }
 
-    fn ingest(
-        &self,
-        chunk: StoredRttChunk,
-        track_target_loss_rate: bool,
-    ) -> Vec<SystemViewEvent> {
+    fn ingest(&self, chunk: StoredRttChunk, track_target_loss_rate: bool) -> Vec<SystemViewEvent> {
         let (packets, errors) = self
             .decoder
             .lock()
