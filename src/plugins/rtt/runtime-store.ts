@@ -18,18 +18,6 @@ import {
 const CLIENT_HISTORY_BYTES_PER_CHANNEL = 512 * 1024;
 const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
 const CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL = 5_000;
-const SYSTEMVIEW_METADATA_RETRY_DELAYS_MS = Object.freeze([
-  350,
-  1_000,
-  2_500,
-  5_000,
-  10_000,
-  20_000,
-  30_000,
-  45_000,
-  60_000,
-  90_000,
-]);
 
 export type SystemViewMetadataSyncPhase = "idle" | "syncing" | "incomplete" | "unavailable";
 
@@ -46,13 +34,6 @@ export interface RttSystemViewChannelState {
   loaded: boolean;
   error: string | null;
   metadataSync: SystemViewMetadataSyncState;
-}
-
-interface SystemViewMetadataRetry {
-  generation: number;
-  unknownKey: string;
-  attempts: number;
-  timer: number | null;
 }
 
 export interface RttRuntimeSnapshot {
@@ -77,12 +58,11 @@ const EMPTY_METADATA_SYNC: SystemViewMetadataSyncState = Object.freeze({
   phase: "idle",
   unresolved_tasks: 0,
   attempts: 0,
-  max_attempts: SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length,
+  max_attempts: 0,
 });
 
 const sessions = new Map<string, RttRuntimeSnapshot>();
 const loadedChannels = new Map<string, Set<number>>();
-const metadataRetries = new Map<string, SystemViewMetadataRetry>();
 const listeners = new Set<() => void>();
 let revision = 0;
 let listenerReady: Promise<void> | null = null;
@@ -107,42 +87,16 @@ function chooseViewChannel(snapshot: RttSnapshot, previous: number | null): numb
     ?? null;
 }
 
-function metadataRetryKey(sessionId: string, channelIndex: number): string {
-  return `${sessionId}:${channelIndex}`;
-}
-
-function cancelMetadataRetry(sessionId: string, channelIndex: number): void {
-  const key = metadataRetryKey(sessionId, channelIndex);
-  const retry = metadataRetries.get(key);
-  if (retry?.timer != null) window.clearTimeout(retry.timer);
-  metadataRetries.delete(key);
-}
-
-function cancelSessionMetadataRetries(sessionId: string): void {
-  const prefix = `${sessionId}:`;
-  for (const [key, retry] of metadataRetries) {
-    if (!key.startsWith(prefix)) continue;
-    if (retry.timer != null) window.clearTimeout(retry.timer);
-    metadataRetries.delete(key);
-  }
-}
-
-function unresolvedSystemViewTaskIds(snapshot: SystemViewSnapshot): number[] {
-  return snapshot.tasks
-    .filter(task => !task.name || task.priority == null)
-    .map(task => task.id)
-    .sort((left, right) => left - right);
-}
-
-function metadataSyncState(
-  snapshot: SystemViewSnapshot,
-  attempts: number,
-): SystemViewMetadataSyncState {
-  const unresolved = unresolvedSystemViewTaskIds(snapshot).length;
+function metadataSyncState(snapshot: SystemViewSnapshot): SystemViewMetadataSyncState {
+  const unresolved = snapshot.tasks.filter(task => !task.name || task.priority == null).length;
+  const attempts = snapshot.metadata_sync_attempts ?? 0;
+  const maxAttempts = snapshot.metadata_sync_max_attempts ?? 0;
   if (unresolved === 0) {
     return {
-      ...EMPTY_METADATA_SYNC,
-      max_attempts: SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length,
+      phase: "idle",
+      unresolved_tasks: 0,
+      attempts,
+      max_attempts: maxAttempts,
     };
   }
   if (!snapshot.control_available) {
@@ -150,126 +104,21 @@ function metadataSyncState(
       phase: "unavailable",
       unresolved_tasks: unresolved,
       attempts,
-      max_attempts: SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length,
+      max_attempts: maxAttempts,
     };
   }
   return {
-    phase: attempts >= SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length ? "incomplete" : "syncing",
+    phase: maxAttempts > 0 && attempts >= maxAttempts ? "incomplete" : "syncing",
     unresolved_tasks: unresolved,
     attempts,
-    max_attempts: SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length,
+    max_attempts: maxAttempts,
   };
-}
-
-function publishMetadataSyncState(
-  sessionId: string,
-  channelIndex: number,
-  state: SystemViewMetadataSyncState,
-): void {
-  const prev = current(sessionId);
-  const channel = prev.systemview[channelIndex];
-  if (!channel) return;
-  const before = channel.metadataSync;
-  if (
-    before.phase === state.phase
-    && before.unresolved_tasks === state.unresolved_tasks
-    && before.attempts === state.attempts
-    && before.max_attempts === state.max_attempts
-  ) {
-    return;
-  }
-  publish(sessionId, {
-    ...prev,
-    systemview: Object.freeze({
-      ...prev.systemview,
-      [channelIndex]: Object.freeze({ ...channel, metadataSync: Object.freeze(state) }),
-    }),
-  });
-}
-
-function reconcileSystemViewMetadataSync(
-  sessionId: string,
-  channelIndex: number,
-  snapshot: SystemViewSnapshot,
-): SystemViewMetadataSyncState {
-  const key = metadataRetryKey(sessionId, channelIndex);
-  const unknownKey = unresolvedSystemViewTaskIds(snapshot).join(",");
-  const existing = metadataRetries.get(key);
-
-  if (!unknownKey || !snapshot.control_available) {
-    cancelMetadataRetry(sessionId, channelIndex);
-    return metadataSyncState(snapshot, 0);
-  }
-
-  if (
-    existing
-    && existing.generation === snapshot.generation
-    && existing.unknownKey === unknownKey
-  ) {
-    return metadataSyncState(snapshot, existing.attempts);
-  }
-
-  cancelMetadataRetry(sessionId, channelIndex);
-  const retry: SystemViewMetadataRetry = {
-    generation: snapshot.generation,
-    unknownKey,
-    attempts: 0,
-    timer: null,
-  };
-  metadataRetries.set(key, retry);
-
-  const scheduleNext = () => {
-    if (retry.attempts >= SYSTEMVIEW_METADATA_RETRY_DELAYS_MS.length) {
-      const latest = current(sessionId).systemview[channelIndex]?.snapshot;
-      if (latest) publishMetadataSyncState(sessionId, channelIndex, metadataSyncState(latest, retry.attempts));
-      return;
-    }
-    const delay = SYSTEMVIEW_METADATA_RETRY_DELAYS_MS[retry.attempts];
-    retry.timer = window.setTimeout(() => {
-      retry.timer = null;
-      const latest = current(sessionId).systemview[channelIndex]?.snapshot;
-      if (!latest || latest.generation !== retry.generation || !latest.control_available) {
-        cancelMetadataRetry(sessionId, channelIndex);
-        if (latest) publishMetadataSyncState(sessionId, channelIndex, metadataSyncState(latest, 0));
-        return;
-      }
-      const latestUnknownKey = unresolvedSystemViewTaskIds(latest).join(",");
-      if (!latestUnknownKey) {
-        cancelMetadataRetry(sessionId, channelIndex);
-        publishMetadataSyncState(sessionId, channelIndex, metadataSyncState(latest, 0));
-        return;
-      }
-      if (latestUnknownKey !== retry.unknownKey) {
-        const nextState = reconcileSystemViewMetadataSync(sessionId, channelIndex, latest);
-        publishMetadataSyncState(sessionId, channelIndex, nextState);
-        return;
-      }
-
-      retry.attempts += 1;
-      publishMetadataSyncState(sessionId, channelIndex, metadataSyncState(latest, retry.attempts));
-      void invoke("rtt_systemview_control", {
-        sessionId,
-        channelIndex,
-        control: "refresh_tasks",
-      }).catch(cause => {
-        console.warn("[rtt/runtime-store] SystemView task metadata refresh failed:", cause);
-      }).finally(() => {
-        if (metadataRetries.get(key) === retry) scheduleNext();
-      });
-    }, delay);
-  };
-
-  scheduleNext();
-  return metadataSyncState(snapshot, 0);
 }
 
 function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   const prev = current(sessionId);
   const generationChanged = prev.snapshot == null || prev.snapshot.generation !== snapshot.generation;
-  if (generationChanged) {
-    loadedChannels.delete(sessionId);
-    cancelSessionMetadataRetries(sessionId);
-  }
+  if (generationChanged) loadedChannels.delete(sessionId);
 
   const selectedChannel = generationChanged
     ? chooseViewChannel(snapshot, null)
@@ -427,11 +276,7 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
         loaded: previous.loaded,
         error: null,
         metadataSync: Object.freeze(
-          reconcileSystemViewMetadataSync(
-            payload.session_id,
-            payload.channel_index,
-            payload.snapshot,
-          ),
+          metadataSyncState(payload.snapshot),
         ),
       }),
     }),
@@ -484,7 +329,6 @@ export const rttRuntimeStore: PluginRuntimeStore = {
   revision: () => revision,
   release(sessionId) {
     loadedChannels.delete(sessionId);
-    cancelSessionMetadataRetries(sessionId);
     if (sessions.delete(sessionId)) {
       revision += 1;
       listeners.forEach(listener => listener());
@@ -659,7 +503,7 @@ export async function ensureSystemViewHistory(
           loaded: true,
           error: null,
           metadataSync: Object.freeze(
-            reconcileSystemViewMetadataSync(sessionId, channelIndex, snapshot),
+            metadataSyncState(snapshot),
           ),
         }),
       }),
@@ -705,7 +549,6 @@ export async function detachSystemView(
   try {
     await invoke("rtt_systemview_detach", { sessionId, channelIndex });
     await refreshRttRuntime(sessionId);
-    cancelMetadataRetry(sessionId, channelIndex);
     const prev = current(sessionId);
     const { [channelIndex]: _detached, ...systemview } = prev.systemview;
     publish(sessionId, {
