@@ -46,6 +46,15 @@ function formatTargetTime(
   return `+${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
 }
 
+function restoreTargetId(
+  taskId: number,
+  snapshot: SystemViewSnapshot | null,
+): string | null {
+  if (snapshot?.ram_base == null || snapshot.id_shift == null) return null;
+  const restored = BigInt(snapshot.ram_base) + (BigInt(taskId) << BigInt(snapshot.id_shift));
+  return `0x${restored.toString(16).toUpperCase()}`;
+}
+
 interface TimelineSeed {
   activeTaskId: number | null;
   interruptedTaskId: number | null;
@@ -125,6 +134,44 @@ function timelineSeed(events: readonly SystemViewEvent[]): TimelineSeed {
   return seed;
 }
 
+function selectTimelineTasks(
+  snapshot: SystemViewSnapshot | null,
+  visibleEvents: readonly SystemViewEvent[],
+  seed: TimelineSeed,
+): SystemViewSnapshot["tasks"] {
+  const tasks = snapshot?.tasks ?? [];
+  if (tasks.length <= MAX_TASK_LANES) return [...tasks].sort((left, right) => left.id - right.id);
+
+  const lastExecution = new Map<number, number>();
+  visibleEvents.forEach((event, index) => {
+    if (event.event_id === 4 && event.context_id != null) {
+      lastExecution.set(event.context_id, index);
+    }
+  });
+  const pinned = new Set<number>();
+  if (seed.activeTaskId != null) pinned.add(seed.activeTaskId);
+  if (seed.interruptedTaskId != null) pinned.add(seed.interruptedTaskId);
+
+  const selected = [...tasks]
+    .sort((left, right) => {
+      const leftPinned = pinned.has(left.id) ? 1 : 0;
+      const rightPinned = pinned.has(right.id) ? 1 : 0;
+      if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+
+      const leftRecent = lastExecution.get(left.id) ?? -1;
+      const rightRecent = lastExecution.get(right.id) ?? -1;
+      const leftVisible = leftRecent >= 0 ? 1 : 0;
+      const rightVisible = rightRecent >= 0 ? 1 : 0;
+      if (leftVisible !== rightVisible) return rightVisible - leftVisible;
+      if (leftRecent !== rightRecent) return rightRecent - leftRecent;
+
+      return right.runtime_cycles - left.runtime_cycles || left.id - right.id;
+    })
+    .slice(0, MAX_TASK_LANES);
+
+  return selected.sort((left, right) => left.id - right.id);
+}
+
 function eventLabel(event: SystemViewEvent): string {
   const detail = event.text
     ?? (event.context_id != null ? "0x" + event.context_id.toString(16) : null)
@@ -172,9 +219,8 @@ function drawTimeline(
     return;
   }
 
-  const tasks = [...(snapshot?.tasks ?? [])]
-    .sort((left, right) => left.id - right.id)
-    .slice(0, MAX_TASK_LANES);
+  const seed = timelineSeed(events.slice(0, visibleStart));
+  const tasks = selectTimelineTasks(snapshot, visible, seed);
   const taskIds = new Set(tasks.map(task => task.id));
   const laneFor = new Map<number, number>();
   tasks.forEach((task, index) => laneFor.set(task.id, index));
@@ -213,7 +259,6 @@ function drawTimeline(
   ctx.fillText(labels.isr, 12, irqY + laneHeight * 0.68);
   ctx.fillText(labels.idle, 12, idleY + laneHeight * 0.68);
 
-  const seed = timelineSeed(events.slice(0, visibleStart));
   let activeTaskId: number | null = seed.activeTaskId;
   let activeTaskStart = startCycles;
   let interruptedTaskId: number | null = seed.interruptedTaskId;
@@ -545,11 +590,16 @@ export default function SystemViewTraceView({
                 return (
                   <div key={task.id} className={styles.taskRow}>
                     <span
-                      title={task.name
-                        ? `${task.name} · SystemView ID 0x${task.id.toString(16)}`
-                        : `SystemView ID 0x${task.id.toString(16)}`}
+                      title={(() => {
+                        const compressed = `0x${task.id.toString(16).toUpperCase()}`;
+                        const restored = restoreTargetId(task.id, snapshot);
+                        const identity = restored
+                          ? t("rtt.traceTaskIdDetails", { compressed, restored })
+                          : t("rtt.traceTaskIdOnly", { compressed });
+                        return task.name ? `${task.name} · ${identity}` : identity;
+                      })()}
                     >
-                      {task.name || `${t("rtt.traceUnknownTask")} · ID 0x${task.id.toString(16)}`}
+                      {task.name || `${t("rtt.traceUnknownTask")} · ID 0x${task.id.toString(16).toUpperCase()}`}
                     </span>
                     <span>{task.priority ?? "—"}</span>
                     <span>{task.switches}</span>
