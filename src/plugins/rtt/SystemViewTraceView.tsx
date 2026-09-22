@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GlassButton from "../../components/common/GlassButton";
 import type { SystemViewEvent, SystemViewSnapshot } from "./model";
@@ -13,6 +13,7 @@ interface Props {
   state: RttSystemViewChannelState | undefined;
   mode: "trace" | "events";
   controlAvailable: boolean;
+  upBufferSize?: number | null;
   onStart: () => void;
   onStop: () => void;
   onClear: () => void;
@@ -57,6 +58,29 @@ function formatTargetDuration(
   if (milliseconds >= 1) return `${milliseconds.toFixed(milliseconds >= 10 ? 1 : 2)} ms`;
   const microseconds = seconds * 1_000_000;
   return `${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
+}
+
+function formatRate(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M/s`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k/s`;
+  return `${value.toFixed(value >= 10 ? 0 : 1)}/s`;
+}
+
+function formatTaskShare(percent: number, incomplete: boolean): string {
+  if (percent <= 0) return incomplete ? "≥0%" : "0%";
+  const digits = percent < 0.01 ? 3 : percent < 0.1 ? 2 : 1;
+  return `${incomplete ? "≥" : ""}${percent.toFixed(digits)}%`;
+}
+
+function formatSystemDescription(values: readonly string[]): string {
+  const first = values[0]?.trim();
+  if (!first) return "";
+  const parts = first
+    .split(",")
+    .map(part => part.trim().replace(/^[A-Za-z]=/, ""))
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : first;
 }
 
 function restoreTargetId(
@@ -431,7 +455,13 @@ function drawTimeline(
   for (let tick = 0; tick <= 4; tick += 1) {
     const cycles = Math.round(startCycles + span * (tick / 4));
     const x = xFor(cycles);
-    ctx.fillText(formatTargetTime(cycles, startCycles, snapshot?.sys_freq_hz), x - 22, cssHeight - 7);
+    const label = formatTargetTime(cycles, startCycles, snapshot?.sys_freq_hz);
+    const labelWidth = ctx.measureText(label).width;
+    const labelX = Math.min(
+      Math.max(4, x - labelWidth / 2),
+      Math.max(4, cssWidth - labelWidth - 4),
+    );
+    ctx.fillText(label, labelX, cssHeight - 7);
   }
 }
 
@@ -439,6 +469,7 @@ export default function SystemViewTraceView({
   state,
   mode,
   controlAvailable,
+  upBufferSize,
   onStart,
   onStop,
   onClear,
@@ -448,11 +479,26 @@ export default function SystemViewTraceView({
   const snapshot = state?.snapshot ?? null;
   const events = state?.events ?? [];
   const metadataSync = state?.metadataSync;
+  const presentationPending = state?.presentationRecovery.pending_drops
+    ?? snapshot?.presentation_dropped_events
+    ?? 0;
+  const presentationRecovered = Math.max(
+    0,
+    (snapshot?.presentation_dropped_events ?? 0) - presentationPending,
+  );
+  const accountedEvents = (snapshot?.event_count ?? 0) + (snapshot?.target_dropped_events ?? 0);
+  const observedCoverage = accountedEvents > 0
+    ? (snapshot?.event_count ?? 0) / accountedEvents
+    : null;
+  const severeTargetLoss = observedCoverage != null
+    && snapshot != null
+    && snapshot.target_dropped_events > 0
+    && observedCoverage < 0.5;
   const integrityCompromised = Boolean(snapshot && (
     snapshot.target_overflow_packets > 0
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
-    || snapshot.presentation_dropped_events > 0
+    || presentationPending > 0
   ));
   const taskStatsIncomplete = Boolean(snapshot && (
     snapshot.target_overflow_packets > 0
@@ -460,9 +506,19 @@ export default function SystemViewTraceView({
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
   ));
+  const rateSampleRef = useRef<{
+    generation: number;
+    at: number;
+    events: number;
+    targetDrops: number;
+  } | null>(null);
+  const [traceRates, setTraceRates] = useState<{
+    eventsPerSecond: number | null;
+    targetDropsPerSecond: number | null;
+  }>({ eventsPerSecond: null, targetDropsPerSecond: null });
   const metadataStatus = useMemo(() => {
     if (!metadataSync || metadataSync.unresolved_tasks === 0) {
-      return snapshot?.system_description?.[0] ?? "";
+      return formatSystemDescription(snapshot?.system_description ?? []);
     }
     if (metadataSync.phase === "unavailable") {
       return t("rtt.traceMetadataUnavailable", { count: metadataSync.unresolved_tasks });
@@ -479,6 +535,75 @@ export default function SystemViewTraceView({
       max: metadataSync.max_attempts,
     });
   }, [metadataSync, snapshot?.system_description, t]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      rateSampleRef.current = null;
+      setTraceRates({ eventsPerSecond: null, targetDropsPerSecond: null });
+      return;
+    }
+    const now = performance.now();
+    const previous = rateSampleRef.current;
+    if (
+      !previous
+      || previous.generation !== snapshot.generation
+      || snapshot.event_count < previous.events
+      || snapshot.target_dropped_events < previous.targetDrops
+    ) {
+      rateSampleRef.current = {
+        generation: snapshot.generation,
+        at: now,
+        events: snapshot.event_count,
+        targetDrops: snapshot.target_dropped_events,
+      };
+      setTraceRates({ eventsPerSecond: null, targetDropsPerSecond: null });
+      return;
+    }
+
+    const elapsedSeconds = (now - previous.at) / 1_000;
+    if (elapsedSeconds < 1) return;
+    setTraceRates({
+      eventsPerSecond: (snapshot.event_count - previous.events) / elapsedSeconds,
+      targetDropsPerSecond: (snapshot.target_dropped_events - previous.targetDrops) / elapsedSeconds,
+    });
+    rateSampleRef.current = {
+      generation: snapshot.generation,
+      at: now,
+      events: snapshot.event_count,
+      targetDrops: snapshot.target_dropped_events,
+    };
+  }, [snapshot?.event_count, snapshot?.generation, snapshot?.target_dropped_events]);
+
+  const integrityDetails = useMemo(() => {
+    if (!snapshot) return "";
+    const details: string[] = [];
+    if (snapshot.target_dropped_events > 0) {
+      details.push(t("rtt.traceTargetLossDiagnostic", {
+        target: snapshot.target_dropped_events.toLocaleString(),
+        rate: formatRate(traceRates.targetDropsPerSecond),
+        coverage: observedCoverage == null ? "—" : `${(observedCoverage * 100).toFixed(1)}%`,
+      }));
+    }
+    if (snapshot.decoder_dropped_chunks > 0 || snapshot.decoder_errors > 0) {
+      details.push(t("rtt.traceDecoderDiagnostic", {
+        queue: snapshot.decoder_dropped_chunks,
+        errors: snapshot.decoder_errors,
+      }));
+    }
+    if (presentationPending > 0) {
+      details.push(t("rtt.tracePresentationPending", { count: presentationPending }));
+    } else if (presentationRecovered > 0) {
+      details.push(t("rtt.tracePresentationRecovered", { count: presentationRecovered }));
+    }
+    return details.join(" · ");
+  }, [
+    observedCoverage,
+    presentationPending,
+    presentationRecovered,
+    snapshot,
+    t,
+    traceRates.targetDropsPerSecond,
+  ]);
 
   useEffect(() => {
     if (mode !== "trace" || !canvasRef.current) return;
@@ -553,14 +678,7 @@ export default function SystemViewTraceView({
       {integrityCompromised && (
         <div className={styles.integrityWarning}>
           <span>{t("rtt.traceIncomplete")}</span>
-          <span className={styles.integrityDetails}>
-            {t("rtt.traceIntegrityDetails", {
-              target: snapshot?.target_dropped_events ?? 0,
-              decoder: snapshot?.decoder_dropped_chunks ?? 0,
-              errors: snapshot?.decoder_errors ?? 0,
-              presentation: snapshot?.presentation_dropped_events ?? 0,
-            })}
-          </span>
+          <span className={styles.integrityDetails}>{integrityDetails}</span>
         </div>
       )}
 
@@ -569,7 +687,11 @@ export default function SystemViewTraceView({
         <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{snapshot?.task_count ?? 0}</strong></div>
         <div
           className={styles.metric}
-          title={t("rtt.traceTargetOverflowHint", { packets: snapshot?.target_overflow_packets ?? 0 })}
+          title={t("rtt.traceTargetOverflowHint", {
+            packets: snapshot?.target_overflow_packets ?? 0,
+            buffer: upBufferSize ?? "—",
+            rate: formatRate(traceRates.targetDropsPerSecond),
+          })}
         >
           <span>{t("rtt.traceTargetOverflow")}</span><strong>{snapshot?.target_dropped_events ?? 0}</strong>
         </div>
@@ -597,40 +719,48 @@ export default function SystemViewTraceView({
           <section className={styles.tasksSection}>
             <div className={styles.sectionHeader}>
               <strong>{t("rtt.traceTaskStats")}</strong>
-              <span title={metadataStatus}>{metadataStatus}</span>
+              <span title={(snapshot?.system_description ?? []).join("\n") || metadataStatus}>
+                {metadataStatus}
+              </span>
             </div>
             <div className={styles.taskTable}>
-              <div className={`${styles.taskRow} ${styles.taskHeader} liquid-control-surface`}>
+              <div className={`${styles.taskRow} ${styles.taskHeader}`}>
                 <span>{t("rtt.traceTask")}</span>
                 <span>{t("rtt.tracePriority")}</span>
                 <span>{t("rtt.traceSwitches")}</span>
                 <span>{t("rtt.traceRuntime")}</span>
               </div>
-              {(snapshot?.tasks ?? []).map(task => {
-                const percent = windowCycles > 0 ? (task.runtime_cycles / windowCycles) * 100 : 0;
-                return (
-                  <div key={task.id} className={styles.taskRow}>
-                    <span
-                      title={(() => {
-                        const compressed = `0x${task.id.toString(16).toUpperCase()}`;
-                        const restored = restoreTargetId(task.id, snapshot);
-                        const identity = restored
-                          ? t("rtt.traceTaskIdDetails", { compressed, restored })
-                          : t("rtt.traceTaskIdOnly", { compressed });
-                        return task.name ? `${task.name} · ${identity}` : identity;
-                      })()}
-                    >
-                      {task.name || `${t("rtt.traceUnknownTask")} · ID 0x${task.id.toString(16).toUpperCase()}`}
-                    </span>
-                    <span>{task.priority ?? "—"}</span>
-                    <span>{task.switches}</span>
-                    <span>
-                      {formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz)} · {taskStatsIncomplete ? "≥" : ""}{percent.toFixed(1)}%
-                    </span>
-                  </div>
-                );
-              })}
-              {(snapshot?.tasks.length ?? 0) === 0 && <div className={styles.empty}>{t("rtt.traceWaiting")}</div>}
+              <div className={styles.taskRows}>
+                {(snapshot?.tasks ?? []).map(task => {
+                  const percent = windowCycles > 0 ? (task.runtime_cycles / windowCycles) * 100 : 0;
+                  const runtime = formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz);
+                  const share = severeTargetLoss
+                    ? t("rtt.traceRuntimeShareUnavailable")
+                    : formatTaskShare(percent, taskStatsIncomplete);
+                  return (
+                    <div key={task.id} className={styles.taskRow}>
+                      <span
+                        title={(() => {
+                          const compressed = `0x${task.id.toString(16).toUpperCase()}`;
+                          const restored = restoreTargetId(task.id, snapshot);
+                          const identity = restored
+                            ? t("rtt.traceTaskIdDetails", { compressed, restored })
+                            : t("rtt.traceTaskIdOnly", { compressed });
+                          return task.name ? `${task.name} · ${identity}` : identity;
+                        })()}
+                      >
+                        {task.name || `${t("rtt.traceUnknownTask")} · ID 0x${task.id.toString(16).toUpperCase()}`}
+                      </span>
+                      <span>{task.priority ?? "—"}</span>
+                      <span>{task.switches}</span>
+                      <span title={severeTargetLoss ? t("rtt.traceRuntimeShareUnavailableHint") : undefined}>
+                        {runtime} · {share}
+                      </span>
+                    </div>
+                  );
+                })}
+                {(snapshot?.tasks.length ?? 0) === 0 && <div className={styles.empty}>{t("rtt.traceWaiting")}</div>}
+              </div>
             </div>
           </section>
         </div>
