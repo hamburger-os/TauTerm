@@ -296,7 +296,10 @@ impl TraceState {
             }
             29 => {
                 if let Some(task_id) = packet.fields.first().copied() {
-                    if self.active_task.is_some_and(|(active_id, _)| active_id == task_id) {
+                    if self
+                        .active_task
+                        .is_some_and(|(active_id, _)| active_id == task_id)
+                    {
                         self.close_active_task(self.last_target_cycles);
                     }
                     if self.interrupted_task == Some(task_id) {
@@ -776,9 +779,8 @@ impl MetadataRetryCoordinator {
 
     fn mark_dispatched(&mut self, now: Instant) {
         self.attempts = self.attempts.saturating_add(1);
-        self.next_retry = (self.attempts < METADATA_RETRY_DELAYS_MS.len()).then(|| {
-            now + Duration::from_millis(METADATA_RETRY_DELAYS_MS[self.attempts])
-        });
+        self.next_retry = (self.attempts < METADATA_RETRY_DELAYS_MS.len())
+            .then(|| now + Duration::from_millis(METADATA_RETRY_DELAYS_MS[self.attempts]));
     }
 
     fn defer(&mut self, now: Instant) {
@@ -1546,10 +1548,7 @@ mod tests {
             delta_cycles: 1,
             sync_boundary: false,
         });
-        assert!(!retry.update(
-            &state.snapshot(0),
-            start + Duration::from_secs(1)
-        ));
+        assert!(!retry.update(&state.snapshot(0), start + Duration::from_secs(1)));
         assert_eq!(retry.attempts, 0);
         assert!(retry.unknown_tasks.is_empty());
 
@@ -1560,10 +1559,7 @@ mod tests {
             delta_cycles: 1,
             sync_boundary: false,
         });
-        assert!(!retry.update(
-            &state.snapshot(0),
-            start + Duration::from_secs(2)
-        ));
+        assert!(!retry.update(&state.snapshot(0), start + Duration::from_secs(2)));
         assert_eq!(retry.attempts, 0);
         assert_eq!(retry.unknown_tasks, vec![3]);
     }
