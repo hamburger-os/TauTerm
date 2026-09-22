@@ -98,7 +98,7 @@ If a change spans modules, update each affected owner document, but keep each fa
 
 Keep the root `AGENTS.md` focused on durable repository-wide rules. Put specialized workflows in `.agents/skills/` so agents can load them only when relevant.
 
-Each skill must follow the portable Agent Skills structure: matching kebab-case directory/name, concise routing description, and a `SKILL.md` of at most 500 lines. Move long command references, lookup tables, and implementation maps into one-level-deep `references/` files and link them from the skill.
+Each skill must follow the portable Agent Skills structure: matching kebab-case directory/name, concise routing description, and a `SKILL.md` of fewer than 500 lines. Move long command references, lookup tables, and implementation maps into one-level-deep `references/` files and link them from the skill.
 
 After changing `AGENTS.md`, a skill, or a skill reference, run:
 
