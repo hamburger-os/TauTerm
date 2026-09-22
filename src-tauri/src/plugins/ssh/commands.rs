@@ -293,6 +293,18 @@ pub fn confirm_host_key_change(
     Ok(())
 }
 
+/// 显式重置整个 SSH 主机信任库。
+///
+/// 仅用于信任库损坏/不兼容而被 fail-closed 阻止后的恢复流程；不会由连接逻辑自动调用。
+#[tauri::command]
+pub fn reset_ssh_known_hosts(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+        .reset_known_hosts()?;
+    log::warn!("SSH 主机信任库已由用户显式重置");
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JournaldQueryRequest {
