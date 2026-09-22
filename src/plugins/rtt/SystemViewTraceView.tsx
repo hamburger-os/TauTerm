@@ -68,7 +68,7 @@ function formatRate(value: number | null): string {
 }
 
 function formatTaskShare(percent: number, incomplete: boolean): string {
-  if (percent <= 0) return incomplete ? "≥0%" : "0%";
+  if (percent <= 0) return "0%";
   const digits = percent < 0.01 ? 3 : percent < 0.1 ? 2 : 1;
   return `${incomplete ? "≥" : ""}${percent.toFixed(digits)}%`;
 }
@@ -580,7 +580,8 @@ export default function SystemViewTraceView({
     if (snapshot.target_dropped_events > 0) {
       details.push(t("rtt.traceTargetLossDiagnostic", {
         target: snapshot.target_dropped_events.toLocaleString(),
-        rate: formatRate(traceRates.targetDropsPerSecond),
+        rate: formatRate(snapshot.phase === "recording" ? traceRates.targetDropsPerSecond : null),
+        observedRate: formatRate(snapshot.phase === "recording" ? traceRates.eventsPerSecond : null),
         coverage: observedCoverage == null ? "—" : `${(observedCoverage * 100).toFixed(1)}%`,
       }));
     }
@@ -677,25 +678,27 @@ export default function SystemViewTraceView({
       {state?.error && <div className={styles.error}>{state.error}</div>}
       {integrityCompromised && (
         <div className={styles.integrityWarning}>
-          <span>{t("rtt.traceIncomplete")}</span>
+          <span>
+            {severeTargetLoss ? t("rtt.traceSevereTargetLoss") : t("rtt.traceIncomplete")}
+          </span>
           <span className={styles.integrityDetails}>{integrityDetails}</span>
         </div>
       )}
 
       <div className={styles.metrics}>
-        <div className={styles.metric}><span>{t("rtt.traceEvents")}</span><strong>{snapshot?.event_count ?? 0}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceEvents")}</span><strong>{(snapshot?.event_count ?? 0).toLocaleString()}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{snapshot?.task_count ?? 0}</strong></div>
         <div
           className={styles.metric}
           title={t("rtt.traceTargetOverflowHint", {
             packets: snapshot?.target_overflow_packets ?? 0,
             buffer: upBufferSize ?? "—",
-            rate: formatRate(traceRates.targetDropsPerSecond),
+            rate: formatRate(snapshot?.phase === "recording" ? traceRates.targetDropsPerSecond : null),
           })}
         >
-          <span>{t("rtt.traceTargetOverflow")}</span><strong>{snapshot?.target_dropped_events ?? 0}</strong>
+          <span>{t("rtt.traceTargetOverflow")}</span><strong>{(snapshot?.target_dropped_events ?? 0).toLocaleString()}</strong>
         </div>
-        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{snapshot?.decoder_dropped_chunks ?? 0}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{(snapshot?.decoder_dropped_chunks ?? 0).toLocaleString()}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceTimestampClock")}</span><strong>{formatFrequency(snapshot?.sys_freq_hz)}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceClock")}</span><strong>{formatFrequency(snapshot?.cpu_freq_hz)}</strong></div>
       </div>
