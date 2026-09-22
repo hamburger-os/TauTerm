@@ -78,6 +78,7 @@ function parseFrontmatter(rel, content) {
   }
 
   const fields = new Map();
+  const metadataEntries = new Map();
   let activeTopLevel = null;
   for (let index = 1; index < end; index += 1) {
     const line = lines[index];
@@ -87,7 +88,34 @@ function parseFrontmatter(rel, content) {
     if (indent > 0) {
       if (activeTopLevel !== "metadata") {
         fail(`${rel}:${index + 1}: nested YAML is only allowed under metadata`);
+        continue;
       }
+
+      const metadataMatch = line.trim().match(/^([^:]+):(?:\s*(.*))?$/);
+      if (!metadataMatch) {
+        fail(`${rel}:${index + 1}: metadata must be a flat string-to-string mapping`);
+        continue;
+      }
+
+      const [, rawKey, rawValue = ""] = metadataMatch;
+      const key = rawKey.trim();
+      if (!key) {
+        fail(`${rel}:${index + 1}: metadata key must be a non-empty string`);
+        continue;
+      }
+      if (metadataEntries.has(key)) {
+        fail(`${rel}:${index + 1}: duplicate metadata key "${key}"`);
+        continue;
+      }
+
+      const value = unquote(rawValue, rel, `metadata.${key}`);
+      if (!value) {
+        fail(`${rel}:${index + 1}: metadata value for "${key}" must be a non-empty string`);
+      }
+      if (/^(?:null|~|true|false|[-+]?\d+(?:\.\d+)?)$/i.test(rawValue.trim())) {
+        fail(`${rel}:${index + 1}: metadata value for "${key}" must be a YAML string, not a boolean/number/null scalar`);
+      }
+      metadataEntries.set(key, value);
       continue;
     }
 
@@ -103,7 +131,11 @@ function parseFrontmatter(rel, content) {
     activeTopLevel = key;
   }
 
-  return { fields, lines };
+  if (fields.has("metadata") && fields.get("metadata").trim()) {
+    fail(`${rel}: metadata must be a mapping, not a scalar value`);
+  }
+
+  return { fields, metadataEntries, lines };
 }
 
 const agentsPath = "AGENTS.md";
@@ -136,7 +168,6 @@ const skillDirs = fs.existsSync(skillsAbs)
   : [];
 
 const seenNames = new Map();
-const seenDescriptions = new Map();
 let validated = 0;
 
 for (const entry of skillDirs) {
@@ -161,6 +192,12 @@ for (const entry of skillDirs) {
 
   const name = unquote(fields.get("name") ?? "", rel, "name");
   const description = unquote(fields.get("description") ?? "", rel, "description");
+  const compatibility = fields.has("compatibility")
+    ? unquote(fields.get("compatibility") ?? "", rel, "compatibility")
+    : null;
+  const allowedTools = fields.has("allowed-tools")
+    ? unquote(fields.get("allowed-tools") ?? "", rel, "allowed-tools")
+    : null;
 
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64) {
     fail(`${rel}: name must be 1-64 chars of lowercase letters, digits, and single hyphens`);
@@ -171,18 +208,18 @@ for (const entry of skillDirs) {
   if (description.length < 1 || description.length > 1024) {
     fail(`${rel}: description must be 1-1024 characters`);
   }
+  if (compatibility !== null && (compatibility.length < 1 || compatibility.length > 500)) {
+    fail(`${rel}: compatibility must be 1-500 characters when provided`);
+  }
+  if (allowedTools !== null && !allowedTools.trim()) {
+    fail(`${rel}: allowed-tools must be a non-empty space-separated string when provided`);
+  }
 
   if (seenNames.has(name)) fail(`${rel}: duplicate skill name also used by ${seenNames.get(name)}`);
   else seenNames.set(name, rel);
 
-  if (description && seenDescriptions.has(description)) {
-    fail(`${rel}: duplicate description also used by ${seenDescriptions.get(description)}`);
-  } else if (description) {
-    seenDescriptions.set(description, rel);
-  }
-
-  if (lines.length > 500) {
-    fail(`${rel}: ${lines.length} lines exceeds TauTerm's 500-line SKILL.md limit; move detail into references/`);
+  if (lines.length >= 500) {
+    fail(`${rel}: ${lines.length} lines is not under TauTerm's 500-line SKILL.md limit; move detail into references/`);
   }
 
   const skillRoot = path.posix.join(skillsRoot, dirName);
