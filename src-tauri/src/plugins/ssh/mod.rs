@@ -24,17 +24,18 @@ use tokio::sync::{Mutex, OnceCell};
 use zeroize::Zeroize;
 
 use crate::kernel::plugin_adapter::{
-    ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
-    SessionChannelFactory, SessionService,
+    ChannelOpenMode, ProtocolAdapter, ProtocolConnection, SessionAttach, SessionChannelFactory,
+    SessionService,
 };
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
 use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
 use driver::SshDriver;
 use handler::SshHandler;
-use known_hosts::{HostTrustDecision, KnownHostRecord, KnownHostStore};
+use known_hosts::{HostTrustDecision, KnownHostStore};
 
 const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
+const HOST_KEY_USER_DECISION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const SSH_HOME_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SSH_HOME_MAX_BYTES: usize = 4096;
 
@@ -342,24 +343,12 @@ impl SshAdapter {
         self.runtimes.get(session_id)
     }
 
-    pub fn replace_known_host(
+    pub fn respond_to_host_key_change(
         &self,
-        host: &str,
-        port: u16,
-        algorithm: &str,
-        fingerprint: &str,
-    ) -> Result<(), String> {
-        self.host_key_verifier
-            .known_hosts
-            .replace(host, port, algorithm, fingerprint)
-    }
-
-    pub fn forget_known_host(&self, host: &str, port: u16) -> Result<bool, String> {
-        self.host_key_verifier.known_hosts.forget(host, port)
-    }
-
-    pub fn known_hosts(&self) -> Result<Vec<KnownHostRecord>, String> {
-        self.host_key_verifier.known_hosts.list()
+        request_id: &str,
+        accepted: bool,
+    ) -> Result<bool, String> {
+        self.host_key_verifier.respond_to_change(request_id, accepted)
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
@@ -417,8 +406,17 @@ struct PendingHostKeyVerification {
     fingerprint: String,
 }
 
+struct PendingHostKeyChange {
+    host: String,
+    port: u16,
+    algorithm: String,
+    fingerprint: String,
+    created_at: std::time::Instant,
+}
+
 struct HostKeyVerifier {
     pending: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
+    pending_changes: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyChange>>,
     known_hosts: KnownHostStore,
 }
 
@@ -426,6 +424,7 @@ impl HostKeyVerifier {
     pub fn new() -> Self {
         Self {
             pending: std::sync::Mutex::new(std::collections::HashMap::new()),
+            pending_changes: std::sync::Mutex::new(std::collections::HashMap::new()),
             known_hosts: KnownHostStore::new(),
         }
     }
@@ -508,6 +507,56 @@ impl HostKeyVerifier {
         }
 
         let _ = pending.response.send(accept);
+        Ok(true)
+    }
+
+    fn register_change(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> String {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let now = std::time::Instant::now();
+        let mut pending = self
+            .pending_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pending.retain(|_, change| now.duration_since(change.created_at) < HOST_KEY_USER_DECISION_TIMEOUT);
+        pending.insert(
+            request_id.clone(),
+            PendingHostKeyChange {
+                host: host.to_string(),
+                port,
+                algorithm: algorithm.to_string(),
+                fingerprint: fingerprint.to_string(),
+                created_at: now,
+            },
+        );
+        request_id
+    }
+
+    fn respond_to_change(&self, request_id: &str, accept: bool) -> Result<bool, String> {
+        let pending = self
+            .pending_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
+        if pending.created_at.elapsed() >= HOST_KEY_USER_DECISION_TIMEOUT {
+            return Ok(false);
+        }
+        if accept {
+            self.known_hosts.replace(
+                &pending.host,
+                pending.port,
+                &pending.algorithm,
+                &pending.fingerprint,
+            )?;
+        }
         Ok(true)
     }
 }
@@ -670,7 +719,16 @@ async fn wait_for_host_trust(
         verification.algorithm,
         reason
     );
-    wait_rx.await.unwrap_or(false)
+    match tokio::time::timeout(HOST_KEY_USER_DECISION_TIMEOUT, wait_rx).await {
+        Ok(result) => result.unwrap_or(false),
+        Err(_) => {
+            log::warn!(
+                "SSH 主机密钥用户确认超时（{}s），自动拒绝",
+                HOST_KEY_USER_DECISION_TIMEOUT.as_secs()
+            );
+            false
+        }
+    }
 }
 
 async fn query_home_dir(handle: Arc<russh::client::Handle<SshHandler>>) -> Option<String> {
@@ -839,7 +897,14 @@ async fn build_connection_with_config(
                         expected_fingerprints,
                     } => {
                         let expected_fingerprint = expected_fingerprints.first().cloned();
+                        let request_id = verifier.register_change(
+                            &connect_host,
+                            config.port,
+                            &verification.algorithm,
+                            &verification.fingerprint,
+                        );
                         let _ = app_handle.emit("ssh-host-key-changed", serde_json::json!({
+                            "request_id": request_id,
                             "host": connect_host.as_str(),
                             "port": config.port,
                             "algorithm": algorithm,
@@ -1007,10 +1072,6 @@ impl ProtocolAdapter for SshAdapter {
         })
     }
 
-    /// SSH 无硬件端点枚举 — 返回空列表
-    fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
-        Ok(Vec::new())
-    }
 }
 
 #[cfg(test)]
