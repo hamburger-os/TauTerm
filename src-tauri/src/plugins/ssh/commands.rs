@@ -289,6 +289,36 @@ pub fn confirm_host_key_change(
     Ok(())
 }
 
+/// 列出当前 SSH 受信主机。只包含公开的 endpoint / host-key 元数据。
+#[tauri::command]
+pub fn list_ssh_known_hosts(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<super::known_hosts::KnownHostRecord>, String> {
+    state
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+        .known_hosts()
+}
+
+/// 删除一个 endpoint 的全部 SSH 主机信任。后续连接会重新进入首次验证。
+#[tauri::command]
+pub fn forget_ssh_known_host(
+    state: tauri::State<'_, AppState>,
+    host: String,
+    port: u16,
+) -> Result<(), String> {
+    if host.trim().is_empty() || port == 0 {
+        return Err("SSH 受信主机参数无效".into());
+    }
+    let removed = state
+        .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+        .forget_known_host(&host, port)?;
+    if !removed {
+        return Err("SSH 受信主机不存在".into());
+    }
+    log::warn!("SSH 主机信任已由用户删除: {}:{}", host, port);
+    Ok(())
+}
+
 /// 显式重置整个 SSH 主机信任库。
 ///
 /// 仅用于信任库损坏/不兼容而被 fail-closed 阻止后的恢复流程；不会由连接逻辑自动调用。
