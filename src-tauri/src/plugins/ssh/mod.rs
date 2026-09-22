@@ -68,7 +68,6 @@ pub(crate) struct SshConnectionParams {
 }
 
 /// 运行时认证秘密。无效的“密码 + 私钥同时存在”状态无法表示。
-#[derive(Clone)]
 pub(crate) enum SshAuthSecret {
     Password(String),
     Key {
@@ -108,7 +107,6 @@ impl Drop for SshAuthSecret {
 }
 
 /// 已 hydrate 的 SSH 运行时配置。认证秘密只在连接生命周期内存在。
-#[derive(Clone)]
 pub struct SshConfig {
     pub host: String,
     pub port: u16,
