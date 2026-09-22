@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 
-const KNOWN_HOSTS_VERSION: u32 = 3;
+const KNOWN_HOSTS_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KnownHostKeyRecord {
@@ -511,7 +511,7 @@ mod tests {
         std::fs::write(
             &path,
             br#"{
-  "version": 2,
+  "version": 1,
   "hosts": {}
 }"#,
         )
@@ -534,7 +534,7 @@ mod tests {
         let dir = temp_path();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("known_hosts.json");
-        std::fs::write(&path, br#"{"version":3,"hosts":{"broken":{}}}"#).unwrap();
+        std::fs::write(&path, br#"{"version":2,"hosts":{"broken":{}}}"#).unwrap();
 
         let store = KnownHostStore::new();
         assert!(store.configure(path.clone()).is_err());
