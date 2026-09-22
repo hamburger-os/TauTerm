@@ -19,7 +19,7 @@ React 应用由全局上下文和通用组件组成：
 - i18next 维护 `en-US` / `zh-CN` 两套公共资源；协议插件可通过 `PluginRegistration.locales` 注册自己的双语资源，Plugin Registry 在注册时把资源注入同一个 i18n 实例，协议专属文案因此不需要堆进全局 locale；
 - Shortcut Registry 和 Command Palette 共享稳定 action id；
 - Terminal renderer 明确拥有剪贴板交互：默认 `Ctrl+Shift+C / Ctrl+Shift+V` 进入可配置 action，`Ctrl+C / Ctrl+V` 保留给 PTY；兼容 `Ctrl+Insert / Shift+Insert` 与 macOS `Meta+C / Meta+V`；
-- Terminal renderer 的 xterm 实例只在宿主节点仍连接到文档且具有非零可测量尺寸后创建。`open` 后的初始 fit、Pane/窗口 resize、字体变化、Pane 重新激活和 imperative `fit()` 全部进入同一个 RAF 合并调度器；ResizeObserver 只负责请求调度，不直接同步调用 FitAddon。cleanup 会先取消待执行 RAF、断开 observer/listener、清除 resize timer，再释放 xterm，确保 React StrictMode 的开发期 effect 探测、隐藏 Pane 和快速切换不会让已销毁 renderer 继续读取 dimensions；
+- 所有 xterm surface 共用 `src/components/Terminal/xtermHostLifecycle.ts` 的 DOM 生命周期，包括公共 Terminal renderer 与 RTT Terminal。xterm 只在宿主节点仍连接到文档且具有非零可测量尺寸后创建；`open` 后的初始 fit、Pane/窗口 resize、字体变化、Pane 重新激活和 imperative `fit()` 全部进入同一个 RAF 合并调度器；ResizeObserver 只负责请求调度，不直接同步调用 FitAddon。cleanup 统一先取消待执行 init/fit RAF、断开 observer，再执行实例级 listener/timer cleanup 并释放 xterm，确保 React StrictMode 的开发期 effect 探测、隐藏 Pane、RTT 视图切换和快速卸载不会让已销毁 renderer 继续读取 dimensions；
 - 所有终端粘贴入口统一经 xterm `paste()`；当内容包含换行且当前终端未启用 Bracketed Paste Mode（DECSET 2004），或粘贴内容超过 5 KiB 字符时，先进入安全确认预览；右键复制/粘贴/全选/清屏完成后恢复终端焦点；
 - 所有二元确认流程统一使用 `src/components/common/ConfirmDialog.tsx`：Portal、主题外壳、动画、ARIA、焦点陷阱、焦点恢复与动作布局只维护一份，动作文案固定消费 `common.cancel` / `common.confirm`（中文“取消 / 确认”）；文件删除、会话删除、清空日志、终端安全粘贴与 SSH 首次主机密钥均不得自行创建另一套二元确认弹窗；
 - 可理解且可撤销的专业配置风险优先使用就地非阻塞提示与就地确认；例如 TFTP 的“非回环监听 + 允许写入 + 允许覆盖”显示行内 warning，并要求在同一配置表单中显式确认风险后才允许提交，不占用 `ConfirmDialog`；
