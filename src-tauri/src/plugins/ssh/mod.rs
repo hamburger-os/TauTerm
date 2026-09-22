@@ -260,6 +260,28 @@ impl Drop for SocketAbortGuard {
     }
 }
 
+fn secure_ssh_client_config() -> russh::client::Config {
+    let mut config = russh::client::Config {
+        keepalive_interval: Some(Duration::from_secs(30)),
+        inactivity_timeout: Some(Duration::from_secs(300)),
+        nodelay: true,
+        ..Default::default()
+    };
+    config
+        .preferred
+        .kex
+        .retain(|algorithm| !algorithm.as_ref().contains("sha1"));
+    config
+        .preferred
+        .mac
+        .retain(|algorithm| !algorithm.as_ref().contains("sha1"));
+    config
+        .preferred
+        .key
+        .retain(|algorithm| algorithm.to_string() != "ssh-rsa");
+    config
+}
+
 async fn connect_ssh_socket(
     host: &str,
     port: u16,
@@ -898,12 +920,7 @@ async fn build_connection_with_config(
     let connect_host = normalize_ssh_host(&config.host).to_string();
     let addr = format_ssh_endpoint(&connect_host, config.port);
     let (socket, mut socket_abort) = connect_ssh_socket(&connect_host, config.port).await?;
-    let russh_config = Arc::new(russh::client::Config {
-        keepalive_interval: Some(Duration::from_secs(30)),
-        inactivity_timeout: Some(Duration::from_secs(300)),
-        nodelay: true,
-        ..Default::default()
-    });
+    let russh_config = Arc::new(secure_ssh_client_config());
 
     // 初始 KEX 的 server key 通过 Handler 交给当前连接建立协程验证。russh 在后续
     // re-key 中沿用已建立的 server identity，不重新触发 TOFU 用户确认。
@@ -1319,8 +1336,8 @@ mod tests {
     }
 
     #[test]
-    fn pinned_russh_defaults_exclude_sha1_transport_algorithms() {
-        let preferred = russh::client::Config::default().preferred;
+    fn ssh_client_config_excludes_sha1_transport_algorithms() {
+        let preferred = secure_ssh_client_config().preferred;
         assert!(preferred
             .kex
             .iter()
