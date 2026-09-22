@@ -143,6 +143,15 @@ export interface SystemViewEvent {
   context_id?: number | null;
   value?: number | null;
   text?: string | null;
+  sync_boundary: boolean;
+}
+
+export interface SystemViewExecutionState {
+  active_task_id?: number | null;
+  interrupted_task_id?: number | null;
+  interrupted_idle: boolean;
+  irq_depth: number;
+  idle_active: boolean;
 }
 
 export interface SystemViewSnapshot {
@@ -165,6 +174,7 @@ export interface SystemViewSnapshot {
   ram_base?: number | null;
   id_shift?: number | null;
   system_description: string[];
+  history_entry_state: SystemViewExecutionState;
   window_start_cycles: number;
   last_target_cycles: number;
   tasks: SystemViewTaskSnapshot[];
