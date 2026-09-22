@@ -98,7 +98,10 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
   const snapshot = runtime.snapshot;
   const selectedChannel = runtime.selectedChannel;
-  const channels = snapshot?.channels ?? [];
+  // Worker snapshots can arrive slightly before SessionStore publishes Connected. Do not mount
+  // a raw xterm from that transient pre-connected snapshot; observer discovery completes before
+  // the public connected boundary and may immediately turn a SysView channel into RTOS Trace.
+  const channels = runtimeReadable ? (snapshot?.channels ?? []) : [];
   const channel = channels.find(item => item.index === selectedChannel) ?? null;
   const channelIssues = channel ? rttChannelIssues(channel) : [];
   const usableUp = isUsableRttDirection(channel?.up);
