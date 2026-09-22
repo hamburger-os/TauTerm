@@ -456,14 +456,11 @@ impl RttShared {
     }
 
     fn systemview_control_channel(&self) -> Option<u32> {
-        self.channel_claims
-            .lock()
-            .ok()
-            .and_then(|claims| {
-                claims
-                    .iter()
-                    .find_map(|(channel_index, owner)| (owner == "SystemView").then_some(*channel_index))
+        self.channel_claims.lock().ok().and_then(|claims| {
+            claims.iter().find_map(|(channel_index, owner)| {
+                (owner == "SystemView").then_some(*channel_index)
             })
+        })
     }
 
     fn validate_user_write(&self, channel_index: u32) -> Result<(), RttError> {
