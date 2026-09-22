@@ -152,6 +152,8 @@ export interface SystemViewSnapshot {
   control_available: boolean;
   event_count: number;
   task_count: number;
+  metadata_sync_attempts: number;
+  metadata_sync_max_attempts: number;
   target_overflow_packets: number;
   target_dropped_events: number;
   decoder_dropped_chunks: number;
