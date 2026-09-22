@@ -74,13 +74,11 @@ function formatTaskShare(percent: number, incomplete: boolean): string {
 }
 
 function formatSystemDescription(values: readonly string[]): string {
-  const first = values[0]?.trim();
-  if (!first) return "";
-  const parts = first
-    .split(",")
+  const parts = values
+    .flatMap(value => value.split(","))
     .map(part => part.trim().replace(/^[A-Za-z]=/, ""))
     .filter(Boolean);
-  return parts.length > 0 ? parts.join(" · ") : first;
+  return parts.join(" · ");
 }
 
 function restoreTargetId(
