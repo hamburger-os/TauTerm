@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-const MAX_EVENT_HISTORY: usize = 4096;
+const MAX_EVENT_HISTORY: usize = 8192;
 const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
