@@ -267,18 +267,30 @@ fn secure_ssh_client_config() -> russh::client::Config {
         nodelay: true,
         ..Default::default()
     };
-    config
+    config.preferred.kex = config
         .preferred
         .kex
-        .retain(|algorithm| !algorithm.as_ref().contains("sha1"));
-    config
+        .iter()
+        .filter(|algorithm| !algorithm.as_ref().contains("sha1"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    config.preferred.mac = config
         .preferred
         .mac
-        .retain(|algorithm| !algorithm.as_ref().contains("sha1"));
-    config
+        .iter()
+        .filter(|algorithm| !algorithm.as_ref().contains("sha1"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    config.preferred.key = config
         .preferred
         .key
-        .retain(|algorithm| algorithm.to_string() != "ssh-rsa");
+        .iter()
+        .filter(|algorithm| algorithm.to_string() != "ssh-rsa")
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
     config
 }
 
