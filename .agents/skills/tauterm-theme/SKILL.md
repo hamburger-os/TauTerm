@@ -410,22 +410,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 ## 15. 提交前审计
 
-```bash
-rg 'backdrop-filter' src/components src/renderers --glob '*.module.css'
-rg 'transition:\s*all' src --glob '*.css'
-rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
-rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
-rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'theme-(shell|panel|content|card|float|control).*veil|performance-(shell|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
-rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
-rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
-rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture|container-name' src/components/Layout src/components/Terminal src/styles
-rg '@container\s+session-pane|@media\s*\(max-width' src/components src/plugins --glob '*.module.css'
-rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
-rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
-rg 'window\.(alert|confirm|prompt)|(^|[^.[:alnum:]_])(alert|confirm|prompt)\s*\(' src --glob '*.ts' --glob '*.tsx'
-npm run build
-```
+主题修改的扫描命令、重点路径和验证矩阵由 [tauterm-theme-review](../tauterm-theme-review/SKILL.md) 维护。审查时必须先读取本文件作为唯一规则源；review skill 只负责执行流程，不得维护第二份视觉规则。
 
 ---
 
@@ -473,22 +458,4 @@ npm run build
 
 ## 实现源文件
 
-- `src/styles/tokens.css`
-- `src/styles/global.css`
-- `src/context/ThemeContext.tsx`
-- `src/App.tsx`
-- `src/components/common/ConfirmDialog.tsx`
-- `src/components/common/ConfirmDialog.module.css`
-- `src/components/Layout/SpectrumAmbientBackground.tsx`
-- `src/components/Settings/panels/AppearanceSettings.tsx`
-- `src/i18n/locales/zh-CN.json`
-- `src/i18n/locales/en-US.json`
-- `src/components/Layout/SessionSidebar.tsx`
-- `src/components/RightSidebar/RightSidebar.tsx`
-- `src/components/Layout/SplitView.tsx`
-- `src/components/Layout/SplitView.module.css`
-- `src/components/Terminal/Terminal.tsx`
-- `src/components/Terminal/TerminalView.tsx`
-- `src/components/SendBar/SendBar.tsx`
-- `src/components/SendBar/SendBar.module.css`
-- `src/components/SendBar/TargetBar.tsx`
+实现锚点只用于导航，不构成第二份规范。当前入口见 [source references](references/README.md)。
