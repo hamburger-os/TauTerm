@@ -112,7 +112,12 @@ impl KnownHostStore {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| format!("无法读取 SSH known-host 文件: {e}"))?;
         if raw.trim().is_empty() {
-            return Ok(BTreeMap::new());
+            let detected = "SSH known-host 文件为空，拒绝把现有信任库静默降级为 fresh TOFU";
+            Self::mark_blocked(path, detected)?;
+            let quarantine = Self::quarantine_invalid(path)?;
+            let reason = format!("{detected}；原文件已隔离至 {:?}", quarantine);
+            Self::mark_blocked(path, &reason)?;
+            return Err(format!("{reason}，必须显式重置信任后才能继续"));
         }
 
         let version = match serde_json::from_str::<KnownHostsVersion>(&raw) {
@@ -605,6 +610,26 @@ mod tests {
         assert!(bad_path.with_extension("json.invalid.bak").exists());
         assert!(matches!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
+            HostTrustDecision::Unavailable { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn empty_existing_store_is_quarantined_and_fails_closed() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        std::fs::write(&path, b"").unwrap();
+
+        let store = KnownHostStore::new();
+        assert!(store.configure(path.clone()).is_err());
+        assert!(!path.exists());
+        assert!(path.with_extension("json.invalid.bak").exists());
+        assert!(path.with_extension("blocked").exists());
+        assert!(matches!(
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
             HostTrustDecision::Unavailable { .. }
         ));
 
