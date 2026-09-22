@@ -286,6 +286,7 @@ impl TraceState {
         Some(task_id)
     }
 
+    #[cfg(test)]
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
         self.apply_with_loss_tracking(packet, true)
     }
