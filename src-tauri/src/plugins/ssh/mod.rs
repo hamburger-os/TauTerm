@@ -1147,6 +1147,42 @@ mod tests {
     }
 
     #[test]
+    fn changed_host_key_replacement_requires_bound_request() {
+        let verifier = HostKeyVerifier::new();
+        let dir = std::env::temp_dir().join(format!(
+            "tauterm-host-key-change-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join("known_hosts.json");
+        verifier.configure_known_hosts(path).unwrap();
+        verifier
+            .known_hosts
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:old")
+            .unwrap();
+
+        assert!(!verifier
+            .respond_to_change("not-a-real-request", true)
+            .unwrap());
+        assert_eq!(
+            verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
+            HostTrustDecision::Changed {
+                algorithm: "ssh-ed25519".to_string(),
+                expected_fingerprints: vec!["SHA256:old".to_string()],
+            }
+        );
+
+        let request_id =
+            verifier.register_change("example.test", 22, "ssh-ed25519", "SHA256:new");
+        assert!(verifier.respond_to_change(&request_id, true).unwrap());
+        assert_eq!(
+            verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
+            HostTrustDecision::Trusted
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn pinned_russh_defaults_exclude_sha1_transport_algorithms() {
         let preferred = russh::client::Config::default().preferred;
         assert!(preferred
