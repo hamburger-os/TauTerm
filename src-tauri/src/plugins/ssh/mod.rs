@@ -418,6 +418,7 @@ struct PendingHostKeyChange {
     host: String,
     port: u16,
     algorithm: String,
+    expected_fingerprints: Vec<String>,
     fingerprint: String,
     created_at: std::time::Instant,
 }
@@ -536,7 +537,14 @@ impl HostKeyVerifier {
         Ok(true)
     }
 
-    fn register_change(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) -> String {
+    fn register_change(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        expected_fingerprints: Vec<String>,
+        fingerprint: &str,
+    ) -> String {
         let request_id = uuid::Uuid::new_v4().to_string();
         let now = std::time::Instant::now();
         let mut pending = self
@@ -552,6 +560,7 @@ impl HostKeyVerifier {
                 host: host.to_string(),
                 port,
                 algorithm: algorithm.to_string(),
+                expected_fingerprints,
                 fingerprint: fingerprint.to_string(),
                 created_at: now,
             },
@@ -579,10 +588,11 @@ impl HostKeyVerifier {
             return Ok(false);
         }
         if accept {
-            self.known_hosts.replace(
+            self.known_hosts.replace_if_matches(
                 &pending.host,
                 pending.port,
                 &pending.algorithm,
+                &pending.expected_fingerprints,
                 &pending.fingerprint,
             )?;
         }
@@ -943,6 +953,7 @@ async fn build_connection_with_config(
                             &connect_host,
                             config.port,
                             &verification.algorithm,
+                            expected_fingerprints.clone(),
                             &verification.fingerprint,
                         );
                         let emitted = app_handle.emit("ssh-host-key-changed", serde_json::json!({
@@ -1213,8 +1224,27 @@ mod tests {
             }
         );
 
-        let request_id = verifier.register_change("example.test", 22, "ssh-ed25519", "SHA256:new");
+        let request_id = verifier.register_change(
+            "example.test",
+            22,
+            "ssh-ed25519",
+            vec!["SHA256:old".to_string()],
+            "SHA256:new",
+        );
         assert!(verifier.respond_to_change(&request_id, true).unwrap());
+        assert_eq!(
+            verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
+            HostTrustDecision::Trusted
+        );
+
+        let stale_request = verifier.register_change(
+            "example.test",
+            22,
+            "ssh-ed25519",
+            vec!["SHA256:old".to_string()],
+            "SHA256:stale",
+        );
+        assert!(verifier.respond_to_change(&stale_request, true).is_err());
         assert_eq!(
             verifier.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
             HostTrustDecision::Trusted
