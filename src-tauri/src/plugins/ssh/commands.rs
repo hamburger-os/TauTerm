@@ -157,10 +157,7 @@ async fn connect_session(
 
         // 凭据提交是连接事务的最后一个可失败步骤。失败时外层统一关闭父 Session。
         if let Some(pending) = pending_ssh_credential {
-            crate::plugins::ssh::application::commit_credential(
-                &state.credential_store,
-                pending,
-            )?;
+            crate::plugins::ssh::application::commit_credential(&state.credential_store, pending)?;
         }
 
         Ok((
@@ -173,28 +170,23 @@ async fn connect_session(
     }
     .await;
 
-    let (
-        host_key_fingerprint,
-        channel0_id,
-        actual_name,
-        actual_params,
-        channel0_connected,
-    ) = match setup_result {
-        Ok(value) => value,
-        Err(error) => {
-            log::error!("SSH 连接事务失败，回滚父会话 {}: {}", parent_id, error);
-            if let Ok(mut store) = state.session_store.lock() {
-                if let Err(cleanup_error) = store.close_session(&parent_id) {
-                    log::warn!(
-                        "SSH 连接事务回滚父会话失败 {}: {}",
-                        parent_id,
-                        cleanup_error
-                    );
+    let (host_key_fingerprint, channel0_id, actual_name, actual_params, channel0_connected) =
+        match setup_result {
+            Ok(value) => value,
+            Err(error) => {
+                log::error!("SSH 连接事务失败，回滚父会话 {}: {}", parent_id, error);
+                if let Ok(mut store) = state.session_store.lock() {
+                    if let Err(cleanup_error) = store.close_session(&parent_id) {
+                        log::warn!(
+                            "SSH 连接事务回滚父会话失败 {}: {}",
+                            parent_id,
+                            cleanup_error
+                        );
+                    }
                 }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
 
     let connected_at = Some(
         std::time::SystemTime::now()
@@ -288,7 +280,11 @@ pub fn confirm_host_key_change(
     log::warn!(
         "SSH 主机密钥变化请求 {}: {}",
         &request_id[..request_id.len().min(16)],
-        if accepted { "已显式更新信任" } else { "已拒绝" }
+        if accepted {
+            "已显式更新信任"
+        } else {
+            "已拒绝"
+        }
     );
     Ok(())
 }
