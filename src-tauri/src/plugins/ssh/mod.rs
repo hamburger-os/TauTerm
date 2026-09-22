@@ -354,6 +354,14 @@ impl SshAdapter {
         self.host_key_verifier.reset_known_hosts()
     }
 
+    pub fn known_hosts(&self) -> Result<Vec<known_hosts::KnownHostRecord>, String> {
+        self.host_key_verifier.known_hosts.list()
+    }
+
+    pub fn forget_known_host(&self, host: &str, port: u16) -> Result<bool, String> {
+        self.host_key_verifier.known_hosts.forget(host, port)
+    }
+
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
     ///
     /// `connect_session_ssh` 已在前端参数验证阶段反序列化 `SshConfig`，
