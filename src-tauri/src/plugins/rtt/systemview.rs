@@ -149,6 +149,7 @@ struct TaskState {
     priority: Option<u32>,
     runtime_cycles: u64,
     switches: u64,
+    terminated: bool,
 }
 
 struct TraceState {
@@ -281,8 +282,29 @@ impl TraceState {
                 self.close_active_task(self.last_target_cycles);
                 self.interrupted_task = None;
             }
-            6 | 8 | 15 | 16 | 19 | 29 => {
+            6 | 15 | 16 | 19 => {
                 context_id = packet.fields.first().copied();
+            }
+            8 => {
+                if let Some(task_id) = packet.fields.first().copied() {
+                    let task = self.tasks.entry(task_id).or_default();
+                    if task.terminated {
+                        *task = TaskState::default();
+                    }
+                    context_id = Some(task_id);
+                }
+            }
+            29 => {
+                if let Some(task_id) = packet.fields.first().copied() {
+                    if self.active_task.is_some_and(|(active_id, _)| active_id == task_id) {
+                        self.close_active_task(self.last_target_cycles);
+                    }
+                    if self.interrupted_task == Some(task_id) {
+                        self.interrupted_task = None;
+                    }
+                    self.tasks.entry(task_id).or_default().terminated = true;
+                    context_id = Some(task_id);
+                }
             }
             7 => {
                 context_id = packet.fields.first().copied();
@@ -472,6 +494,7 @@ impl TraceState {
                         priority: task.priority,
                         runtime_cycles: 0,
                         switches: 0,
+                        terminated: task.terminated,
                     },
                 )
             })
