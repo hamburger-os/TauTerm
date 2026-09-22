@@ -184,13 +184,16 @@ pub(crate) fn session_config_handler() -> SessionConfigHandler {
     }
 }
 
-fn runtime_config(params: &Value, credential: CredentialValue) -> Result<SshConfig, String> {
+fn runtime_config(
+    params: &Value,
+    mut credential: CredentialValue,
+) -> Result<SshConfig, String> {
     let connection: SshConnectionParams = serde_json::from_value(params.clone())
         .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
 
-    match (connection.auth_method.as_str(), credential) {
+    match (connection.auth_method.as_str(), &mut credential) {
         ("password", CredentialValue::Password(password)) => {
-            Ok(SshConfig::password(connection, password))
+            Ok(SshConfig::password(connection, std::mem::take(password)))
         }
         (
             "key",
@@ -198,7 +201,11 @@ fn runtime_config(params: &Value, credential: CredentialValue) -> Result<SshConf
                 private_key,
                 passphrase,
             },
-        ) => Ok(SshConfig::key(connection, private_key, passphrase)),
+        ) => Ok(SshConfig::key(
+            connection,
+            std::mem::take(private_key),
+            passphrase.take(),
+        )),
         _ => Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into()),
     }
 }
