@@ -81,16 +81,25 @@ impl KnownHostStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
         }
+        *self
+            .path
+            .write()
+            .map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path.clone());
+
+        let blocked_path = Self::blocked_path(&path);
+        if blocked_path.exists() {
+            let reason = std::fs::read_to_string(&blocked_path)
+                .unwrap_or_else(|_| "SSH 主机信任库此前检测到损坏或不兼容版本".to_string());
+            return Err(format!(
+                "SSH 主机信任库处于阻止状态：{reason}。请在 TauTerm 中显式重置信任库后重试"
+            ));
+        }
 
         let hosts = Self::load(&path)?;
         *self
             .hosts
             .write()
             .map_err(|_| "SSH known-host 锁错误".to_string())? = hosts;
-        *self
-            .path
-            .write()
-            .map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path);
         self.available.store(true, Ordering::Release);
         Ok(())
     }
@@ -110,18 +119,24 @@ impl KnownHostStore {
             Ok(header) => header.version,
             Err(error) => {
                 let quarantine = Self::quarantine_invalid(path)?;
-                return Err(format!(
-                    "SSH known-host 文件损坏: {error}；原文件已隔离至 {:?}，必须显式重置信任后才能继续",
+                let reason = format!(
+                    "SSH known-host 文件损坏: {error}；原文件已隔离至 {:?}",
                     quarantine
-                ));
+                );
+                Self::mark_blocked(path, &reason)?;
+                return Err(format!("{reason}，必须显式重置信任后才能继续"));
             }
         };
 
         if version != KNOWN_HOSTS_VERSION {
             let quarantine = Self::quarantine_invalid(path)?;
-            return Err(format!(
-                "SSH known-host schema v{version} 不受支持（expected v{KNOWN_HOSTS_VERSION}）；旧文件已隔离至 {:?}，不会自动降级为新的 TOFU 信任库",
+            let reason = format!(
+                "SSH known-host schema v{version} 不受支持（expected v{KNOWN_HOSTS_VERSION}）；旧文件已隔离至 {:?}",
                 quarantine
+            );
+            Self::mark_blocked(path, &reason)?;
+            return Err(format!(
+                "{reason}，不会自动降级为新的 TOFU 信任库；必须显式重置"
             ));
         }
 
@@ -129,12 +144,23 @@ impl KnownHostStore {
             Ok(file) => Ok(file.hosts),
             Err(error) => {
                 let quarantine = Self::quarantine_invalid(path)?;
-                Err(format!(
-                    "SSH known-host schema v{KNOWN_HOSTS_VERSION} 文件损坏: {error}；原文件已隔离至 {:?}，必须显式重置信任后才能继续",
+                let reason = format!(
+                    "SSH known-host schema v{KNOWN_HOSTS_VERSION} 文件损坏: {error}；原文件已隔离至 {:?}",
                     quarantine
-                ))
+                );
+                Self::mark_blocked(path, &reason)?;
+                Err(format!("{reason}，必须显式重置信任后才能继续"))
             }
         }
+    }
+
+    fn blocked_path(path: &Path) -> PathBuf {
+        path.with_extension("blocked")
+    }
+
+    fn mark_blocked(path: &Path, reason: &str) -> Result<(), String> {
+        atomic_write(&Self::blocked_path(path), reason.as_bytes())
+            .map_err(|e| format!("写入 SSH known-host 阻止标记失败: {e}"))
     }
 
     fn quarantine_invalid(path: &Path) -> Result<PathBuf, String> {
@@ -176,6 +202,32 @@ impl KnownHostStore {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64
+    }
+
+    pub fn reset(&self) -> Result<(), String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
+        let path = self
+            .path
+            .read()
+            .map_err(|_| "SSH known-host 路径锁错误".to_string())?
+            .clone()
+            .ok_or_else(|| "SSH known-host 存储尚未初始化".to_string())?;
+        let empty = BTreeMap::new();
+        Self::persist_snapshot_to(&path, &empty)?;
+        let blocked = Self::blocked_path(&path);
+        if blocked.exists() {
+            std::fs::remove_file(&blocked)
+                .map_err(|e| format!("清理 SSH known-host 阻止标记失败: {e}"))?;
+        }
+        *self
+            .hosts
+            .write()
+            .map_err(|_| "SSH known-host 锁错误".to_string())? = empty;
+        self.available.store(true, Ordering::Release);
+        Ok(())
     }
 
     pub fn evaluate(
@@ -428,13 +480,20 @@ impl KnownHostStore {
             .map_err(|_| "SSH known-host 路径锁错误".to_string())?
             .clone()
             .ok_or_else(|| "SSH known-host 存储尚未初始化".to_string())?;
+        Self::persist_snapshot_to(&path, hosts)
+    }
+
+    fn persist_snapshot_to(
+        path: &Path,
+        hosts: &BTreeMap<String, KnownHostRecord>,
+    ) -> Result<(), String> {
         let file = KnownHostsFile {
             version: KNOWN_HOSTS_VERSION,
             hosts: hosts.clone(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("序列化 SSH known-host 失败: {e}"))?;
-        atomic_write(&path, json.as_bytes()).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
+        atomic_write(path, json.as_bytes()).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
     }
 }
 
@@ -521,10 +580,19 @@ mod tests {
         assert!(store.configure(path.clone()).is_err());
         assert!(!path.exists());
         assert!(path.with_extension("json.invalid.bak").exists());
+        assert!(path.with_extension("blocked").exists());
         assert!(matches!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
             HostTrustDecision::Unavailable { .. }
         ));
+
+        let reopened = KnownHostStore::new();
+        assert!(reopened.configure(path.clone()).is_err());
+        reopened.reset().unwrap();
+        assert_eq!(
+            reopened.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
+            HostTrustDecision::FirstSeen
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -540,6 +608,7 @@ mod tests {
         assert!(store.configure(path.clone()).is_err());
         assert!(!path.exists());
         assert!(path.with_extension("json.invalid.bak").exists());
+        assert!(path.with_extension("blocked").exists());
         assert!(matches!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unavailable { .. }
