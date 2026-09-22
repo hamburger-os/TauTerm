@@ -750,6 +750,7 @@ export async function clearSystemView(
           events: Object.freeze([]),
           loaded: false,
           error: null,
+          metadataSync: prev.systemview[channelIndex]?.metadataSync ?? EMPTY_METADATA_SYNC,
         }),
       }),
     });
