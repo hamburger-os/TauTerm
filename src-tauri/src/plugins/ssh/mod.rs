@@ -575,7 +575,7 @@ impl HostKeyVerifier {
             if !still_valid {
                 let _ = pending.response.send(false);
                 return Err(
-                    "SSH 主机信任已在确认期间变化，请重新连接并重新验证主机密钥".to_string(),
+                    "SSH 主机信任已在确认期间变化，请重新连接并重新验证主机密钥".to_string()
                 );
             }
 
