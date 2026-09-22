@@ -12,6 +12,8 @@ const MAX_PENDING_PRESENTATION_EVENTS: usize = 1024;
 const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DECODER_BUFFER: usize = 64 * 1024;
+const TARGET_DROP_RATE_WINDOW: Duration = Duration::from_secs(2);
+const TARGET_DROP_RATE_BUCKET: Duration = Duration::from_millis(100);
 const METADATA_RETRY_DELAYS_MS: [u64; 10] = [
     350, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 45_000, 60_000, 90_000,
 ];
@@ -124,6 +126,7 @@ pub struct SystemViewSnapshot {
     pub metadata_sync_max_attempts: u32,
     pub target_overflow_packets: u64,
     pub target_dropped_events: u64,
+    pub target_drop_rate_per_sec: u64,
     pub decoder_dropped_chunks: u64,
     pub decoder_errors: u64,
     pub presentation_dropped_events: u64,
@@ -223,6 +226,7 @@ struct TraceState {
     metadata_sync_attempts: u32,
     target_overflow_packets: u64,
     target_dropped_events: u64,
+    target_drop_samples: VecDeque<(Instant, u64)>,
     decoder_errors: u64,
     presentation_dropped_events: u64,
     cleared_through_sequence: u64,
@@ -253,6 +257,7 @@ impl TraceState {
             metadata_sync_attempts: 0,
             target_overflow_packets: 0,
             target_dropped_events: 0,
+            target_drop_samples: VecDeque::new(),
             decoder_errors: 0,
             presentation_dropped_events: 0,
             cleared_through_sequence: 0,
@@ -281,7 +286,16 @@ impl TraceState {
         Some(task_id)
     }
 
+    #[cfg(test)]
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
+        self.apply_with_loss_tracking(packet, true)
+    }
+
+    fn apply_with_loss_tracking(
+        &mut self,
+        packet: ParsedPacket,
+        track_target_loss_rate: bool,
+    ) -> SystemViewEvent {
         let previous_target_cycles = self.last_target_cycles;
         if packet.sync_boundary {
             // SEGGER resets LastTxTimeStamp before emitting the sync/start sequence. The first
@@ -314,6 +328,23 @@ impl TraceState {
                 self.target_overflow_packets = self.target_overflow_packets.saturating_add(1);
                 let dropped = packet.fields.first().copied().unwrap_or_default() as u64;
                 self.target_dropped_events = self.target_dropped_events.saturating_add(dropped);
+                if track_target_loss_rate {
+                    let now = Instant::now();
+                    if let Some((started_at, bucket_drops)) = self.target_drop_samples.back_mut() {
+                        if now.saturating_duration_since(*started_at) < TARGET_DROP_RATE_BUCKET {
+                            *bucket_drops = bucket_drops.saturating_add(dropped);
+                        } else {
+                            self.target_drop_samples.push_back((now, dropped));
+                        }
+                    } else {
+                        self.target_drop_samples.push_back((now, dropped));
+                    }
+                    while self.target_drop_samples.front().is_some_and(|(at, _)| {
+                        now.saturating_duration_since(*at) > TARGET_DROP_RATE_WINDOW
+                    }) {
+                        self.target_drop_samples.pop_front();
+                    }
+                }
                 value = Some(dropped);
             }
             2 => {
@@ -475,6 +506,16 @@ impl TraceState {
     }
 
     fn snapshot(&self, decoder_dropped_chunks: u64) -> SystemViewSnapshot {
+        let now = Instant::now();
+        let recent_target_drops = self
+            .target_drop_samples
+            .iter()
+            .filter(|(at, _)| now.saturating_duration_since(*at) <= TARGET_DROP_RATE_WINDOW)
+            .fold(0u64, |sum, (_, dropped)| sum.saturating_add(*dropped));
+        let target_drop_rate =
+            (u128::from(recent_target_drops) * 1_000).div_ceil(TARGET_DROP_RATE_WINDOW.as_millis());
+        let target_drop_rate_per_sec = u64::try_from(target_drop_rate).unwrap_or(u64::MAX);
+
         let mut tasks = self
             .tasks
             .iter()
@@ -516,6 +557,7 @@ impl TraceState {
             metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
             target_overflow_packets: self.target_overflow_packets,
             target_dropped_events: self.target_dropped_events,
+            target_drop_rate_per_sec,
             decoder_dropped_chunks,
             decoder_errors: self.decoder_errors,
             presentation_dropped_events: self.presentation_dropped_events,
@@ -578,6 +620,7 @@ impl TraceState {
         self.event_count = 0;
         self.target_overflow_packets = 0;
         self.target_dropped_events = 0;
+        self.target_drop_samples.clear();
         self.decoder_errors = 0;
         self.presentation_dropped_events = 0;
         self.events.clear();
@@ -617,7 +660,7 @@ impl SystemViewShared {
         }
     }
 
-    fn ingest(&self, chunk: StoredRttChunk) -> Vec<SystemViewEvent> {
+    fn ingest(&self, chunk: StoredRttChunk, track_target_loss_rate: bool) -> Vec<SystemViewEvent> {
         let (packets, errors) = self
             .decoder
             .lock()
@@ -629,7 +672,7 @@ impl SystemViewShared {
         state.decoder_errors = state.decoder_errors.saturating_add(errors);
         packets
             .into_iter()
-            .map(|packet| state.apply(packet))
+            .map(|packet| state.apply_with_loss_tracking(packet, track_target_loss_rate))
             .collect()
     }
 
@@ -658,6 +701,7 @@ impl SystemViewShared {
                 metadata_sync_max_attempts: METADATA_RETRY_DELAYS_MS.len() as u32,
                 target_overflow_packets: 0,
                 target_dropped_events: 0,
+                target_drop_rate_per_sec: 0,
                 decoder_dropped_chunks: drops,
                 decoder_errors: 0,
                 presentation_dropped_events: 0,
@@ -879,7 +923,7 @@ fn run_decoder(
         }
         expected_channel_offset =
             Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
-        pending.extend(shared.ingest(chunk));
+        pending.extend(shared.ingest(chunk, false));
         while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
             pending.pop_front();
             shared.record_presentation_drop(1);
@@ -889,6 +933,7 @@ fn run_decoder(
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut metadata_retry = MetadataRetryCoordinator::default();
+    let mut last_published_target_loss_active = false;
     let mut changed = true;
 
     while !stopping.load(Ordering::Acquire) {
@@ -907,7 +952,7 @@ fn run_decoder(
                 }
                 expected_channel_offset =
                     Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
-                for event in shared.ingest(chunk) {
+                for event in shared.ingest(chunk, true) {
                     pending.push_back(event);
                 }
                 while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
@@ -921,7 +966,7 @@ fn run_decoder(
         }
 
         let now = Instant::now();
-        let metadata_snapshot = shared.snapshot();
+        let mut metadata_snapshot = shared.snapshot();
         let attempts_before = metadata_retry.attempts;
         if metadata_retry.update(&metadata_snapshot, now) {
             if metadata_refresh() {
@@ -932,21 +977,30 @@ fn run_decoder(
         }
         if metadata_retry.attempts != attempts_before {
             shared.set_metadata_sync_attempts(metadata_retry.attempts);
+            metadata_snapshot = shared.snapshot();
             changed = true;
         }
 
         if last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL && !pending.is_empty() {
             let events = pending.drain(..).collect::<Vec<_>>();
             let snapshot = shared.snapshot();
+            last_published_target_loss_active = snapshot.target_drop_rate_per_sec > 0;
             presenter(SystemViewPresentation::Batch { events, snapshot });
             last_flush = Instant::now();
             last_snapshot = Instant::now();
             changed = false;
-        } else if changed && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
-            let snapshot = shared.snapshot();
-            presenter(SystemViewPresentation::Snapshot { snapshot });
-            last_snapshot = Instant::now();
-            changed = false;
+        } else {
+            let target_loss_active = metadata_snapshot.target_drop_rate_per_sec > 0;
+            let health_needs_publish =
+                target_loss_active || last_published_target_loss_active != target_loss_active;
+            if (changed || health_needs_publish) && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
+                last_published_target_loss_active = target_loss_active;
+                presenter(SystemViewPresentation::Snapshot {
+                    snapshot: metadata_snapshot,
+                });
+                last_snapshot = Instant::now();
+                changed = false;
+            }
         }
     }
 
@@ -1385,6 +1439,24 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_overflow_does_not_look_like_live_target_loss() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply_with_loss_tracking(
+            ParsedPacket {
+                event_id: 1,
+                fields: vec![25],
+                text: None,
+                delta_cycles: 1,
+                sync_boundary: false,
+            },
+            false,
+        );
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.target_dropped_events, 25);
+        assert_eq!(snapshot.target_drop_rate_per_sec, 0);
+    }
+
+    #[test]
     fn target_overflow_does_not_charge_unknown_gap_to_active_task() {
         let mut state = TraceState::new(7, 1, true);
         state.apply(ParsedPacket {
@@ -1458,7 +1530,11 @@ mod tests {
         assert_eq!(snapshot.tasks[0].runtime_cycles, 20);
         assert_eq!(snapshot.target_overflow_packets, 1);
         assert_eq!(snapshot.target_dropped_events, 4);
+        assert_eq!(snapshot.target_drop_rate_per_sec, 2);
         assert_eq!(snapshot.decoder_dropped_chunks, 3);
+
+        state.clear();
+        assert_eq!(state.snapshot(0).target_drop_rate_per_sec, 0);
     }
 
     #[test]

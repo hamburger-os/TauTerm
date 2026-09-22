@@ -53,31 +53,57 @@ if (releaseAssembler.includes('["windows-x86_64",')) {
 }
 
 const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
+const rttTerminal = fs.readFileSync("src/plugins/rtt/RttTerminalView.tsx", "utf8");
+const terminalHost = fs.readFileSync("src/components/Terminal/xtermHostLifecycle.ts", "utf8");
+
 for (const required of [
-  "const scheduleFit = useCallback",
-  "container.isConnected",
-  "container.clientWidth <= 0",
-  "container.clientHeight <= 0",
+  "host.isConnected",
+  "host.clientWidth > 0",
+  "host.clientHeight > 0",
   "const scheduleInitialize = () =>",
   "bootstrapObserver = new ResizeObserver(scheduleInitialize)",
   "resizeObserver = new ResizeObserver(scheduleFit)",
-  "cancelAnimationFrame(fitRafRef.current)",
-  "if (term) {",
-  "onCleanupRef.current?.(sessionId)",
+  "cancelAnimationFrame(initRaf)",
+  "cancelAnimationFrame(fitRaf)",
+  "current.onDispose?.()",
+  "current.terminal.dispose()",
 ]) {
-  if (!terminal.includes(required)) fail("Terminal lifecycle contract missing " + required);
+  if (!terminalHost.includes(required)) {
+    fail("Shared xterm host lifecycle contract missing " + required);
+  }
 }
-const fitCalls = terminal.match(/\bfitAddon\.fit\(\)|\bnextFitAddon\.fit\(\)|fitAddonRef\.current\?\.fit\(\)/g) ?? [];
-if (fitCalls.length !== 1 || !terminal.includes("fitAddon.fit();")) {
-  fail("Terminal must route every fit through the single guarded scheduleFit path.");
+const fitCalls = terminalHost.match(/\.fitAddon\.fit\(\)/g) ?? [];
+if (fitCalls.length !== 1 || !terminalHost.includes("current.fitAddon.fit();")) {
+  fail("Shared xterm host must route every fit through one guarded RAF path.");
 }
-if (terminal.includes("term.open(containerRef.current);\n    fitAddon.fit();")) {
-  fail("Terminal must not synchronously open and fit during React effect setup.");
+const hostCleanup = terminalHost.indexOf("dispose() {");
+const disconnectObserver = terminalHost.indexOf("resizeObserver?.disconnect()", hostCleanup);
+const cancelFit = terminalHost.indexOf("cancelAnimationFrame(fitRaf)", hostCleanup);
+const disposeTerminal = terminalHost.indexOf("current.terminal.dispose()", hostCleanup);
+if (
+  hostCleanup < 0
+  || disconnectObserver < hostCleanup
+  || cancelFit < disconnectObserver
+  || disposeTerminal < cancelFit
+) {
+  fail("Shared xterm cleanup must disconnect observers and cancel fit RAF before dispose.");
 }
-const strictCleanup = terminal.indexOf("if (term) {");
-const cleanupCallback = terminal.indexOf("onCleanupRef.current?.(sessionId)", strictCleanup);
-if (strictCleanup < 0 || cleanupCallback < strictCleanup) {
-  fail("Terminal parent cleanup must only run after a real xterm instance existed.");
+for (const [name, source] of [
+  ["Terminal", terminal],
+  ["RTT Terminal", rttTerminal],
+]) {
+  if (!source.includes("mountXtermHost(")) {
+    fail(name + " must use the shared xterm host lifecycle.");
+  }
+  if (/new ResizeObserver\s*\(/.test(source)) {
+    fail(name + " must not own a second ResizeObserver lifecycle.");
+  }
+  if (/\bfitAddon\.fit\(\)|\bnextFitAddon\.fit\(\)/.test(source)) {
+    fail(name + " must not call FitAddon.fit outside the shared host lifecycle.");
+  }
+}
+if (!terminal.includes("onCleanupRef.current?.(sessionId)")) {
+  fail("Terminal must preserve parent cleanup after a real shared-host instance existed.");
 }
 
 const windowsDriver = fs.readFileSync("src-tauri/src/virtual_port/windows_driver.rs", "utf8");

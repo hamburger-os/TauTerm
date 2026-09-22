@@ -74,6 +74,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.recoveryNote {
+  flex: 0 0 auto;
+  padding: 5px var(--spacing-md);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--content-divider);
+  font-size: var(--text-xs);
+}
+
 .metrics {
   flex: 0 0 auto;
   display: grid;
@@ -107,6 +115,23 @@
   margin-top: 2px;
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+.metric small {
+  display: block;
+  min-height: 1.35em;
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-size: calc(var(--text-xs) * 0.92);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric .lossActive {
+  color: var(--color-warning);
 }
 
 .traceBody {
@@ -184,6 +209,11 @@
   top: 0;
   z-index: 2;
   color: var(--text-muted);
+  background-color: var(--bg-base);
+  background-image:
+    var(--liquid-specular-content-fill),
+    var(--theme-content-header-veil),
+    var(--liquid-clear-content-fill);
   border: 0;
   border-bottom: 1px solid var(--content-divider);
   border-radius: 0;

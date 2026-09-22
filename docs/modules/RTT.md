@@ -119,7 +119,7 @@ RTT 数据离开 backend 的当刻就形成 canonical frame，包含：
 
 sequence/offset 不在 WebView presentation 阶段补造，因此不同 Channel 的原始到达顺序和每 Channel 偏移不会因批处理而丢失。
 
-worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native 与 Existing J-Link backend 的一次 Up poll 都限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免任一 backend 形成无界长操作。共享 DebugTarget scheduler 再按 service 独立队列 round-robin 调度。Queue full、排队 deadline 与“操作已 dispatch 但等待结果超时”分别保留为 scheduler pressure / operation timeout / outcome unknown，不伪装成 Probe 物理断开；只有实际 probe/core I/O 失效才触发 fatal disconnect。RTT poll 若持续读到数据，会在严格有界的 busy-drain burst 内立即继续轮询，并在每轮之间照常处理控制命令与 Down 写入；读空或达到 burst 边界后才进入常规 poll sleep。这样高吞吐 SystemView/日志流不必每读一轮就固定等待，同时也不会用无限 busy loop 饿死发送和其它调试服务。
+worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native 与 Existing J-Link backend 的一次 Up poll 都限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免任一 backend 形成无界长操作。共享 DebugTarget scheduler 再按 service 独立队列 round-robin 调度。Queue full、排队 deadline 与“操作已 dispatch 但等待结果超时”分别保留为 scheduler pressure / operation timeout / outcome unknown，不伪装成 Probe 物理断开；只有实际 probe/core I/O 失效才触发 fatal disconnect。RTT poll 若持续读到数据，会继续以单次 backend poll 的有界 Channel/read 配额立即排空，并在每轮之间照常处理控制命令与 Down 写入；worker 只在读空时进入常规 poll sleep，持续有数据时仅 cooperative yield。共享 DebugTarget scheduler 仍按 service round-robin，因此高吞吐 SystemView/日志流不会因为固定 5 ms 空等放大目标端 ring overflow，也不会通过无界单次操作饿死发送或其它调试服务。
 
 ## 历史、日志与丢失语义
 
@@ -151,7 +151,7 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 连接页使用统一控件高度/矩阵布局。常用项只展示连接方式、probe、target、wire protocol、固件符号文件和 RTT 定位；speed/core 收入高级设置。工作区复用 Workspace Content surface，不再拥有第二套发送框或额外玻璃 Card。
 
-宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。语义观察器视图不显示普通 SendBar；Trace 的 START/STOP 等协议动作由 observer 自己的紧凑工具栏负责。RTOS Trace 主视图包含采集控制、分层 loss、timestamp clock、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，并在已知 SysFreq 时换算成相对时间，不把 host acquisition timestamp 或 CPUFreq 冒充时间戳时钟。时间线从有界事件历史中先重建可见窗口左边界的 Task/Idle/ISR 状态，再绘制窗口内区间，ISR 进入/退出会正确截断并恢复 Idle；Task terminate 也会结束对应活动区间。任务 lane 使用稳定 task id 顺序，统计表可按 runtime 排序；高 DPI Canvas 依据真实 Pane 尺寸重建 backing store，避免固定像素画布与主题字体脱节。存在目标端/decoder 缺口时，任务占比以“至少”语义展示，避免把不完整采样伪装成精确 CPU 占比。
+宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。普通 RTT Terminal 与公共 Terminal renderer 共用 `src/components/Terminal/xtermHostLifecycle.ts` 的 DOM 生命周期：宿主可测量后再 open、ResizeObserver 只请求 RAF 合并 fit、cleanup 先取消 RAF/observer 再 dispose xterm，避免快速切换 Terminal/SysView 或 React StrictMode 探测触碰已销毁 renderer。语义观察器视图不显示普通 SendBar；Trace 的 START/STOP 等协议动作由 observer 自己的紧凑工具栏负责。RTOS Trace 主视图包含采集控制、分层 loss、timestamp clock、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，并在已知 SysFreq 时换算成相对时间，不把 host acquisition timestamp 或 CPUFreq 冒充时间戳时钟。时间线从有界事件历史中先重建可见窗口左边界的 Task/Idle/ISR 状态，再绘制窗口内区间，ISR 进入/退出会正确截断并恢复 Idle；Task terminate 也会结束对应活动区间。任务 lane 优先保留当前/近期活跃与高运行时间任务，再以稳定 task id 排列；高 DPI Canvas 依据真实 Pane 尺寸重建 backing store，首尾时间刻度按测量宽度夹在画布范围内。存在数据缺口时运行时间仍展示已观察下界；目标端已知丢失量超过已解析事件量时不再给出容易误读的 CPU 百分比，只明确显示“已观察运行时间”。
 
 ## SystemView / RTOS Trace
 
@@ -164,8 +164,8 @@ SystemView 是 RTT 上层语义观察器，不属于 RTT backend。Runtime 根�
 - Task terminate 会结束对应活动任务，并把该 Task ID 标记为已终止；若之后收到同 ID 的 Task Create，则作为新的任务实例重置旧名称、优先级和累计运行统计，避免 RTOS 复用任务地址/句柄时串接旧状态；
 - 支持同一 RTT Session 同时存在多个 observer，因此数据模型不把 SystemView 写死为“唯一 Channel”，可自然扩展到多核/多 trace source；
 - 多 observer 场景只选择一个可用的同索引 Down Channel 作为共享 SystemView controller，并只对该通道声明 `SystemView` claim；所有 observer 的 START/STOP/GET_SYSDESC/GET_TASKLIST/GET_SYSTIME 都经该内部控制路径发送，其余 observer 保持纯 Up 被动语义，避免无谓占用无关 Down Channel；完全没有可用 Down 时仍可被动解析已经在运行的 trace；
-- 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计；target overflow 发生时把 overflow packet 的 delta 区间视为未知，不归属给此前运行任务；subscriber drop 会清空半包 decoder 状态并重新等待下一次 10-byte sync marker，禁止在缺口后继续猜包边界；
-- 前端对目标端/decoder/presentation 缺口显示 Trace incomplete 状态，并分别给出目标端丢失事件、decoder subscriber drop、decode error 与 presentation drop 计数；可定位的 overflow 区间作为未知时间带展示。缺口发生后不继续把未知执行时间归属给此前任务，也不把缺失事件伪装成连续任务执行或精确 CPU 占比。
+- 目标端 Overflow 事件、decoder subscriber drop、decoder parse error 与 WebView presentation drop 分开统计；target overflow 发生时把 overflow packet 的 delta 区间视为未知，不归属给此前运行任务。Runtime 额外维护一个短窗口目标端丢失速率，用来区分“历史上曾溢出”与“当前仍在持续溢出”；UI 同时显示已知事件覆盖率与当前 SysView Up Buffer 大小，便于判断应优先增大目标 buffer、提高稳定的调试接口速度或减少 Trace 事件量。subscriber drop 会清空半包 decoder 状态并重新等待下一次 10-byte sync marker，禁止在缺口后继续猜包边界；
+- WebView presentation queue 的历史 drop 不是永久的数据缺口结论。前端利用单调 event sequence 检测展示缺口并优先从 Rust 有界 history 回补；当前可见窗口仍存在 sequence gap 时才计入 Trace incomplete。若缺口已经补齐或已离开有界可见窗口，只保留“曾发生 presentation drop、当前窗口无未回补缺口”的中性诊断，不声称已永久恢复历史数据。目标端/decoder 的真实缺口仍保持独立告警，可定位的 overflow 区间作为未知时间带展示。缺口发生后不继续把未知执行时间归属给此前任务，也不把缺失事件伪装成连续任务执行或精确 CPU 占比。
 
 前端 Canvas 时间线只消费已经解码的 target-time event model；React 不承担二进制协议解码，也不为每个 trace event 创建时间线 DOM。Events 视图仅挂载有界近期事件，Raw 视图继续读取原 RTT 历史用于协议诊断。
 

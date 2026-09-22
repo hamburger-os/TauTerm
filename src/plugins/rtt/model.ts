@@ -165,6 +165,7 @@ export interface SystemViewSnapshot {
   metadata_sync_max_attempts: number;
   target_overflow_packets: number;
   target_dropped_events: number;
+  target_drop_rate_per_sec: number;
   decoder_dropped_chunks: number;
   decoder_errors: number;
   presentation_dropped_events: number;

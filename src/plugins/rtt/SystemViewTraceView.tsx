@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import GlassButton from "../../components/common/GlassButton";
-import type { SystemViewEvent, SystemViewSnapshot } from "./model";
+import { formatBytes, type SystemViewEvent, type SystemViewSnapshot } from "./model";
 import type { RttSystemViewChannelState } from "./runtime-store";
 import styles from "./SystemViewTraceView.module.css";
 
@@ -13,6 +13,7 @@ interface Props {
   state: RttSystemViewChannelState | undefined;
   mode: "trace" | "events";
   controlAvailable: boolean;
+  upBufferSize?: number | null;
   onStart: () => void;
   onStop: () => void;
   onClear: () => void;
@@ -23,6 +24,10 @@ function formatFrequency(value: number | null | undefined): string {
   if (value >= 1000000) return (value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1) + " MHz";
   if (value >= 1000) return (value / 1000).toFixed(1) + " kHz";
   return String(value) + " Hz";
+}
+
+function formatInteger(value: number | null | undefined): string {
+  return (value ?? 0).toLocaleString();
 }
 
 function formatCycles(value: number): string {
@@ -57,6 +62,36 @@ function formatTargetDuration(
   if (milliseconds >= 1) return `${milliseconds.toFixed(milliseconds >= 10 ? 1 : 2)} ms`;
   const microseconds = seconds * 1_000_000;
   return `${microseconds.toFixed(microseconds >= 10 ? 1 : 2)} µs`;
+}
+
+function formatPercent(value: number, lowerBound: boolean): string {
+  if (!Number.isFinite(value) || value <= 0) return "0%";
+  let formatted: string;
+  if (value < 0.001) formatted = value.toExponential(1);
+  else if (value < 0.01) formatted = value.toFixed(3);
+  else if (value < 0.1) formatted = value.toFixed(2);
+  else formatted = value.toFixed(1);
+  return `${lowerBound ? "≥" : ""}${formatted}%`;
+}
+
+function formatSystemDescription(description: string): string {
+  const values = description
+    .split(",")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const separator = part.indexOf("=");
+      return separator >= 0 ? part.slice(separator + 1).trim() : part;
+    })
+    .filter(Boolean);
+  return values.length > 0 ? values.join(" · ") : description;
+}
+
+function observedTargetCoverage(snapshot: SystemViewSnapshot | null): number | null {
+  if (!snapshot) return null;
+  const known = snapshot.event_count + snapshot.target_dropped_events;
+  if (known <= 0) return null;
+  return (snapshot.event_count / known) * 100;
 }
 
 function restoreTargetId(
@@ -431,7 +466,10 @@ function drawTimeline(
   for (let tick = 0; tick <= 4; tick += 1) {
     const cycles = Math.round(startCycles + span * (tick / 4));
     const x = xFor(cycles);
-    ctx.fillText(formatTargetTime(cycles, startCycles, snapshot?.sys_freq_hz), x - 22, cssHeight - 7);
+    const label = formatTargetTime(cycles, startCycles, snapshot?.sys_freq_hz);
+    const width = ctx.measureText(label).width;
+    const labelX = Math.min(cssWidth - width - 4, Math.max(4, x - width / 2));
+    ctx.fillText(label, labelX, cssHeight - 7);
   }
 }
 
@@ -439,6 +477,7 @@ export default function SystemViewTraceView({
   state,
   mode,
   controlAvailable,
+  upBufferSize,
   onStart,
   onStop,
   onClear,
@@ -448,11 +487,13 @@ export default function SystemViewTraceView({
   const snapshot = state?.snapshot ?? null;
   const events = state?.events ?? [];
   const metadataSync = state?.metadataSync;
+  const presentationRecovery = state?.presentationRecovery;
+  const presentationUnresolved = presentationRecovery?.unresolved_events ?? 0;
   const integrityCompromised = Boolean(snapshot && (
     snapshot.target_overflow_packets > 0
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
-    || snapshot.presentation_dropped_events > 0
+    || presentationUnresolved > 0
   ));
   const taskStatsIncomplete = Boolean(snapshot && (
     snapshot.target_overflow_packets > 0
@@ -460,9 +501,19 @@ export default function SystemViewTraceView({
     || snapshot.decoder_dropped_chunks > 0
     || snapshot.decoder_errors > 0
   ));
+  const severeTargetLoss = Boolean(
+    snapshot
+    && snapshot.target_dropped_events > snapshot.event_count
+    && snapshot.target_dropped_events > 0,
+  );
+  const targetCoverage = observedTargetCoverage(snapshot);
+  const rawSystemDescription = snapshot?.system_description?.[0] ?? "";
+  const systemDescription = rawSystemDescription
+    ? formatSystemDescription(rawSystemDescription)
+    : "";
   const metadataStatus = useMemo(() => {
     if (!metadataSync || metadataSync.unresolved_tasks === 0) {
-      return snapshot?.system_description?.[0] ?? "";
+      return systemDescription;
     }
     if (metadataSync.phase === "unavailable") {
       return t("rtt.traceMetadataUnavailable", { count: metadataSync.unresolved_tasks });
@@ -478,7 +529,7 @@ export default function SystemViewTraceView({
       attempts: metadataSync.attempts,
       max: metadataSync.max_attempts,
     });
-  }, [metadataSync, snapshot?.system_description, t]);
+  }, [metadataSync, systemDescription, t]);
 
   useEffect(() => {
     if (mode !== "trace" || !canvasRef.current) return;
@@ -555,25 +606,51 @@ export default function SystemViewTraceView({
           <span>{t("rtt.traceIncomplete")}</span>
           <span className={styles.integrityDetails}>
             {t("rtt.traceIntegrityDetails", {
-              target: snapshot?.target_dropped_events ?? 0,
-              decoder: snapshot?.decoder_dropped_chunks ?? 0,
-              errors: snapshot?.decoder_errors ?? 0,
-              presentation: snapshot?.presentation_dropped_events ?? 0,
+              target: formatInteger(snapshot?.target_dropped_events),
+              decoder: formatInteger(snapshot?.decoder_dropped_chunks),
+              errors: formatInteger(snapshot?.decoder_errors),
+              presentation: formatInteger(presentationUnresolved),
             })}
           </span>
         </div>
       )}
+      {!integrityCompromised
+        && (presentationRecovery?.historical_dropped_events ?? 0) > 0
+        && presentationRecovery?.phase === "ok" && (
+          <div className={styles.recoveryNote}>
+            {t("rtt.tracePresentationRecovered", {
+              dropped: formatInteger(presentationRecovery.historical_dropped_events),
+            })}
+          </div>
+        )}
 
       <div className={styles.metrics}>
-        <div className={styles.metric}><span>{t("rtt.traceEvents")}</span><strong>{snapshot?.event_count ?? 0}</strong></div>
-        <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{snapshot?.task_count ?? 0}</strong></div>
+        <div className={styles.metric}>
+          <span>{t("rtt.traceEvents")}</span>
+          <strong>{formatInteger(snapshot?.event_count)}</strong>
+          {targetCoverage != null && (snapshot?.target_dropped_events ?? 0) > 0 && (
+            <small>{t("rtt.traceObservedCoverage", { percent: targetCoverage.toFixed(1) })}</small>
+          )}
+        </div>
+        <div className={styles.metric}><span>{t("rtt.traceTasks")}</span><strong>{formatInteger(snapshot?.task_count)}</strong></div>
         <div
           className={styles.metric}
-          title={t("rtt.traceTargetOverflowHint", { packets: snapshot?.target_overflow_packets ?? 0 })}
+          title={t("rtt.traceTargetOverflowHint", {
+            packets: snapshot?.target_overflow_packets ?? 0,
+            buffer: upBufferSize ? formatBytes(upBufferSize) : "—",
+          })}
         >
-          <span>{t("rtt.traceTargetOverflow")}</span><strong>{snapshot?.target_dropped_events ?? 0}</strong>
+          <span>{t("rtt.traceTargetOverflow")}</span>
+          <strong>{formatInteger(snapshot?.target_dropped_events)}</strong>
+          {(snapshot?.target_drop_rate_per_sec ?? 0) > 0 ? (
+            <small className={styles.lossActive}>
+              {t("rtt.traceTargetLossActive", { rate: formatInteger(snapshot?.target_drop_rate_per_sec) })}
+            </small>
+          ) : (snapshot?.target_dropped_events ?? 0) > 0 ? (
+            <small>{t("rtt.traceTargetLossQuiet")}</small>
+          ) : null}
         </div>
-        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{snapshot?.decoder_dropped_chunks ?? 0}</strong></div>
+        <div className={styles.metric}><span>{t("rtt.traceDecoderLoss")}</span><strong>{formatInteger(snapshot?.decoder_dropped_chunks)}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceTimestampClock")}</span><strong>{formatFrequency(snapshot?.sys_freq_hz)}</strong></div>
         <div className={styles.metric}><span>{t("rtt.traceClock")}</span><strong>{formatFrequency(snapshot?.cpu_freq_hz)}</strong></div>
       </div>
@@ -597,10 +674,10 @@ export default function SystemViewTraceView({
           <section className={styles.tasksSection}>
             <div className={styles.sectionHeader}>
               <strong>{t("rtt.traceTaskStats")}</strong>
-              <span title={metadataStatus}>{metadataStatus}</span>
+              <span title={rawSystemDescription || metadataStatus}>{metadataStatus}</span>
             </div>
             <div className={styles.taskTable}>
-              <div className={`${styles.taskRow} ${styles.taskHeader} liquid-control-surface`}>
+              <div className={`${styles.taskRow} ${styles.taskHeader}`}>
                 <span>{t("rtt.traceTask")}</span>
                 <span>{t("rtt.tracePriority")}</span>
                 <span>{t("rtt.traceSwitches")}</span>
@@ -625,7 +702,11 @@ export default function SystemViewTraceView({
                     <span>{task.priority ?? "—"}</span>
                     <span>{task.switches}</span>
                     <span>
-                      {formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz)} · {taskStatsIncomplete ? "≥" : ""}{percent.toFixed(1)}%
+                      {formatTargetDuration(task.runtime_cycles, snapshot?.sys_freq_hz)}
+                      {" · "}
+                      {severeTargetLoss
+                        ? t("rtt.traceObservedRuntimeOnly")
+                        : formatPercent(percent, taskStatsIncomplete)}
                     </span>
                   </div>
                 );

@@ -28,12 +28,21 @@ export interface SystemViewMetadataSyncState {
   max_attempts: number;
 }
 
+export type SystemViewPresentationRecoveryPhase = "ok" | "recovering" | "incomplete";
+
+export interface SystemViewPresentationRecoveryState {
+  phase: SystemViewPresentationRecoveryPhase;
+  historical_dropped_events: number;
+  unresolved_events: number;
+}
+
 export interface RttSystemViewChannelState {
   snapshot: SystemViewSnapshot | null;
   events: readonly SystemViewEvent[];
   loaded: boolean;
   error: string | null;
   metadataSync: SystemViewMetadataSyncState;
+  presentationRecovery: SystemViewPresentationRecoveryState;
 }
 
 export interface RttRuntimeSnapshot {
@@ -61,9 +70,16 @@ const EMPTY_METADATA_SYNC: SystemViewMetadataSyncState = Object.freeze({
   max_attempts: 0,
 });
 
+const EMPTY_PRESENTATION_RECOVERY: SystemViewPresentationRecoveryState = Object.freeze({
+  phase: "ok",
+  historical_dropped_events: 0,
+  unresolved_events: 0,
+});
+
 const sessions = new Map<string, RttRuntimeSnapshot>();
 const loadedChannels = new Map<string, Set<number>>();
-const systemViewHistoryRecoveries = new Set<string>();
+// value=true means another presentation gap arrived while the current history read was in flight.
+const systemViewHistoryRecoveries = new Map<string, boolean>();
 const listeners = new Set<() => void>();
 let revision = 0;
 let listenerReady: Promise<void> | null = null;
@@ -242,6 +258,30 @@ function mergeSystemViewEvents(
     : merged.slice(merged.length - CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL);
 }
 
+function countSystemViewSequenceGaps(events: readonly SystemViewEvent[]): number {
+  let missing = 0;
+  for (let index = 1; index < events.length; index += 1) {
+    const previous = events[index - 1]?.sequence;
+    const current = events[index]?.sequence;
+    if (previous == null || current == null || current <= previous + 1) continue;
+    missing += current - previous - 1;
+  }
+  return missing;
+}
+
+function presentationRecoveryState(
+  snapshot: SystemViewSnapshot,
+  events: readonly SystemViewEvent[],
+  recovering = false,
+): SystemViewPresentationRecoveryState {
+  const unresolved = countSystemViewSequenceGaps(events);
+  return {
+    phase: recovering ? "recovering" : unresolved > 0 ? "incomplete" : "ok",
+    historical_dropped_events: snapshot.presentation_dropped_events,
+    unresolved_events: unresolved,
+  };
+}
+
 function systemViewRecoveryKey(sessionId: string, channelIndex: number, generation: number): string {
   return `${sessionId}:${channelIndex}:${generation}`;
 }
@@ -262,8 +302,11 @@ async function recoverSystemViewHistory(
   generation: number,
 ): Promise<void> {
   const key = systemViewRecoveryKey(sessionId, channelIndex, generation);
-  if (systemViewHistoryRecoveries.has(key)) return;
-  systemViewHistoryRecoveries.add(key);
+  if (systemViewHistoryRecoveries.has(key)) {
+    systemViewHistoryRecoveries.set(key, true);
+    return;
+  }
+  systemViewHistoryRecoveries.set(key, false);
   try {
     const history = await invoke<SystemViewHistoryResponse>("rtt_systemview_history", {
       sessionId,
@@ -290,13 +333,20 @@ async function recoverSystemViewHistory(
           events: Object.freeze(events),
           loaded: true,
           error: null,
+          presentationRecovery: Object.freeze(
+            presentationRecoveryState(snapshot, events),
+          ),
         }),
       }),
     });
   } catch (cause) {
     console.warn("[rtt/runtime-store] SystemView history recovery failed:", cause);
   } finally {
+    const rerun = systemViewHistoryRecoveries.get(key) === true;
     systemViewHistoryRecoveries.delete(key);
+    if (rerun) {
+      void recoverSystemViewHistory(sessionId, channelIndex, generation);
+    }
   }
 }
 
@@ -309,6 +359,7 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
     loaded: false,
     error: null,
     metadataSync: EMPTY_METADATA_SYNC,
+    presentationRecovery: EMPTY_PRESENTATION_RECOVERY,
   };
   const visibleEvents = payload.kind === "batch"
     ? payload.events.filter(
@@ -325,6 +376,7 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
   const events = payload.kind === "batch"
     ? mergeSystemViewEvents(retainedPrevious, visibleEvents)
     : retainedPrevious;
+  const needsPresentationRecovery = sequenceGap || presentationLossAdvanced;
   publish(payload.session_id, {
     ...prev,
     systemview: Object.freeze({
@@ -337,10 +389,13 @@ function applySystemViewEvent(payload: SystemViewRuntimeEvent): void {
         metadataSync: Object.freeze(
           metadataSyncState(payload.snapshot),
         ),
+        presentationRecovery: Object.freeze(
+          presentationRecoveryState(payload.snapshot, events, needsPresentationRecovery),
+        ),
       }),
     }),
   });
-  if (sequenceGap || presentationLossAdvanced) {
+  if (needsPresentationRecovery) {
     void recoverSystemViewHistory(
       payload.session_id,
       payload.channel_index,
@@ -395,7 +450,7 @@ export const rttRuntimeStore: PluginRuntimeStore = {
   revision: () => revision,
   release(sessionId) {
     loadedChannels.delete(sessionId);
-    for (const key of systemViewHistoryRecoveries) {
+    for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:`)) systemViewHistoryRecoveries.delete(key);
     }
     if (sessions.delete(sessionId)) {
@@ -555,24 +610,28 @@ export async function ensureSystemViewHistory(
     const prev = current(sessionId);
     if (!prev.snapshot || prev.snapshot.generation !== snapshot.generation) return;
     const previous = prev.systemview[channelIndex];
+    const events = mergeSystemViewEvents(
+      (previous?.events ?? []).filter(
+        event => event.sequence > snapshot.cleared_through_sequence,
+      ),
+      history.events.filter(
+        event => event.sequence > snapshot.cleared_through_sequence,
+      ),
+    );
     publish(sessionId, {
       ...prev,
       systemview: Object.freeze({
         ...prev.systemview,
         [channelIndex]: Object.freeze({
           snapshot,
-          events: Object.freeze(mergeSystemViewEvents(
-            (previous?.events ?? []).filter(
-              event => event.sequence > snapshot.cleared_through_sequence,
-            ),
-            history.events.filter(
-              event => event.sequence > snapshot.cleared_through_sequence,
-            ),
-          )),
+          events: Object.freeze(events),
           loaded: true,
           error: null,
           metadataSync: Object.freeze(
             metadataSyncState(snapshot),
+          ),
+          presentationRecovery: Object.freeze(
+            presentationRecoveryState(snapshot, events),
           ),
         }),
       }),
@@ -589,6 +648,8 @@ export async function ensureSystemViewHistory(
           loaded: false,
           error: String(cause),
           metadataSync: prev.systemview[channelIndex]?.metadataSync ?? EMPTY_METADATA_SYNC,
+          presentationRecovery: prev.systemview[channelIndex]?.presentationRecovery
+            ?? EMPTY_PRESENTATION_RECOVERY,
         }),
       }),
     });
@@ -618,7 +679,7 @@ export async function detachSystemView(
   try {
     await invoke("rtt_systemview_detach", { sessionId, channelIndex });
     await refreshRttRuntime(sessionId);
-    for (const key of systemViewHistoryRecoveries) {
+    for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:${channelIndex}:`)) systemViewHistoryRecoveries.delete(key);
     }
     const prev = current(sessionId);
@@ -666,6 +727,7 @@ export async function clearSystemView(
           loaded: false,
           error: null,
           metadataSync: prev.systemview[channelIndex]?.metadataSync ?? EMPTY_METADATA_SYNC,
+          presentationRecovery: EMPTY_PRESENTATION_RECOVERY,
         }),
       }),
     });
