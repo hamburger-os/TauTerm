@@ -559,6 +559,13 @@ impl HostKeyVerifier {
         request_id
     }
 
+    fn cancel_change(&self, request_id: &str) {
+        self.pending_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+    }
+
     fn respond_to_change(&self, request_id: &str, accept: bool) -> Result<bool, String> {
         let pending = self
             .pending_changes
@@ -931,7 +938,7 @@ async fn build_connection_with_config(
                             &verification.algorithm,
                             &verification.fingerprint,
                         );
-                        let _ = app_handle.emit("ssh-host-key-changed", serde_json::json!({
+                        let emitted = app_handle.emit("ssh-host-key-changed", serde_json::json!({
                             "request_id": request_id,
                             "host": connect_host.as_str(),
                             "port": config.port,
@@ -940,6 +947,10 @@ async fn build_connection_with_config(
                             "expected_fingerprints": expected_fingerprints,
                             "actual_fingerprint": verification.fingerprint,
                         }));
+                        if let Err(error) = emitted {
+                            verifier.cancel_change(&request_id);
+                            log::error!("发送 SSH Host Key Changed 事件失败: {error}");
+                        }
                         log::error!(
                             "SSH HOST KEY CHANGED: {} ({})，默认拒绝连接",
                             format_ssh_endpoint(&connect_host, config.port),
