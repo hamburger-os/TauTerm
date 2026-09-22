@@ -351,7 +351,7 @@ impl SshAdapter {
     }
 
     pub fn reset_known_hosts(&self) -> Result<(), String> {
-        self.host_key_verifier.known_hosts.reset()
+        self.host_key_verifier.reset_known_hosts()
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
@@ -431,6 +431,24 @@ impl HostKeyVerifier {
 
     pub fn configure_known_hosts(&self, path: std::path::PathBuf) -> Result<(), String> {
         self.known_hosts.configure(path)
+    }
+
+    fn reset_known_hosts(&self) -> Result<(), String> {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .map(|(_, pending)| pending)
+            .collect::<Vec<_>>();
+        for pending in pending {
+            let _ = pending.response.send(false);
+        }
+        self.pending_changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        self.known_hosts.reset()
     }
 
     fn evaluate(
