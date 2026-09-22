@@ -20,7 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Emitter;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
 use crate::kernel::plugin_adapter::{
@@ -627,7 +627,7 @@ pub struct SshRuntime {
     /// 由 connect_session_ssh 通过 session-connected 事件传递到前端。
     pub host_key_fingerprint: Option<String>,
     /// 远程 home 目录按需解析；基础 SSH 建连不执行额外远端命令。
-    home_dir: OnceCell<Option<String>>,
+    home_dir: Mutex<Option<String>>,
 }
 
 struct RuntimeAttach {
@@ -656,7 +656,7 @@ impl SshRuntime {
             session,
             sftp: Arc::new(Mutex::new(None)),
             host_key_fingerprint,
-            home_dir: OnceCell::new(),
+            home_dir: Mutex::new(None),
         }
     }
 
@@ -666,10 +666,16 @@ impl SshRuntime {
     }
 
     pub async fn resolve_home_dir(&self) -> Option<String> {
-        self.home_dir
-            .get_or_init(|| query_home_dir(self.session.clone()))
-            .await
-            .clone()
+        let mut cached = self.home_dir.lock().await;
+        if let Some(home) = cached.as_ref() {
+            return Some(home.clone());
+        }
+
+        let resolved = query_home_dir(self.session.clone()).await;
+        if let Some(home) = resolved.as_ref() {
+            *cached = Some(home.clone());
+        }
+        resolved
     }
 }
 
