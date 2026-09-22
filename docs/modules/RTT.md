@@ -119,7 +119,7 @@ RTT 数据离开 backend 的当刻就形成 canonical frame，包含：
 
 sequence/offset 不在 WebView presentation 阶段补造，因此不同 Channel 的原始到达顺序和每 Channel 偏移不会因批处理而丢失。
 
-worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native 与 Existing J-Link backend 的一次 Up poll 都限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免任一 backend 形成无界长操作。共享 DebugTarget scheduler 再按 service 独立队列 round-robin 调度。Queue full、排队 deadline 与“操作已 dispatch 但等待结果超时”分别保留为 scheduler pressure / operation timeout / outcome unknown，不伪装成 Probe 物理断开；只有实际 probe/core I/O 失效才触发 fatal disconnect。RTT poll 若持续读到数据，会在严格有界的 busy-drain burst 内立即继续轮询，并在每轮之间照常处理控制命令与 Down 写入；读空或达到 burst 边界后才进入常规 poll sleep。这样高吞吐 SystemView/日志流不必每读一轮就固定等待，同时也不会用无限 busy loop 饿死发送和其它调试服务。
+worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 byte quantum 轮转推进，不能让一个满缓冲 Down Channel 在整个 write timeout 内独占 worker。Native 与 Existing J-Link backend 的一次 Up poll 都限制 Channel 数与每 Channel read 次数，并以轮转 cursor 推进，避免任一 backend 形成无界长操作。共享 DebugTarget scheduler 再按 service 独立队列 round-robin 调度。Queue full、排队 deadline 与“操作已 dispatch 但等待结果超时”分别保留为 scheduler pressure / operation timeout / outcome unknown，不伪装成 Probe 物理断开；只有实际 probe/core I/O 失效才触发 fatal disconnect。RTT poll 若持续读到数据，会继续以单次 backend poll 的有界 Channel/read 配额立即排空，并在每轮之间照常处理控制命令与 Down 写入；worker 只在读空时进入常规 poll sleep，持续有数据时仅 cooperative yield。共享 DebugTarget scheduler 仍按 service round-robin，因此高吞吐 SystemView/日志流不会因为固定 5 ms 空等放大目标端 ring overflow，也不会通过无界单次操作饿死发送或其它调试服务。
 
 ## 历史、日志与丢失语义
 
