@@ -395,7 +395,7 @@ Windows 真实 com0com 驱动回归不能完全由跨平台单元测试替代。
 
 ## 11. setupc 命令速查
 
-完整语法以 `references/setupc-cli.md` 为准。维护实现时最常用：
+完整语法以 [setupc CLI reference](references/setupc-cli.md) 为准。维护实现时最常用：
 
 ```text
 setupc.exe --silent list
