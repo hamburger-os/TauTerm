@@ -13,7 +13,7 @@ const PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DECODER_BUFFER: usize = 64 * 1024;
 const TARGET_DROP_RATE_WINDOW: Duration = Duration::from_secs(2);
-const MAX_TARGET_DROP_SAMPLES: usize = 512;
+const TARGET_DROP_RATE_BUCKET: Duration = Duration::from_millis(100);
 const METADATA_RETRY_DELAYS_MS: [u64; 10] = [
     350, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 45_000, 60_000, 90_000,
 ];
@@ -320,13 +320,18 @@ impl TraceState {
                 let dropped = packet.fields.first().copied().unwrap_or_default() as u64;
                 self.target_dropped_events = self.target_dropped_events.saturating_add(dropped);
                 let now = Instant::now();
-                self.target_drop_samples.push_back((now, dropped));
+                if let Some((started_at, bucket_drops)) = self.target_drop_samples.back_mut() {
+                    if now.saturating_duration_since(*started_at) < TARGET_DROP_RATE_BUCKET {
+                        *bucket_drops = bucket_drops.saturating_add(dropped);
+                    } else {
+                        self.target_drop_samples.push_back((now, dropped));
+                    }
+                } else {
+                    self.target_drop_samples.push_back((now, dropped));
+                }
                 while self.target_drop_samples.front().is_some_and(|(at, _)| {
                     now.saturating_duration_since(*at) > TARGET_DROP_RATE_WINDOW
                 }) {
-                    self.target_drop_samples.pop_front();
-                }
-                while self.target_drop_samples.len() > MAX_TARGET_DROP_SAMPLES {
                     self.target_drop_samples.pop_front();
                 }
                 value = Some(dropped);
