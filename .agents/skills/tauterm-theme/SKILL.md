@@ -1,6 +1,6 @@
 ---
 name: tauterm-theme
-description: "Single source of truth for TauTerm Liquid Glass UI, four-color ambient spectrum, clear-glass physics, theme tint veils, structural panels, control states, split/session presentation, motion, and rendering-performance rules."
+description: "Single source of truth for TauTerm Liquid Glass UI, four-color ambient spectrum, clear-glass physics, theme tint veils, structural panels, control states, split/session presentation, motion, and rendering-performance rules. Use when implementing or changing TauTerm visual theme, shared surfaces, controls, layout presentation, motion, or rendering performance."
 license: MIT
 metadata:
   author: tauterm
@@ -410,7 +410,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 ## 15. 提交前审计
 
-主题修改的扫描命令、重点路径和验证矩阵由 [tauterm-theme-review](../tauterm-theme-review/SKILL.md) 维护。审查时必须先读取本文件作为唯一规则源；review skill 只负责执行流程，不得维护第二份视觉规则。
+主题修改的扫描命令、重点路径和验证矩阵由 `tauterm-theme-review` skill 维护。审查时必须先读取本文件作为唯一规则源；review skill 只负责执行流程，不得维护第二份视觉规则。
 
 ---
 
