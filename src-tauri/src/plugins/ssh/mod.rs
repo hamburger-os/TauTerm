@@ -154,7 +154,7 @@ impl SshConfig {
     }
 
     pub(crate) fn auth_method(&self) -> SshAuthMethod {
-        match self.auth {
+        match &self.auth {
             SshAuthSecret::Password(_) => SshAuthMethod::Password,
             SshAuthSecret::Key { .. } => SshAuthMethod::Key,
         }
@@ -382,7 +382,6 @@ impl SshAdapter {
         let shared = Arc::new(SshRuntime::new(
             result.session,
             result.host_key_fingerprint,
-            result.home_dir,
         ));
         let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
         let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
@@ -549,8 +548,8 @@ pub struct SshRuntime {
     /// 主机密钥 SHA256 指纹（首次连接时由 check_server_key 产生）。
     /// 由 connect_session_ssh 通过 session-connected 事件传递到前端。
     pub host_key_fingerprint: Option<String>,
-    /// SSH 连接建立时通过 `echo $HOME` 解析的远程用户 home 目录
-    pub home_dir: Option<String>,
+    /// 远程 home 目录按需解析；基础 SSH 建连不执行额外远端命令。
+    home_dir: OnceCell<Option<String>>,
 }
 
 struct RuntimeAttach {
@@ -574,19 +573,25 @@ impl SshRuntime {
     pub fn new(
         session: Arc<russh::client::Handle<SshHandler>>,
         host_key_fingerprint: Option<String>,
-        home_dir: Option<String>,
     ) -> Self {
         Self {
             session,
             sftp: Arc::new(Mutex::new(None)),
             host_key_fingerprint,
-            home_dir,
+            home_dir: OnceCell::new(),
         }
     }
 
     /// 获取 russh client Handle（用于 SSH 多连接：复用已有 session 打开新 channel）。
     pub fn handle(&self) -> Arc<russh::client::Handle<SshHandler>> {
         self.session.clone()
+    }
+
+    pub async fn resolve_home_dir(&self) -> Option<String> {
+        self.home_dir
+            .get_or_init(|| query_home_dir(self.session.clone()))
+            .await
+            .clone()
     }
 }
 
@@ -616,8 +621,6 @@ struct BuildConnectionResult {
     session: Arc<russh::client::Handle<SshHandler>>,
     /// 主机密钥 SHA256 指纹（如 "SHA256:xxxx"），供前端展示/确认
     host_key_fingerprint: Option<String>,
-    /// 远程 home 目录，连接建立时通过 `echo $HOME` 解析
-    home_dir: Option<String>,
 }
 
 /// 建立连接的核心逻辑（async）— 直接接收类型化 `SshConfig`。
@@ -625,6 +628,100 @@ struct BuildConnectionResult {
 /// TCP 和初始 KEX 分别使用网络阶段 deadline；等待用户确认 Host Key 时不消耗用户
 /// 交互之外的网络预算。SocketAbortGuard 确保 timeout / rejection / future cancellation
 /// 都会关闭 russh 内部 session task 使用的底层 socket。
+async fn wait_for_host_trust(
+    verifier: &HostKeyVerifier,
+    app_handle: &tauri::AppHandle,
+    host: &str,
+    port: u16,
+    verification: &handler::HostKeyVerification,
+    reason: &str,
+    known_algorithms: Vec<String>,
+) -> bool {
+    let (request_id, wait_rx) = verifier
+        .register(
+            host,
+            port,
+            &verification.algorithm,
+            &verification.fingerprint,
+        )
+        .await;
+    let _pending_guard = PendingRequestGuard::new(verifier, &request_id);
+    let emitted = app_handle.emit(
+        "ssh-host-key-verify",
+        serde_json::json!({
+            "request_id": request_id,
+            "host": host,
+            "port": port,
+            "algorithm": verification.algorithm,
+            "fingerprint": verification.fingerprint,
+            "reason": reason,
+            "known_algorithms": known_algorithms,
+        }),
+    );
+
+    if let Err(error) = emitted {
+        log::error!("发送 SSH Host Key 确认事件失败: {error}");
+        return false;
+    }
+
+    log::info!(
+        "等待用户确认 SSH 主机密钥: {} ({}, {})",
+        format_ssh_endpoint(host, port),
+        verification.algorithm,
+        reason
+    );
+    wait_rx.await.unwrap_or(false)
+}
+
+async fn query_home_dir(handle: Arc<russh::client::Handle<SshHandler>>) -> Option<String> {
+    tokio::time::timeout(SSH_HOME_QUERY_TIMEOUT, async move {
+        let mut exec_chan = match handle.channel_open_session().await {
+            Ok(channel) => channel,
+            Err(error) => {
+                log::warn!("打开 SSH exec 通道失败 (home dir): {error}");
+                return None;
+            }
+        };
+
+        if exec_chan.exec(true, "printf %s \"$HOME\"").await.is_err() {
+            let _ = exec_chan.close().await;
+            return None;
+        }
+
+        let mut output = Vec::new();
+        loop {
+            match exec_chan.wait().await {
+                Some(russh::ChannelMsg::Data { data }) => {
+                    if output.len().saturating_add(data.len()) > SSH_HOME_MAX_BYTES {
+                        log::warn!(
+                            "SSH home_dir 输出超过 {} bytes，放弃解析",
+                            SSH_HOME_MAX_BYTES
+                        );
+                        let _ = exec_chan.close().await;
+                        return None;
+                    }
+                    output.extend_from_slice(data.as_ref());
+                }
+                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => break,
+                _ => continue,
+            }
+        }
+        let _ = exec_chan.close().await;
+        String::from_utf8(output)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+    .await
+    .unwrap_or_else(|_| {
+        log::warn!(
+            "SSH home_dir exec 超时（{}s），回退到默认路径",
+            SSH_HOME_QUERY_TIMEOUT.as_secs()
+        );
+        None
+    })
+}
+
 async fn build_connection_with_config(
     config: SshConfig,
     app_handle: tauri::AppHandle,
@@ -633,12 +730,11 @@ async fn build_connection_with_config(
     let connect_host = normalize_ssh_host(&config.host).to_string();
     let addr = format_ssh_endpoint(&connect_host, config.port);
     let (socket, mut socket_abort) = connect_ssh_socket(&connect_host, config.port).await?;
-    let russh_config = Arc::new(russh::client::Config {
-        keepalive_interval: Some(Duration::from_secs(30)),
-        inactivity_timeout: Some(Duration::from_secs(300)),
-        nodelay: true,
-        ..Default::default()
-    });
+    let mut transport_config = russh::client::Config::default();
+    transport_config.keepalive_interval = Some(Duration::from_secs(30));
+    transport_config.inactivity_timeout = Some(Duration::from_secs(300));
+    transport_config.nodelay = true;
+    let russh_config = Arc::new(transport_config);
 
     // 初始 KEX 的 server key 通过 Handler 交给当前连接建立协程验证。russh 在后续
     // re-key 中沿用已建立的 server identity，不重新触发 TOFU 用户确认。
@@ -706,39 +802,29 @@ async fn build_connection_with_config(
                         );
                         true
                     }
-                    HostTrustDecision::Unknown => {
-                        let (request_id, wait_rx) = verifier
-                            .register(
-                                &connect_host,
-                                config.port,
-                                &verification.algorithm,
-                                &verification.fingerprint,
-                            )
-                            .await;
-                        let _pending_guard = PendingRequestGuard::new(verifier, &request_id);
-                        let emitted = app_handle.emit("ssh-host-key-verify", serde_json::json!({
-                            "request_id": request_id,
-                            "host": connect_host.as_str(),
-                            "port": config.port,
-                            "algorithm": verification.algorithm,
-                            "fingerprint": verification.fingerprint,
-                        }));
-                        if let Err(error) = emitted {
-                            log::error!("发送 SSH Host Key 确认事件失败: {error}");
-                            false
-                        } else {
-                            log::info!("等待用户确认新的 SSH 主机密钥...");
-                            match tokio::time::timeout(HOST_KEY_VERIFY_TIMEOUT, wait_rx).await {
-                                Ok(result) => result.unwrap_or(false),
-                                Err(_elapsed) => {
-                                    log::warn!(
-                                        "主机密钥验证超时 ({}s)，自动拒绝",
-                                        HOST_KEY_VERIFY_TIMEOUT.as_secs()
-                                    );
-                                    false
-                                }
-                            }
-                        }
+                    HostTrustDecision::FirstSeen => {
+                        wait_for_host_trust(
+                            verifier,
+                            &app_handle,
+                            &connect_host,
+                            config.port,
+                            &verification,
+                            "first_seen",
+                            Vec::new(),
+                        )
+                        .await
+                    }
+                    HostTrustDecision::AdditionalKey { known_algorithms } => {
+                        wait_for_host_trust(
+                            verifier,
+                            &app_handle,
+                            &connect_host,
+                            config.port,
+                            &verification,
+                            "additional_key",
+                            known_algorithms,
+                        )
+                        .await
                     }
                     HostTrustDecision::Unavailable { reason } => {
                         log::error!(
@@ -786,26 +872,26 @@ async fn build_connection_with_config(
     };
 
     // 2. 认证
-    let auth_result = match config.auth_method {
-        SshAuthMethod::Password => {
-            let password = config.password.as_deref().unwrap_or("");
-            handle
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(|e| SessionError::AuthFailed {
-                    reason: format!("密码认证协议失败: {e}"),
-                })?
-        }
-        SshAuthMethod::Key => {
-            let private_key_str = config.private_key.as_deref().unwrap_or("");
+    let auth_method = config.auth_method();
+    let auth_result = match &config.auth {
+        SshAuthSecret::Password(password) => handle
+            .authenticate_password(&config.username, password)
+            .await
+            .map_err(|e| SessionError::AuthFailed {
+                reason: format!("密码认证协议失败: {e}"),
+            })?,
+        SshAuthSecret::Key {
+            private_key,
+            passphrase,
+        } => {
             let mut key_pair =
-                russh::keys::PrivateKey::from_openssh(private_key_str).map_err(|e| {
+                russh::keys::PrivateKey::from_openssh(private_key).map_err(|e| {
                     SessionError::AuthFailed {
                         reason: format!("私钥解析失败: {e}"),
                     }
                 })?;
             if key_pair.is_encrypted() {
-                let pass = config.passphrase.as_deref().unwrap_or("");
+                let pass = passphrase.as_deref().unwrap_or("");
                 if pass.is_empty() {
                     return Err(SessionError::AuthFailed {
                         reason: "私钥已加密但未提供密码短语".into(),
@@ -853,59 +939,9 @@ async fn build_connection_with_config(
 
     if !auth_result.success() {
         return Err(SessionError::AuthFailed {
-            reason: auth_failure_reason(&auth_result, config.auth_method),
+            reason: auth_failure_reason(&auth_result, auth_method),
         });
     }
-
-    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）。这是辅助元数据，
-    // 因此设置严格的时间和输出上限；失败只回退到默认路径，不阻断已认证会话。
-    let home_dir = tokio::time::timeout(SSH_HOME_QUERY_TIMEOUT, async {
-        match handle.channel_open_session().await {
-            Ok(mut exec_chan) => {
-                if exec_chan.exec(true, "echo $HOME").await.is_err() {
-                    let _ = exec_chan.close().await;
-                    return None;
-                }
-                let mut output = Vec::new();
-                loop {
-                    match exec_chan.wait().await {
-                        Some(russh::ChannelMsg::Data { data }) => {
-                            if output.len().saturating_add(data.len()) > SSH_HOME_MAX_BYTES {
-                                log::warn!(
-                                    "SSH home_dir 输出超过 {} bytes，放弃解析",
-                                    SSH_HOME_MAX_BYTES
-                                );
-                                let _ = exec_chan.close().await;
-                                return None;
-                            }
-                            output.extend_from_slice(data.as_ref());
-                        }
-                        Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
-                            break
-                        }
-                        _ => continue,
-                    }
-                }
-                let _ = exec_chan.close().await;
-                String::from_utf8(output)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            }
-            Err(e) => {
-                log::warn!("打开 SSH exec 通道失败 (home dir): {e}");
-                None
-            }
-        }
-    })
-    .await
-    .unwrap_or_else(|_elapsed| {
-        log::warn!(
-            "SSH home_dir exec 超时（{}s），回退到默认路径",
-            SSH_HOME_QUERY_TIMEOUT.as_secs()
-        );
-        None
-    });
 
     // 3. 打开远端 PTY + shell（共享函数，供 open_channel 复用）
     let handle = Arc::new(handle);
@@ -915,7 +951,6 @@ async fn build_connection_with_config(
         driver: ssh_channel,
         session: handle,
         host_key_fingerprint,
-        home_dir,
     })
 }
 
@@ -983,17 +1018,15 @@ mod tests {
     use super::*;
 
     fn config(auth_method: SshAuthMethod) -> SshConfig {
-        SshConfig {
+        let params = SshConnectionParams {
             host: "example.test".into(),
             port: 22,
             username: "root".into(),
             auth_method,
-            password: Some("secret".into()),
-            private_key: Some("key".into()),
-            passphrase: None,
-            data_mode: "text".into(),
-            file_service_enabled: true,
-            file_service_protocol: "sftp".into(),
+        };
+        match auth_method {
+            SshAuthMethod::Password => SshConfig::password(params, "secret".into()),
+            SshAuthMethod::Key => SshConfig::key(params, "key".into(), None),
         }
     }
 
@@ -1018,17 +1051,21 @@ mod tests {
 
     #[test]
     fn config_validation_rejects_missing_credentials_and_invalid_port() {
-        let mut password = config(SshAuthMethod::Password);
-        password.password = None;
+        let params = SshConnectionParams {
+            host: "example.test".into(),
+            port: 22,
+            username: "root".into(),
+            auth_method: SshAuthMethod::Password,
+        };
+        let empty_password = SshConfig::password(params.clone(), String::new());
         assert!(matches!(
-            password.validate(),
+            empty_password.validate(),
             Err(SessionError::InvalidParameter(_))
         ));
 
-        let mut key = config(SshAuthMethod::Key);
-        key.private_key = None;
+        let empty_key = SshConfig::key(params, String::new(), None);
         assert!(matches!(
-            key.validate(),
+            empty_key.validate(),
             Err(SessionError::InvalidParameter(_))
         ));
 
@@ -1045,6 +1082,23 @@ mod tests {
         let config = config(SshAuthMethod::Password);
         let debug = format!("{config:?}");
         assert!(!debug.contains("secret"));
-        assert_eq!(debug.matches("<redacted>").count(), 2);
+        assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn pinned_russh_defaults_exclude_sha1_transport_algorithms() {
+        let preferred = russh::client::Config::default().preferred;
+        assert!(preferred
+            .kex
+            .iter()
+            .all(|algorithm| !algorithm.as_ref().contains("sha1")));
+        assert!(preferred
+            .mac
+            .iter()
+            .all(|algorithm| !algorithm.as_ref().contains("sha1")));
+        assert!(preferred
+            .key
+            .iter()
+            .all(|algorithm| algorithm.to_string() != "ssh-rsa"));
     }
 }
