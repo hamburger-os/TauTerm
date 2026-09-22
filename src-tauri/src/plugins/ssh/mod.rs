@@ -552,9 +552,9 @@ impl HostKeyVerifier {
                 &pending.algorithm,
                 &pending.fingerprint,
             );
-            let still_valid = match current {
-                HostTrustDecision::Trusted => true,
-                HostTrustDecision::FirstSeen => pending.reason == "first_seen",
+            let (still_valid, already_trusted) = match current {
+                HostTrustDecision::Trusted => (true, true),
+                HostTrustDecision::FirstSeen => (pending.reason == "first_seen", false),
                 HostTrustDecision::AdditionalKey {
                     mut known_algorithms,
                 } => {
@@ -563,9 +563,14 @@ impl HostKeyVerifier {
                     known_algorithms.dedup();
                     expected.sort();
                     expected.dedup();
-                    pending.reason == "additional_key" && known_algorithms == expected
+                    (
+                        pending.reason == "additional_key" && known_algorithms == expected,
+                        false,
+                    )
                 }
-                HostTrustDecision::Changed { .. } | HostTrustDecision::Unavailable { .. } => false,
+                HostTrustDecision::Changed { .. } | HostTrustDecision::Unavailable { .. } => {
+                    (false, false)
+                }
             };
             if !still_valid {
                 let _ = pending.response.send(false);
@@ -574,15 +579,7 @@ impl HostKeyVerifier {
                 );
             }
 
-            if !matches!(
-                self.known_hosts.evaluate(
-                    &pending.host,
-                    pending.port,
-                    &pending.algorithm,
-                    &pending.fingerprint,
-                ),
-                HostTrustDecision::Trusted
-            ) {
+            if !already_trusted {
                 if let Err(error) = self.known_hosts.trust(
                     &pending.host,
                     pending.port,
