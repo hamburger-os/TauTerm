@@ -359,7 +359,7 @@ impl SshAdapter {
     }
 
     pub fn forget_known_host(&self, host: &str, port: u16) -> Result<bool, String> {
-        self.host_key_verifier.known_hosts.forget(host, port)
+        self.host_key_verifier.forget_known_host(host, port)
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
@@ -428,6 +428,7 @@ struct PendingHostKeyChange {
 struct HostKeyVerifier {
     pending: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
     pending_changes: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyChange>>,
+    trust_actions: std::sync::Mutex<()>,
     known_hosts: KnownHostStore,
 }
 
@@ -436,6 +437,7 @@ impl HostKeyVerifier {
         Self {
             pending: std::sync::Mutex::new(std::collections::HashMap::new()),
             pending_changes: std::sync::Mutex::new(std::collections::HashMap::new()),
+            trust_actions: std::sync::Mutex::new(()),
             known_hosts: KnownHostStore::new(),
         }
     }
@@ -445,6 +447,10 @@ impl HostKeyVerifier {
     }
 
     fn reset_known_hosts(&self) -> Result<(), String> {
+        let _trust_action = self
+            .trust_actions
+            .lock()
+            .map_err(|_| "SSH 主机信任操作锁错误".to_string())?;
         let pending = self
             .pending
             .lock()
@@ -460,6 +466,14 @@ impl HostKeyVerifier {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
         self.known_hosts.reset()
+    }
+
+    fn forget_known_host(&self, host: &str, port: u16) -> Result<bool, String> {
+        let _trust_action = self
+            .trust_actions
+            .lock()
+            .map_err(|_| "SSH 主机信任操作锁错误".to_string())?;
+        self.known_hosts.forget(host, port)
     }
 
     fn evaluate(
@@ -528,6 +542,10 @@ impl HostKeyVerifier {
         };
 
         if accept {
+            let _trust_action = self
+                .trust_actions
+                .lock()
+                .map_err(|_| "SSH 主机信任操作锁错误".to_string())?;
             let current = self.known_hosts.evaluate(
                 &pending.host,
                 pending.port,
@@ -632,6 +650,10 @@ impl HostKeyVerifier {
             return Ok(false);
         }
         if accept {
+            let _trust_action = self
+                .trust_actions
+                .lock()
+                .map_err(|_| "SSH 主机信任操作锁错误".to_string())?;
             self.known_hosts.replace_if_matches(
                 &pending.host,
                 pending.port,
