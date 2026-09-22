@@ -14,6 +14,7 @@ import type { ContextMenuItem } from "../common/ContextMenu";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
 import ScrollToBottomButton from "./ScrollToBottomButton";
 import PasteSafetyDialog from "./PasteSafetyDialog";
+import { mountXtermHost, type XtermHostLifecycle } from "./xtermHostLifecycle";
 import styles from "./Terminal.module.css";
 
 /** 视口底部容差行数：视口底边与缓冲区底部的间距小于此值即视为"在底部" */
@@ -179,8 +180,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const fitRafRef = useRef<number | null>(null);
+  const hostLifecycleRef = useRef<XtermHostLifecycle | null>(null);
   // PTY resize 防抖定时器：避免拖拽 resize 时 IPC 风暴
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 使用 ref 持有最新的回调，避免初始化 effect 中的闭包过期问题
@@ -295,40 +295,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }, RESIZE_DEBOUNCE_MS);
   }, [sessionId]);
 
-  /**
-   * 所有 xterm fit 统一经过一个 RAF 调度器。
-   *
-   * xterm.open()/FitAddon 需要一个仍在文档中、且已经具有可测量尺寸的宿主。
-   * Pane 显隐、拖拽、字体变化和外部 imperative fit 都只请求一次调度，避免
-   * ResizeObserver 与 React cleanup 交叉时继续触碰已销毁的 renderer dimensions。
-   */
+  /** 所有 xterm fit 都由共享 host lifecycle 合并并做 dispose 保护。 */
   const scheduleFit = useCallback(() => {
-    if (fitRafRef.current !== null) {
-      cancelAnimationFrame(fitRafRef.current);
-    }
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = null;
-      const container = containerRef.current;
-      const term = xtermRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (
-        !container ||
-        !container.isConnected ||
-        container.clientWidth <= 0 ||
-        container.clientHeight <= 0 ||
-        !term ||
-        !fitAddon
-      ) {
-        return;
-      }
-      try {
-        fitAddon.fit();
-      } catch {
-        return;
-      }
-      notifyResize();
-    });
-  }, [notifyResize]);
+    hostLifecycleRef.current?.scheduleFit();
+  }, []);
 
   // 暴露 xterm 实例和 write 方法
   useImperativeHandle(ref, () => ({
@@ -344,166 +314,108 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     },
   }), [scheduleFit]);
 
-  // 初始化 xterm.js。实际 open 延迟到下一帧并要求宿主已有非零尺寸：
-  // - React StrictMode 的开发期 mount→cleanup→mount 探测会在首个 RAF 前取消第一次初始化；
-  // - 隐藏 Pane 不会以 0×0 尺寸创建 renderer，而是由 bootstrap observer 等待可见布局。
+  // 共享 xterm host lifecycle 统一负责可测量后 open、RAF fit 合并与 dispose 顺序。
+  // 终端业务事件仍由本组件持有，避免把 PTY/剪贴板语义耦合进通用宿主。
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || xtermRef.current) return;
+    if (!container || hostLifecycleRef.current) return;
 
-    let disposed = false;
-    let initRaf: number | null = null;
-    let bootstrapObserver: ResizeObserver | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let term: XTerm | null = null;
-    let fitAddon: FitAddon | null = null;
     let inputDisposable: { dispose(): void } | null = null;
     let scrollDisposable: { dispose(): void } | null = null;
+    let opened = false;
 
-    const initialize = () => {
-      initRaf = null;
-      if (
-        disposed ||
-        xtermRef.current ||
-        !container.isConnected ||
-        container.clientWidth <= 0 ||
-        container.clientHeight <= 0
-      ) {
-        return;
-      }
+    const lifecycle = mountXtermHost(container, {
+      create: () => {
+        const nextTerm = new XTerm({
+          convertEol: true,
+          fontSize: fontSizeRef.current ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
+          fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
+          theme: terminalThemeRef.current,
+          allowTransparency: true,
+          cursorBlink: true,
+          cursorStyle: "underline",
+          allowProposedApi: true,
+          scrollback: bufferLinesRef.current ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
+          cols: 80,
+          rows: 24,
+        });
+        const fitAddon = new FitAddon();
+        nextTerm.loadAddon(fitAddon);
+        nextTerm.loadAddon(new WebLinksAddon());
 
-      const nextTerm = new XTerm({
-        convertEol: true,
-        fontSize: fontSizeRef.current ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
-        fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
-        theme: terminalThemeRef.current,
-        // xterm strips background alpha unless allowTransparency is enabled.
-        // The terminal should reveal TauTerm's stable content surface, never the raw window.
-        allowTransparency: true,
-        cursorBlink: true,
-        cursorStyle: "underline", // 下划线光标：不遮挡字符内容，串口/TUI 场景可读性优于 bar/block
-        allowProposedApi: true,
-        scrollback: bufferLinesRef.current ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
-        cols: 80,
-        rows: 24,
-      });
-      const nextFitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon();
-      nextTerm.loadAddon(nextFitAddon);
-      nextTerm.loadAddon(webLinksAddon);
+        nextTerm.attachCustomKeyEventHandler((e) => {
+          const isKeyDown = e.type === "keydown";
+          const lowerKey = e.key.toLowerCase();
+          const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
+          const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
+          const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
+          const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
 
-      // 拦截终端内键盘事件：可配置 action 穿透到全局 Shortcut Registry；
-      // 兼容剪贴板别名由终端宿主直接处理，其余按键（特别是 Ctrl+C / Ctrl+V）
-      // 保持原始终端语义并继续送往 PTY。
-      nextTerm.attachCustomKeyEventHandler((e) => {
-        const isKeyDown = e.type === "keydown";
-        const lowerKey = e.key.toLowerCase();
+          if (compatibilityCopy || macCopy) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (isKeyDown) copySelectionRef.current();
+            return false;
+          }
+          if (compatibilityPaste || macPaste) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (isKeyDown) void requestClipboardPasteRef.current();
+            return false;
+          }
 
-        // Ctrl+Insert / Shift+Insert：传统终端兼容别名。
-        const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
-        const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
-        // Meta+C / Meta+V：使用 Meta 修饰键的平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
-        const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
-        const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
+          const matched = shortcutRegistry.match(e);
+          if (matched) return false;
+          return true;
+        });
 
-        if (compatibilityCopy || macCopy) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (isKeyDown) copySelectionRef.current();
-          return false;
-        }
-        if (compatibilityPaste || macPaste) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (isKeyDown) void requestClipboardPasteRef.current();
-          return false;
-        }
+        return {
+          terminal: nextTerm,
+          fitAddon,
+          onOpened: () => {
+            opened = true;
+            xtermRef.current = nextTerm;
 
-        const matched = shortcutRegistry.match(e);
-        if (matched) return false; // 穿透 → document keydown → useKeyboard hook
-        return true;               // xterm 正常处理（→ onData → PTY）
-      });
+            inputDisposable = nextTerm.onData((data) => {
+              onDataRef.current?.(data);
+            });
+            scrollDisposable = nextTerm.onScroll((viewportY: number) => {
+              const buffer = nextTerm.buffer.active;
+              const viewportBottom = viewportY + nextTerm.rows;
+              setIsAtBottom(viewportBottom >= buffer.baseY - SCROLL_BOTTOM_TOLERANCE);
+            });
 
-      nextTerm.open(container);
-      if (disposed) {
-        nextTerm.dispose();
-        return;
-      }
-
-      term = nextTerm;
-      fitAddon = nextFitAddon;
-      xtermRef.current = nextTerm;
-      fitAddonRef.current = nextFitAddon;
-
-      // 必须先订阅 xterm 输入，再向父层暴露 write。
-      // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；某些本地 Shell
-      // 启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
-      // 注册，xterm 生成的 ESC[row;colR 响应会被丢掉，表现为“连接成功但终端空白、回车无反应”。
-      inputDisposable = nextTerm.onData((data) => {
-        onDataRef.current?.(data);
-      });
-      scrollDisposable = nextTerm.onScroll((viewportY: number) => {
-        const buffer = nextTerm.buffer.active;
-        const viewportBottom = viewportY + nextTerm.rows;
-        setIsAtBottom(viewportBottom >= buffer.baseY - SCROLL_BOTTOM_TOLERANCE);
-      });
-
-      // 终端初始化完成后立即注册写函数，不依赖外部重渲染触发。
-      // write closure 也受当前实例身份保护，cleanup 后不会写入已销毁 term。
-      onTermReadyRef.current?.((data: Uint8Array | string) => {
-        if (!disposed && xtermRef.current === nextTerm) {
-          nextTerm.write(data);
-        }
-      });
-
-      resizeObserver = new ResizeObserver(scheduleFit);
-      resizeObserver.observe(container);
-      bootstrapObserver?.disconnect();
-      bootstrapObserver = null;
-      scheduleFit();
-    };
-
-    const scheduleInitialize = () => {
-      if (disposed || initRaf !== null || xtermRef.current) return;
-      initRaf = requestAnimationFrame(initialize);
-    };
-
-    bootstrapObserver = new ResizeObserver(scheduleInitialize);
-    bootstrapObserver.observe(container);
-    scheduleInitialize();
+            // Input must be subscribed before startup data is replayed. Shells may answer DSR
+            // immediately while that replay is being parsed.
+            onTermReadyRef.current?.((data: Uint8Array | string) => {
+              if (xtermRef.current === nextTerm) nextTerm.write(data);
+            });
+          },
+          onDispose: () => {
+            inputDisposable?.dispose();
+            scrollDisposable?.dispose();
+            inputDisposable = null;
+            scrollDisposable = null;
+            if (resizeTimerRef.current) {
+              clearTimeout(resizeTimerRef.current);
+              resizeTimerRef.current = null;
+            }
+            if (xtermRef.current === nextTerm) xtermRef.current = null;
+            if (opened) onCleanupRef.current?.(sessionId);
+          },
+        };
+      },
+      onFit: () => notifyResize(),
+    });
+    hostLifecycleRef.current = lifecycle;
 
     return () => {
-      disposed = true;
-      bootstrapObserver?.disconnect();
-      resizeObserver?.disconnect();
-      if (initRaf !== null) {
-        cancelAnimationFrame(initRaf);
-        initRaf = null;
+      if (hostLifecycleRef.current === lifecycle) {
+        hostLifecycleRef.current = null;
       }
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current);
-        fitRafRef.current = null;
-      }
-      inputDisposable?.dispose();
-      scrollDisposable?.dispose();
-      if (resizeTimerRef.current) {
-        clearTimeout(resizeTimerRef.current);
-        resizeTimerRef.current = null;
-      }
-      if (xtermRef.current === term) {
-        xtermRef.current = null;
-      }
-      if (fitAddonRef.current === fitAddon) {
-        fitAddonRef.current = null;
-      }
-      if (term) {
-        term.dispose();
-        // React StrictMode 会执行一次没有真正初始化 xterm 的探测性 cleanup。
-        // 只有真实实例卸载才通知父层，避免误删仍在等待回放的 startup buffer。
-        onCleanupRef.current?.(sessionId);
-      }
+      lifecycle.dispose();
     };
-  }, []);
+  }, [notifyResize, sessionId]);
 
   // 主题变化时动态更新终端配色，无需销毁重建
   useEffect(() => {
