@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import Icon from "../../common/Icon";
 import GlassButton from "../../common/GlassButton";
+import ConfirmDialog from "../../common/ConfirmDialog";
 import settingsStyles from "../SettingsPage.module.css";
 import styles from "./SecuritySettings.module.css";
 
@@ -12,6 +13,20 @@ interface SecurityStatus {
   fallback_configured: boolean;
   fallback_unlocked: boolean;
 }
+
+interface KnownHostKeyRecord {
+  algorithm: string;
+  fingerprint: string;
+  first_seen_ms: number;
+  last_seen_ms: number;
+}
+
+interface KnownHostRecord {
+  host: string;
+  port: number;
+  keys: KnownHostKeyRecord[];
+}
+
 
 type ViewState = "loading" | "error" | "ready" | "busy";
 type FeedbackTone = "success" | "error";
@@ -35,6 +50,195 @@ function getBackendLabel(backend: string, t: (key: string) => string): string {
     default:
       return t("settings.securityBackendUnknown");
   }
+}
+
+function formatTrustEndpoint(host: string, port: number): string {
+  const displayHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${displayHost}:${port}`;
+}
+
+function TrustedHostManager() {
+  const { t } = useTranslation();
+  const [hosts, setHosts] = useState<KnownHostRecord[]>([]);
+  const [state, setState] = useState<"loading" | "ready" | "error" | "busy">("loading");
+  const [error, setError] = useState("");
+  const [confirmation, setConfirmation] = useState<
+    | { kind: "forget"; host: string; port: number }
+    | { kind: "reset" }
+    | null
+  >(null);
+  const mountedRef = useRef(true);
+  const requestRef = useRef(0);
+
+  const refreshHosts = useCallback(async (keepBusy = false) => {
+    const request = ++requestRef.current;
+    const isCurrent = () => mountedRef.current && requestRef.current === request;
+    if (!keepBusy) setState("loading");
+    setError("");
+
+    try {
+      const next = await invoke<KnownHostRecord[]>("list_ssh_known_hosts");
+      if (!isCurrent()) return false;
+      setHosts(next);
+      if (!keepBusy) setState("ready");
+      return true;
+    } catch (invokeError) {
+      if (!isCurrent()) return false;
+      setHosts([]);
+      setError(String(invokeError));
+      if (!keepBusy) setState("error");
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void refreshHosts();
+    return () => {
+      mountedRef.current = false;
+      ++requestRef.current;
+    };
+  }, [refreshHosts]);
+
+  const settleConfirmation = useCallback(async (accepted: boolean) => {
+    const current = confirmation;
+    if (!current) return;
+    setConfirmation(null);
+    if (!accepted) return;
+
+    ++requestRef.current;
+    setState("busy");
+    setError("");
+    try {
+      if (current.kind === "forget") {
+        await invoke("forget_ssh_known_host", {
+          host: current.host,
+          port: current.port,
+        });
+      } else {
+        await invoke("reset_ssh_known_hosts");
+      }
+      if (!mountedRef.current) return;
+      await refreshHosts(true);
+      if (mountedRef.current) setState("ready");
+    } catch (invokeError) {
+      if (!mountedRef.current) return;
+      setError(String(invokeError));
+      setState("error");
+    }
+  }, [confirmation, refreshHosts]);
+
+  const confirmationTitle = confirmation?.kind === "forget"
+    ? t("settings.securitySshForgetTitle")
+    : t("settings.securitySshResetTitle");
+  const confirmationMessage = confirmation?.kind === "forget"
+    ? t("settings.securitySshForgetPrompt", {
+        endpoint: formatTrustEndpoint(confirmation.host, confirmation.port),
+      })
+    : t("settings.securitySshResetPrompt");
+
+  return (
+    <section className={styles.trustSection} aria-busy={state === "loading" || state === "busy"}>
+      <div className={styles.trustHeader}>
+        <div>
+          <h4 className={settingsStyles.categoryTitle}>{t("settings.securitySshTrustTitle")}</h4>
+          <p className={settingsStyles.settingDesc}>{t("settings.securitySshTrustDesc")}</p>
+        </div>
+        <div className={styles.trustActions}>
+          <GlassButton
+            variant="secondary"
+            size="sm"
+            type="button"
+            disabled={state === "loading" || state === "busy"}
+            onClick={() => void refreshHosts()}
+          >
+            <Icon name="refresh" size="sm" />
+            {t("settings.securityRefresh")}
+          </GlassButton>
+          <GlassButton
+            variant="danger"
+            size="sm"
+            type="button"
+            disabled={state === "loading" || state === "busy"}
+            onClick={() => setConfirmation({ kind: "reset" })}
+          >
+            {t("settings.securitySshReset")}
+          </GlassButton>
+        </div>
+      </div>
+
+      {state === "loading" && (
+        <p className={styles.trustStatus} role="status">
+          {t("settings.securitySshTrustLoading")}
+        </p>
+      )}
+      {state === "busy" && (
+        <p className={styles.trustStatus} role="status">
+          {t("settings.securitySshTrustBusy")}
+        </p>
+      )}
+      {error && (
+        <p className={styles.trustError} role="alert">
+          {t("settings.securitySshTrustUnavailable", { error })}
+        </p>
+      )}
+
+      {state === "ready" && hosts.length === 0 && (
+        <p className={styles.trustEmpty}>{t("settings.securitySshTrustEmpty")}</p>
+      )}
+
+      {hosts.length > 0 && (
+        <div className={styles.trustList}>
+          {hosts.map((host) => (
+            <div className={styles.trustItem} key={`${host.host}|${host.port}`}>
+              <div className={styles.trustItemBody}>
+                <div className={styles.trustEndpoint}>
+                  {formatTrustEndpoint(host.host, host.port)}
+                </div>
+                <div className={styles.trustKeys}>
+                  {host.keys.map((key) => (
+                    <div
+                      className={styles.trustKey}
+                      key={`${key.algorithm}|${key.fingerprint}`}
+                    >
+                      <span className={styles.trustAlgorithm}>{key.algorithm}</span>
+                      <span className={styles.trustFingerprint}>{key.fingerprint}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <GlassButton
+                variant="ghost"
+                size="sm"
+                type="button"
+                iconOnly
+                disabled={state === "busy"}
+                aria-label={t("settings.securitySshForget")}
+                title={t("settings.securitySshForget")}
+                onClick={() => setConfirmation({
+                  kind: "forget",
+                  host: host.host,
+                  port: host.port,
+                })}
+              >
+                <Icon name="trash" size="sm" />
+              </GlassButton>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmationTitle}
+        message={confirmationMessage}
+        intent="danger"
+        busy={state === "busy"}
+        onConfirm={() => void settleConfirmation(true)}
+        onCancel={() => void settleConfirmation(false)}
+      />
+    </section>
+  );
 }
 
 export default function SecuritySettings() {
@@ -273,6 +477,8 @@ export default function SecuritySettings() {
           </div>
         </div>
       )}
+
+      <TrustedHostManager />
     </div>
   );
 }
