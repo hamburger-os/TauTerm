@@ -346,7 +346,8 @@ impl SshAdapter {
         request_id: &str,
         accepted: bool,
     ) -> Result<bool, String> {
-        self.host_key_verifier.respond_to_change(request_id, accepted)
+        self.host_key_verifier
+            .respond_to_change(request_id, accepted)
     }
 
     pub fn reset_known_hosts(&self) -> Result<(), String> {
@@ -370,10 +371,7 @@ impl SshAdapter {
         config.validate()?;
         let result =
             build_connection_with_config(config, app_handle, &self.host_key_verifier).await?;
-        let shared = Arc::new(SshRuntime::new(
-            result.session,
-            result.host_key_fingerprint,
-        ));
+        let shared = Arc::new(SshRuntime::new(result.session, result.host_key_fingerprint));
         let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
         let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
             shared.session.clone(),
@@ -512,20 +510,16 @@ impl HostKeyVerifier {
         Ok(true)
     }
 
-    fn register_change(
-        &self,
-        host: &str,
-        port: u16,
-        algorithm: &str,
-        fingerprint: &str,
-    ) -> String {
+    fn register_change(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) -> String {
         let request_id = uuid::Uuid::new_v4().to_string();
         let now = std::time::Instant::now();
         let mut pending = self
             .pending_changes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        pending.retain(|_, change| now.duration_since(change.created_at) < HOST_KEY_USER_DECISION_TIMEOUT);
+        pending.retain(|_, change| {
+            now.duration_since(change.created_at) < HOST_KEY_USER_DECISION_TIMEOUT
+        });
         pending.insert(
             request_id.clone(),
             PendingHostKeyChange {
@@ -957,12 +951,11 @@ async fn build_connection_with_config(
             private_key,
             passphrase,
         } => {
-            let mut key_pair =
-                russh::keys::PrivateKey::from_openssh(private_key).map_err(|e| {
-                    SessionError::AuthFailed {
-                        reason: format!("私钥解析失败: {e}"),
-                    }
-                })?;
+            let mut key_pair = russh::keys::PrivateKey::from_openssh(private_key).map_err(|e| {
+                SessionError::AuthFailed {
+                    reason: format!("私钥解析失败: {e}"),
+                }
+            })?;
             if key_pair.is_encrypted() {
                 let pass = passphrase.as_deref().unwrap_or("");
                 if pass.is_empty() {
@@ -1079,7 +1072,6 @@ impl ProtocolAdapter for SshAdapter {
             capability: "ssh_trusted_connection".into(),
         })
     }
-
 }
 
 #[cfg(test)]
