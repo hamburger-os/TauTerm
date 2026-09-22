@@ -55,16 +55,29 @@
 
 .integrityWarning {
   flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
   padding: 6px var(--spacing-md);
   color: var(--color-warning);
   border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 32%, transparent);
   font-size: var(--text-xs);
 }
 
+.integrityDetails {
+  min-width: 0;
+  color: color-mix(in srgb, var(--color-warning) 78%, var(--text-muted));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
 .metrics {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-bottom: 1px solid var(--content-divider);
 }
 
@@ -224,7 +237,8 @@
 }
 
 @container session-pane (max-width: 520px) {
-  .traceToolbar {
+  .traceToolbar,
+  .integrityWarning {
     flex-direction: column;
     align-items: stretch;
   }
