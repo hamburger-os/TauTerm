@@ -917,6 +917,7 @@ fn run_decoder(
     let mut last_flush = Instant::now();
     let mut last_snapshot = Instant::now();
     let mut metadata_retry = MetadataRetryCoordinator::default();
+    let mut last_published_target_loss_active = false;
     let mut changed = true;
 
     while !stopping.load(Ordering::Acquire) {
@@ -966,15 +967,23 @@ fn run_decoder(
         if last_flush.elapsed() >= PRESENTATION_FLUSH_INTERVAL && !pending.is_empty() {
             let events = pending.drain(..).collect::<Vec<_>>();
             let snapshot = shared.snapshot();
+            last_published_target_loss_active = snapshot.target_drop_rate_per_sec > 0;
             presenter(SystemViewPresentation::Batch { events, snapshot });
             last_flush = Instant::now();
             last_snapshot = Instant::now();
             changed = false;
-        } else if changed && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
-            let snapshot = shared.snapshot();
-            presenter(SystemViewPresentation::Snapshot { snapshot });
-            last_snapshot = Instant::now();
-            changed = false;
+        } else {
+            let target_loss_active = metadata_snapshot.target_drop_rate_per_sec > 0;
+            let health_needs_publish =
+                target_loss_active || last_published_target_loss_active != target_loss_active;
+            if (changed || health_needs_publish) && last_snapshot.elapsed() >= SNAPSHOT_INTERVAL {
+                last_published_target_loss_active = target_loss_active;
+                presenter(SystemViewPresentation::Snapshot {
+                    snapshot: metadata_snapshot,
+                });
+                last_snapshot = Instant::now();
+                changed = false;
+            }
         }
     }
 
