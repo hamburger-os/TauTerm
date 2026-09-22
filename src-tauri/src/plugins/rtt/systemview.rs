@@ -1518,6 +1518,101 @@ mod tests {
     }
 
     #[test]
+    fn metadata_retry_resets_after_task_metadata_progress() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+
+        let mut retry = MetadataRetryCoordinator::default();
+        let start = Instant::now();
+        let snapshot = state.snapshot(0);
+        assert!(!retry.update(&snapshot, start));
+        assert!(retry.update(
+            &snapshot,
+            start + Duration::from_millis(METADATA_RETRY_DELAYS_MS[0])
+        ));
+        retry.mark_dispatched(start + Duration::from_millis(METADATA_RETRY_DELAYS_MS[0]));
+        assert_eq!(retry.attempts, 1);
+
+        state.apply(ParsedPacket {
+            event_id: 9,
+            fields: vec![2, 5],
+            text: Some("worker".to_string()),
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        assert!(!retry.update(
+            &state.snapshot(0),
+            start + Duration::from_secs(1)
+        ));
+        assert_eq!(retry.attempts, 0);
+        assert!(retry.unknown_tasks.is_empty());
+
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![3],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        assert!(!retry.update(
+            &state.snapshot(0),
+            start + Duration::from_secs(2)
+        ));
+        assert_eq!(retry.attempts, 0);
+        assert_eq!(retry.unknown_tasks, vec![3]);
+    }
+
+    #[test]
+    fn task_create_resets_state_after_terminated_id_is_reused() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply(ParsedPacket {
+            event_id: 9,
+            fields: vec![2, 5],
+            text: Some("old-worker".to_string()),
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 4,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 10,
+            sync_boundary: false,
+        });
+        state.apply(ParsedPacket {
+            event_id: 29,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 20,
+            sync_boundary: false,
+        });
+        let before_reuse = state.snapshot(0);
+        assert_eq!(before_reuse.tasks[0].runtime_cycles, 20);
+        assert_eq!(before_reuse.tasks[0].name.as_deref(), Some("old-worker"));
+
+        state.apply(ParsedPacket {
+            event_id: 8,
+            fields: vec![2],
+            text: None,
+            delta_cycles: 1,
+            sync_boundary: false,
+        });
+        let after_reuse = state.snapshot(0);
+        assert_eq!(after_reuse.tasks.len(), 1);
+        assert_eq!(after_reuse.tasks[0].id, 2);
+        assert_eq!(after_reuse.tasks[0].runtime_cycles, 0);
+        assert_eq!(after_reuse.tasks[0].switches, 0);
+        assert!(after_reuse.tasks[0].name.is_none());
+        assert!(after_reuse.tasks[0].priority.is_none());
+    }
+
+    #[test]
     fn sync_starts_a_new_delta_epoch_without_inventing_absolute_time() {
         let mut decoder = SystemViewDecoder::default();
         let mut state = TraceState::new(7, 1, true);
