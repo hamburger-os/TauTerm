@@ -52,32 +52,45 @@ if (releaseAssembler.includes('["windows-x86_64",')) {
   fail("release manifest must not publish a generic Windows compatibility target.");
 }
 
-const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
+const xtermLifecycle = fs.readFileSync("src/components/Terminal/xtermLifecycle.ts", "utf8");
 for (const required of [
-  "const scheduleFit = useCallback",
-  "container.isConnected",
-  "container.clientWidth <= 0",
-  "container.clientHeight <= 0",
+  "host.isConnected",
+  "host.clientWidth > 0",
+  "host.clientHeight > 0",
   "const scheduleInitialize = () =>",
   "bootstrapObserver = new ResizeObserver(scheduleInitialize)",
   "resizeObserver = new ResizeObserver(scheduleFit)",
-  "cancelAnimationFrame(fitRafRef.current)",
-  "if (term) {",
+  "cancelAnimationFrame(fitRaf)",
+  "openCleanup?.()",
+  "bundle?.terminal.dispose()",
+]) {
+  if (!xtermLifecycle.includes(required)) fail("Shared xterm lifecycle contract missing " + required);
+}
+const lifecycleFitCalls = xtermLifecycle.match(/\.fitAddon\.fit\(\)/g) ?? [];
+if (lifecycleFitCalls.length !== 1) {
+  fail("Shared xterm lifecycle must own the single guarded FitAddon.fit path.");
+}
+
+const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
+for (const required of [
+  "createManagedXTermHost",
+  "xtermLayoutRef.current?.scheduleFit()",
+  "onFit: notifyResize",
+  "if (opened) {",
   "onCleanupRef.current?.(sessionId)",
 ]) {
-  if (!terminal.includes(required)) fail("Terminal lifecycle contract missing " + required);
+  if (!terminal.includes(required)) fail("Terminal lifecycle integration missing " + required);
 }
-const fitCalls = terminal.match(/\bfitAddon\.fit\(\)|\bnextFitAddon\.fit\(\)|fitAddonRef\.current\?\.fit\(\)/g) ?? [];
-if (fitCalls.length !== 1 || !terminal.includes("fitAddon.fit();")) {
-  fail("Terminal must route every fit through the single guarded scheduleFit path.");
+if (/\.open\s*\(|\.fit\s*\(/.test(terminal)) {
+  fail("Terminal must not bypass the shared xterm lifecycle with direct open/fit calls.");
 }
-if (terminal.includes("term.open(containerRef.current);\n    fitAddon.fit();")) {
-  fail("Terminal must not synchronously open and fit during React effect setup.");
+
+const rttTerminal = fs.readFileSync("src/plugins/rtt/RttTerminalView.tsx", "utf8");
+if (!rttTerminal.includes("createManagedXTermHost")) {
+  fail("RTT Terminal must reuse the shared xterm lifecycle.");
 }
-const strictCleanup = terminal.indexOf("if (term) {");
-const cleanupCallback = terminal.indexOf("onCleanupRef.current?.(sessionId)", strictCleanup);
-if (strictCleanup < 0 || cleanupCallback < strictCleanup) {
-  fail("Terminal parent cleanup must only run after a real xterm instance existed.");
+if (/\.open\s*\(|\.fit\s*\(/.test(rttTerminal)) {
+  fail("RTT Terminal must not bypass the shared xterm lifecycle with direct open/fit calls.");
 }
 
 const windowsDriver = fs.readFileSync("src-tauri/src/virtual_port/windows_driver.rs", "utf8");
