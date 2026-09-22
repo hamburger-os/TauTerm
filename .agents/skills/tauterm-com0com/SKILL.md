@@ -2,6 +2,7 @@
 name: tauterm-com0com
 description: "TauTerm Windows com0com virtual-port architecture and maintenance reference. Use for com0com, setupc.exe, virtual COM pairs, TauTermService, driver install/uninstall, endpoint ownership, orphan recovery, COM allocation, CNCA/CNCB, privilege/service failures, and related Chinese queries such as 虚拟串口、端口对、驱动安装、残留端口、权限不足。"
 license: MIT
+compatibility: "Windows-only; privileged setupc operations require TauTermService or an explicit administrative maintenance context."
 metadata:
   author: tauterm
   version: "3.4"
