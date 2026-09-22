@@ -287,6 +287,14 @@ impl TraceState {
     }
 
     fn apply(&mut self, packet: ParsedPacket) -> SystemViewEvent {
+        self.apply_with_loss_tracking(packet, true)
+    }
+
+    fn apply_with_loss_tracking(
+        &mut self,
+        packet: ParsedPacket,
+        track_target_loss_rate: bool,
+    ) -> SystemViewEvent {
         let previous_target_cycles = self.last_target_cycles;
         if packet.sync_boundary {
             // SEGGER resets LastTxTimeStamp before emitting the sync/start sequence. The first
@@ -319,20 +327,22 @@ impl TraceState {
                 self.target_overflow_packets = self.target_overflow_packets.saturating_add(1);
                 let dropped = packet.fields.first().copied().unwrap_or_default() as u64;
                 self.target_dropped_events = self.target_dropped_events.saturating_add(dropped);
-                let now = Instant::now();
-                if let Some((started_at, bucket_drops)) = self.target_drop_samples.back_mut() {
-                    if now.saturating_duration_since(*started_at) < TARGET_DROP_RATE_BUCKET {
-                        *bucket_drops = bucket_drops.saturating_add(dropped);
+                if track_target_loss_rate {
+                    let now = Instant::now();
+                    if let Some((started_at, bucket_drops)) = self.target_drop_samples.back_mut() {
+                        if now.saturating_duration_since(*started_at) < TARGET_DROP_RATE_BUCKET {
+                            *bucket_drops = bucket_drops.saturating_add(dropped);
+                        } else {
+                            self.target_drop_samples.push_back((now, dropped));
+                        }
                     } else {
                         self.target_drop_samples.push_back((now, dropped));
                     }
-                } else {
-                    self.target_drop_samples.push_back((now, dropped));
-                }
-                while self.target_drop_samples.front().is_some_and(|(at, _)| {
-                    now.saturating_duration_since(*at) > TARGET_DROP_RATE_WINDOW
-                }) {
-                    self.target_drop_samples.pop_front();
+                    while self.target_drop_samples.front().is_some_and(|(at, _)| {
+                        now.saturating_duration_since(*at) > TARGET_DROP_RATE_WINDOW
+                    }) {
+                        self.target_drop_samples.pop_front();
+                    }
                 }
                 value = Some(dropped);
             }
@@ -649,7 +659,11 @@ impl SystemViewShared {
         }
     }
 
-    fn ingest(&self, chunk: StoredRttChunk) -> Vec<SystemViewEvent> {
+    fn ingest(
+        &self,
+        chunk: StoredRttChunk,
+        track_target_loss_rate: bool,
+    ) -> Vec<SystemViewEvent> {
         let (packets, errors) = self
             .decoder
             .lock()
@@ -661,7 +675,7 @@ impl SystemViewShared {
         state.decoder_errors = state.decoder_errors.saturating_add(errors);
         packets
             .into_iter()
-            .map(|packet| state.apply(packet))
+            .map(|packet| state.apply_with_loss_tracking(packet, track_target_loss_rate))
             .collect()
     }
 
@@ -912,7 +926,7 @@ fn run_decoder(
         }
         expected_channel_offset =
             Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
-        pending.extend(shared.ingest(chunk));
+        pending.extend(shared.ingest(chunk, false));
         while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
             pending.pop_front();
             shared.record_presentation_drop(1);
@@ -941,7 +955,7 @@ fn run_decoder(
                 }
                 expected_channel_offset =
                     Some(chunk.channel_offset.saturating_add(chunk.data.len() as u64));
-                for event in shared.ingest(chunk) {
+                for event in shared.ingest(chunk, true) {
                     pending.push_back(event);
                 }
                 while pending.len() > MAX_PENDING_PRESENTATION_EVENTS {
@@ -1425,6 +1439,24 @@ mod tests {
         assert_eq!(decoded.fields[1], 72_000_000);
         assert_eq!(decoded.fields[2], 0x2000_0000);
         assert_eq!(decoded.delta_cycles, 3);
+    }
+
+    #[test]
+    fn bootstrap_overflow_does_not_look_like_live_target_loss() {
+        let mut state = TraceState::new(7, 1, true);
+        state.apply_with_loss_tracking(
+            ParsedPacket {
+                event_id: 1,
+                fields: vec![25],
+                text: None,
+                delta_cycles: 1,
+                sync_boundary: false,
+            },
+            false,
+        );
+        let snapshot = state.snapshot(0);
+        assert_eq!(snapshot.target_dropped_events, 25);
+        assert_eq!(snapshot.target_drop_rate_per_sec, 0);
     }
 
     #[test]
