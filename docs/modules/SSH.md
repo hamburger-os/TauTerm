@@ -28,7 +28,7 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 
 SSH 把非敏感连接参数与运行时认证秘密拆开：持久化参数只包含 host / port / username / auth method 与 credential reference，hydrate 后再构造 `SshAuthSecret::Password` 或 `SshAuthSecret::Key`。因此“密码和私钥同时存在”这类无效运行态不能进入协议核心。连接流程直接 move 这份运行时秘密，不为会话名称等展示元数据额外 clone 密码/私钥；秘密对象销毁时主动 zeroize。认证失败仍保留 russh 返回的 `partial_success` 与可继续认证方法信息用于诊断，不能把多阶段认证要求误报成普通密码错误。
 
-RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端提供 `server-sig-algs` 时按协商结果选择 `rsa-sha2-*`；未提供 EXT_INFO 时以 `rsa-sha2-512` 做现代算法 best-effort。服务端若明确只接受旧式 `ssh-rsa`/SHA-1，TauTerm 默认拒绝静默降级。
+RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端提供 `server-sig-algs` 时按协商结果选择 `rsa-sha2-*`；未提供 EXT_INFO 时以 `rsa-sha2-512` 做现代算法 best-effort。服务端若明确只接受旧式 `ssh-rsa`/SHA-1，TauTerm 默认拒绝静默降级。客户端握手配置也显式从 russh 默认集合中移除包含 SHA-1 的 KEX/MAC 与 `ssh-rsa` 主机密钥算法，不把上游默认值变化当作安全策略。
 
 连接目标始终以独立的 host + port 传给 socket resolver，不通过字符串拼接构造网络地址；错误消息和界面展示再单独格式化 endpoint。IPv6 因此使用 `[host]:port` 展示，但 resolver 接收不带方括号的原始 IPv6 host。
 
