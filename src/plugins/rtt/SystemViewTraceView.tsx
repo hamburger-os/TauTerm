@@ -619,7 +619,7 @@ export default function SystemViewTraceView({
         && presentationRecovery?.phase === "ok" && (
           <div className={styles.recoveryNote}>
             {t("rtt.tracePresentationRecovered", {
-              count: formatInteger(presentationRecovery.historical_dropped_events),
+              dropped: formatInteger(presentationRecovery.historical_dropped_events),
             })}
           </div>
         )}
