@@ -34,8 +34,9 @@ mod transport;
 pub mod virtual_port;
 
 #[cfg(windows)]
-pub fn maybe_run_elevated_helper() -> bool {
-    virtual_port::elevated::maybe_run_helper()
+pub fn maybe_run_helper() -> bool {
+    crash_diagnostics::maybe_run_helper()
+        || virtual_port::elevated::maybe_run_helper()
         || plugins::catalog::maybe_run_elevated_shell_helper()
 }
 
