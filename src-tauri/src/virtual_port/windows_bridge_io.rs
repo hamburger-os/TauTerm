@@ -22,9 +22,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE,
     OPEN_EXISTING,
 };
-use windows_sys::Win32::System::IO::{
-    CancelIoEx, GetOverlappedResult, OVERLAPPED,
-};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
     CreateEventW, ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
@@ -61,9 +59,8 @@ impl WindowsBridgeHandle {
         }
         let handle = unsafe { OwnedHandle::from_raw_handle(handle as _) };
 
-        configure_serial(handle.as_raw_handle() as _, baud_rate).map_err(|error| {
-            format!("failed to configure virtual endpoint {name}: {error}")
-        })?;
+        configure_serial(handle.as_raw_handle() as _, baud_rate)
+            .map_err(|error| format!("failed to configure virtual endpoint {name}: {error}"))?;
 
         Ok(Self { handle })
     }
@@ -85,10 +82,8 @@ fn configure_serial(
         }));
     }
 
-    let definition = std::ffi::CString::new(format!(
-        "baud={baud_rate} parity=N data=8 stop=1"
-    ))
-    .map_err(|error| error.to_string())?;
+    let definition = std::ffi::CString::new(format!("baud={baud_rate} parity=N data=8 stop=1"))
+        .map_err(|error| error.to_string())?;
     if unsafe { BuildCommDCBA(definition.as_ptr() as _, &mut dcb) } == 0 {
         return Err(format!("BuildCommDCBA failed (Win32 {})", unsafe {
             GetLastError()
@@ -283,17 +278,13 @@ impl WindowsBridgeIo {
 
         let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
         let wait = unsafe {
-            WaitForMultipleObjects(
-                handles.len() as u32,
-                handles.as_ptr(),
-                0,
-                timeout_ms,
-            )
+            WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, timeout_ms)
         };
         if wait == WAIT_FAILED {
-            return Err(format!("WaitForMultipleObjects failed (Win32 {})", unsafe {
-                GetLastError()
-            }));
+            return Err(format!(
+                "WaitForMultipleObjects failed (Win32 {})",
+                unsafe { GetLastError() }
+            ));
         }
         if wait != WAIT_TIMEOUT
             && (wait < WAIT_OBJECT_0 || wait >= WAIT_OBJECT_0 + handles.len() as u32)
@@ -467,10 +458,9 @@ impl Drop for WindowsBridgeIo {
 fn create_manual_event(kind: &str) -> Result<OwnedHandle, String> {
     let handle = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
     if handle.is_null() {
-        return Err(format!(
-            "CreateEventW({kind}) failed (Win32 {})",
-            unsafe { GetLastError() }
-        ));
+        return Err(format!("CreateEventW({kind}) failed (Win32 {})", unsafe {
+            GetLastError()
+        }));
     }
     Ok(unsafe { OwnedHandle::from_raw_handle(handle as _) })
 }
@@ -499,9 +489,10 @@ fn is_signaled(event: &OwnedHandle) -> Result<bool, String> {
     } else if wait == WAIT_TIMEOUT {
         Ok(false)
     } else {
-        Err(format!("WaitForSingleObject failed/result={wait} (Win32 {})", unsafe {
-            GetLastError()
-        }))
+        Err(format!(
+            "WaitForSingleObject failed/result={wait} (Win32 {})",
+            unsafe { GetLastError() }
+        ))
     }
 }
 
