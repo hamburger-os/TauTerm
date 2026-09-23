@@ -61,13 +61,13 @@ physical egress → actor serial write → internal/external COM
 external COM → actor serial read → SessionIo confirmed write → 物理 COM6
 ```
 
-桥接不挂在 UI `on_data` 回调。物理 → 虚拟方向只有一个**有界 DataPlane subscription pump**，它只负责接收与非阻塞 fan-out，绝不执行可能阻塞的虚拟端口 I/O。DataPlane subscription 支持按消费者指定消息容量并记录明确的 detach reason；VPort 根据串口线速给上游分配有限 burst 窗口，避免 Windows 驱动产生大量小 chunk 时被通用 256-message 默认值误摘除，同时仍有硬上限。每个 external endpoint 独占自己的 Endpoint Actor、单一 bridge handle 与按字节计量的有界 egress backlog；Actor 串行执行 peer presence 检查、物理 → 虚拟写入和虚拟 → 物理读取，禁止通过 `try_clone` 把同一个 Windows COM 资源交给并发 reader/writer worker。一个外部工具停止读取时只能耗尽自己的 endpoint 预算，不能拖慢 DataPlane subscription，也不能阻塞其它虚拟端口。多个 endpoint 共享物理数据块的不可变引用，fan-out 不为每个端口复制整块数据。
+桥接不挂在 UI `on_data` 回调。物理 → 虚拟方向只有一个**有界 DataPlane subscription pump**，它只负责接收与非阻塞 fan-out，绝不执行可能阻塞的虚拟端口 I/O。DataPlane subscription 支持按消费者指定消息容量并记录明确的 detach reason；VPort 根据串口线速给上游分配有限 burst 窗口，避免 Windows 驱动产生大量小 chunk 时被通用 256-message 默认值误摘除，同时仍有硬上限。每个 external endpoint 独占自己的 Endpoint Actor、单一 bridge handle 与按字节计量的有界 egress backlog；Windows bridge handle 直接以 `FILE_FLAG_OVERLAPPED` 打开，Actor 通过 `WaitCommEvent(EV_DSR | EV_ERR | EV_RXCHAR)` 接收 peer/RX/线路错误事件，并用独立 `OVERLAPPED` 执行 `ReadFile` / `WriteFile`。同一个 Windows COM 资源不会被 `try_clone` 给并发 reader/writer worker。一个外部工具停止读取时只能耗尽自己的 endpoint 预算，不能拖慢 DataPlane subscription，也不能阻塞其它虚拟端口。多个 endpoint 共享物理数据块的不可变引用，fan-out 不为每个端口复制整块数据。
 
-多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在任何 Actor 启动之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。关闭时先停止新的 fan-out，再取消 Windows 上仍阻塞的同步 I/O，并等待所有 Endpoint Actor 与 pump/supervisor 完整退出；持有 COM handle 的 worker 不允许超时后 detach。
+多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在任何 Actor 启动之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。关闭时先停止新的 fan-out；Windows Actor 在自己的 handle 上通过 `CancelIoEx` 取消未完成的 overlapped comm/read/write，再退出并由 Bridge join。持有 COM handle 的 worker 不允许超时后 detach。
 
 X/Y/ZModem 获得 Exclusive lease 时 Endpoint Actor 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。DataPlane subscription 自身若溢出/断开，或 virtual → physical 的确认写失败，说明共享数据面已经失去完整性，属于整个 Bridge 的明确失败。单个 external endpoint 的写入/读取持续无进展或 egress 预算耗尽则只把该 endpoint 标记为 `backpressured`，暂停它的双向镜像并保留父 Serial Session、其它 endpoint 与 bridge supervisor。
 
-external peer 的存在是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Endpoint Actor 因而可以区分“external endpoint 尚未打开”和“已打开 peer 长时间不消费”。状态监测与数据完整性是两个不同维度：一次 DSR/presence 查询失败只进入 `degraded`，保留最后一次已确认的 peer 状态；若最后已知 peer 仍打开，Actor 继续串行读写，不能因为监测瞬时失败主动制造丢数据。只有初始状态尚未知、已确认 peer 关闭，或真实队列/I/O 已发生数据缺口时才停止对应镜像。Windows 上已连接 peer 一旦进入 `backpressured`，必须先观察到该 peer 关闭、再重新打开，才能恢复为 fresh stream；缺口期间旧数据不会补发，也不会在同一 peer 连接上偷偷恢复。
+external peer 的存在是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO；Windows com0com 的内部 bridge 端把 DSR 映射到远端 `ropen`，Endpoint Actor 通过 `WaitCommEvent` 事件而不是固定周期 DSR 轮询区分“external endpoint 尚未打开”和“已打开 peer 长时间不消费”。只有初始状态未知或监测已经 degraded 时才进行低频恢复探测。状态监测与数据完整性是两个不同维度：一次 DSR/presence 查询失败只进入 `degraded`，保留最后一次已确认的 peer 状态；若最后已知 peer 仍打开，Actor 继续串行读写，不能因为监测瞬时失败主动制造丢数据。只有初始状态尚未知、已确认 peer 关闭，或真实队列/I/O 已发生数据缺口时才停止对应镜像。Windows 上已连接 peer 一旦进入 `backpressured`，必须先观察到该 peer 关闭、再重新打开，才能恢复为 fresh stream；缺口期间旧数据不会补发，也不会在同一 peer 连接上偷偷恢复。
 
 桥接只保证字节流转发，不模拟真实 UART 电气特性、调制解调器控制线或所有波特率行为。当前没有 actor-owned 的 DTR/RTS/CTS/DSR 能力，因此状态栏不得显示虚假的 `--` 占位；未来只有在 DataPlane/driver 提供真实控制线 capability 后才能暴露这些状态与控制。
 
@@ -134,7 +134,7 @@ flowchart LR
 - Transport open 不承担自动重试和清空输入缓冲等 Session 策略；设备 open 后产生的字节必须进入统一接收链路。
 - DataPlane subscriber 必须有界且带 consumer identity；需要不同 burst 容量的消费者通过显式 subscription capacity 配置，并在摘除时保留原因。VPort subscription pump 不执行 endpoint I/O，单个 peer 的慢消费只能触发自己的有界 egress backpressure，禁止扩散成 DataPlane overflow、静默丢字节或无界增长内存。
 - external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。每个 endpoint 只有一个 Actor/handle owner，Windows presence 查询失败只表示监测 degraded，不等同于数据缺口；Windows 已连接 peer 一旦发生真实数据完整性缺口，必须经过 close → reopen 才能以 fresh stream 恢复。
-- Bridge shutdown 必须取消可取消的阻塞 I/O 并 join 所有持有 endpoint handle 的 Actor；禁止为了满足退出 deadline 而 detach COM worker。
+- Windows bridge 正常路径必须使用 event-driven overlapped I/O；shutdown 通过 `CancelIoEx` 取消未完成操作并 join 所有持有 endpoint handle 的 Actor，禁止退回同步阻塞 worker 或为了退出 deadline detach COM worker。
 - 虚拟串口创建/桥接启动失败不能让主串口连接的状态变成错误真相，并必须回滚本次不可用端点资源。
 - 平台提权逻辑不得进入普通 Serial UI/协议语义；Windows 直连 fallback 只在明确动作中启动窄类型 UAC helper，普通 GUI 永不执行 `setupc`。所有 setupc 产品调用必须 `--silent`，bus/COM 分配与安装后核验必须发生在同一特权事务内。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。
