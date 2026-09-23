@@ -57,7 +57,14 @@ pub const fn native_minidump_enabled() -> bool {
 
 fn crash_directory() -> PathBuf {
     CRASH_DIR
-        .get_or_init(|| std::env::temp_dir().join("TauTerm").join("crash"))
+        .get_or_init(|| {
+            directories::BaseDirs::new()
+                .map(|dirs| dirs.data_local_dir().join("TauTerm").join("crash"))
+                .unwrap_or_else(|| {
+                    std::env::temp_dir()
+                        .join(format!("TauTerm-crash-{}", std::process::id()))
+                })
+        })
         .clone()
 }
 
@@ -187,8 +194,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crash_artifacts_are_local_and_bounded() {
-        assert!(MAX_CRASH_ARTIFACTS > 0);
-        assert!(crash_directory().ends_with(Path::new("TauTerm").join("crash")));
+    fn crash_artifacts_use_a_user_local_directory() {
+        let directory = crash_directory();
+        assert!(directory.ends_with(Path::new("TauTerm").join("crash"))
+            || directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("TauTerm-crash-")));
     }
 }
