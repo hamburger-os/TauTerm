@@ -133,6 +133,7 @@ pub struct WindowsBridgeIo {
     read_overlapped: OVERLAPPED,
     write_overlapped: OVERLAPPED,
     comm_mask: u32,
+    comm_pending: bool,
     read_buffer: Box<[u8; READ_BUFFER_BYTES]>,
     read_pending: bool,
     write_pending: bool,
@@ -153,6 +154,7 @@ impl WindowsBridgeIo {
             read_event,
             write_event,
             comm_mask: 0,
+            comm_pending: false,
             read_buffer: Box::new([0u8; READ_BUFFER_BYTES]),
             read_pending: false,
             write_pending: false,
@@ -332,14 +334,15 @@ impl WindowsBridgeIo {
         }
         let _ = self.cancel_read();
         let _ = self.cancel_write();
-        if self.comm_mask != 0 || is_signaled(&self.comm_event).unwrap_or(false) {
+        if self.comm_pending {
             let _ = cancel_and_drain(self.raw_handle(), &self.comm_overlapped, "comm");
+            self.comm_pending = false;
         }
         self.comm_mask = 0;
     }
 
     fn arm_comm_wait(&mut self) -> Result<(), String> {
-        if self.comm_mask != 0 {
+        if self.comm_pending {
             return Ok(());
         }
         reset_overlapped(&mut self.comm_overlapped, &self.comm_event)?;
@@ -357,11 +360,7 @@ impl WindowsBridgeIo {
                 return Err(format!("WaitCommEvent failed (Win32 {error})"));
             }
         }
-        // Zero is also the valid pre-completion value. Use u32::MAX internally as the pending
-        // sentinel; the real event mask is written by Windows before completion.
-        if self.comm_mask == 0 {
-            self.comm_mask = u32::MAX;
-        }
+        self.comm_pending = true;
         Ok(())
     }
 
@@ -377,6 +376,7 @@ impl WindowsBridgeIo {
         };
         if ok == 0 {
             let error = unsafe { GetLastError() };
+            self.comm_pending = false;
             self.comm_mask = 0;
             if error == ERROR_OPERATION_ABORTED {
                 return Ok(());
@@ -384,11 +384,8 @@ impl WindowsBridgeIo {
             return Err(format!("WaitCommEvent completion failed (Win32 {error})"));
         }
 
-        let mask = if self.comm_mask == u32::MAX {
-            0
-        } else {
-            self.comm_mask
-        };
+        let mask = self.comm_mask;
+        self.comm_pending = false;
         self.comm_mask = 0;
         result.rx_ready = (mask & EV_RXCHAR) != 0;
         if (mask & EV_ERR) != 0 {
