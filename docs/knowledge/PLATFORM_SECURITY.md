@@ -31,6 +31,8 @@ TauTerm 的长期原则是主 GUI 保持普通权限，只把必要动作放到�
 - MiniDumpWriteDump: https://learn.microsoft.com/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
 - MINIDUMP_EXCEPTION_INFORMATION: https://learn.microsoft.com/windows/win32/api/minidumpapiset/ns-minidumpapiset-minidump_exception_information
 - Windows Error Reporting LocalDumps: https://learn.microsoft.com/windows/win32/wer/collecting-user-mode-dumps
+- CreateToolhelp32Snapshot: https://learn.microsoft.com/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot
+- Process32FirstW / parent PID: https://learn.microsoft.com/windows/win32/api/tlhelp32/nf-tlhelp32-process32firstw
 - Overlapped communications I/O: https://learn.microsoft.com/windows/win32/devio/overlapped-operations
 - WaitCommEvent: https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-waitcommevent
 - CancelIoEx: https://learn.microsoft.com/windows/win32/fileio/cancelioex-func
