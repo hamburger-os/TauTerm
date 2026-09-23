@@ -159,6 +159,7 @@ fn write_panic_report(info: &std::panic::PanicHookInfo<'_>) {
     } else {
         "<non-string panic payload>".to_string()
     };
+    let payload = crate::security::log_sanitizer::sanitize_log(&payload);
     let location = info
         .location()
         .map(|location| {
