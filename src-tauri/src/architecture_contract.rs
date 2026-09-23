@@ -567,6 +567,9 @@ fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
     assert!(source.contains("MAX_CRASH_ARTIFACTS"));
     assert!(source.contains("Backtrace::force_capture()"));
     assert!(source.contains("MiniDumpNormal"));
+    assert!(source.contains("CRASH_HELPER_ARG"));
+    assert!(source.contains("run_native_crash_helper"));
+    assert!(source.contains("ClientPointers: 1"));
     assert!(source.contains("EXCEPTION_CONTINUE_SEARCH"));
     assert!(
         !source.contains("MiniDumpWithFullMemory"),
