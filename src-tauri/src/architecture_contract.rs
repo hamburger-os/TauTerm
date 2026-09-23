@@ -549,9 +549,19 @@ fn virtual_port_bridge_has_single_handle_ownership_and_deterministic_shutdown() 
         !bridge.contains(".try_clone()") && !bridge.contains(".try_clone("),
         "virtual-port bridge must not clone one driver handle into concurrent read/write workers"
     );
+    let windows_io = read_source("virtual_port/windows_bridge_io.rs");
     assert!(
-        bridge.contains("CancelSynchronousIo") && !bridge.contains("detaching thread"),
-        "Windows bridge shutdown must cancel blocking I/O and join workers instead of detaching handle owners"
+        windows_io.contains("FILE_FLAG_OVERLAPPED")
+            && windows_io.contains("WaitCommEvent")
+            && windows_io.contains("EV_DSR")
+            && windows_io.contains("EV_ERR")
+            && windows_io.contains("EV_RXCHAR")
+            && windows_io.contains("CancelIoEx"),
+        "Windows VPort I/O must use one overlapped handle with event-driven comm monitoring and cancellable I/O"
+    );
+    assert!(
+        !bridge.contains("CancelSynchronousIo") && !bridge.contains("detaching thread"),
+        "bridge shutdown must rely on actor-owned cancellable overlapped I/O and join every handle owner"
     );
     assert!(
         bridge.contains("ENDPOINT_DEGRADED")
