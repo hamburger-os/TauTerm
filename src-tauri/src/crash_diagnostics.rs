@@ -22,6 +22,8 @@ const CRASH_HELPER_ARG: &str = "--tauterm-crash-handler";
 const CRASH_PACKET_MAGIC: u32 = 0x5441_5543; // "TAUC"
 #[cfg(target_os = "windows")]
 const CRASH_HELPER_WAIT_MS: u32 = 5_000;
+#[cfg(target_os = "windows")]
+const CRASH_HELPER_READY: u8 = 0xA5;
 
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,8 +90,12 @@ pub fn maybe_run_helper() -> bool {
     if let Some(expected_pid) = expected_pid {
         match crash_helper_parent_pid() {
             Ok(parent_pid) if parent_pid == expected_pid => {
-                let directory = crash_directory();
-                let _ = run_native_crash_helper(expected_pid, &directory);
+                use std::io::Write;
+                let mut stdout = std::io::stdout();
+                if stdout.write_all(&[CRASH_HELPER_READY]).is_ok() && stdout.flush().is_ok() {
+                    let directory = crash_directory();
+                    let _ = run_native_crash_helper(expected_pid, &directory);
+                }
             }
             Ok(_) | Err(_) => {
                 // Hidden helper mode is intentionally fail-closed. A command-line PID alone is
@@ -291,6 +297,7 @@ fn start_native_crash_helper() -> Result<(), String> {
         return Ok(());
     }
 
+    use std::io::Read;
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -302,7 +309,7 @@ fn start_native_crash_helper() -> Result<(), String> {
         .arg(CRASH_HELPER_ARG)
         .arg(std::process::id().to_string())
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
@@ -311,6 +318,17 @@ fn start_native_crash_helper() -> Result<(), String> {
         .stdin
         .take()
         .ok_or_else(|| "crash helper stdin pipe was not created".to_string())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "crash helper readiness pipe was not created".to_string())?;
+    let mut ready = [0u8; 1];
+    if stdout.read_exact(&mut ready).is_err() || ready[0] != CRASH_HELPER_READY {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("crash helper failed readiness handshake".to_string());
+    }
+    drop(stdout);
 
     let channel = CrashChannel {
         pipe_handle: stdin.as_raw_handle() as usize,
