@@ -494,7 +494,8 @@ fn open_bridge_endpoint(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let port = if let Some(master) = crate::virtual_port::pty::take_master_for_slave(&endpoint.bridge_path)
+        let port = if let Some(master) =
+            crate::virtual_port::pty::take_master_for_slave(&endpoint.bridge_path)
         {
             log::info!("Native PTY master attached for {}", endpoint.bridge_path);
             master
@@ -567,10 +568,9 @@ fn endpoint_actor_loop(
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     let external_path = endpoint.external_path;
-    let mut port = endpoint
-        .handle
-        .into_io()
-        .map_err(|error| format!("virtual peer {external_path} actor initialization failed: {error}"))?;
+    let mut port = endpoint.handle.into_io().map_err(|error| {
+        format!("virtual peer {external_path} actor initialization failed: {error}")
+    })?;
     let mut reopen_armed = false;
     let mut next_degraded_probe = Instant::now();
     let mut need_read_probe = true;
@@ -590,8 +590,7 @@ fn endpoint_actor_loop(
         if (shared.is_degraded() || !shared.peer_known.load(Ordering::Acquire))
             && Instant::now() >= next_degraded_probe
         {
-            next_degraded_probe =
-                Instant::now() + Duration::from_millis(DEGRADED_RECOVERY_POLL_MS);
+            next_degraded_probe = Instant::now() + Duration::from_millis(DEGRADED_RECOVERY_POLL_MS);
             match port.peer_is_open() {
                 Ok(open) => {
                     observe_windows_peer(shared, open, &mut reopen_armed);
@@ -1092,7 +1091,9 @@ mod tests {
             let value = (sequence % 251) as u8;
             fan_out_physical_chunk(&targets, vec![value; 4]).unwrap();
 
-            let delivered = healthy_rx.try_recv().expect("healthy endpoint must keep up");
+            let delivered = healthy_rx
+                .try_recv()
+                .expect("healthy endpoint must keep up");
             assert_eq!(&*delivered, &[value; 4]);
             healthy.release_bytes(delivered.len());
         }
