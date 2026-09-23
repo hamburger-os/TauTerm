@@ -539,6 +539,48 @@ fn rtt_connection_diagnostics_remain_observable() {
 }
 
 #[test]
+fn virtual_port_bridge_has_single_handle_ownership_and_deterministic_shutdown() {
+    let bridge = read_source("virtual_port/bridge.rs");
+    assert!(
+        bridge.contains("endpoint_actor_loop"),
+        "virtual-port endpoints must be owned by one serialized actor"
+    );
+    assert!(
+        !bridge.contains(".try_clone()") && !bridge.contains(".try_clone("),
+        "virtual-port bridge must not clone one driver handle into concurrent read/write workers"
+    );
+    assert!(
+        bridge.contains("CancelSynchronousIo") && !bridge.contains("detaching thread"),
+        "Windows bridge shutdown must cancel blocking I/O and join workers instead of detaching handle owners"
+    );
+    assert!(
+        bridge.contains("ENDPOINT_DEGRADED")
+            && bridge.contains("mark_degraded")
+            && bridge.contains("recover_after_reopen"),
+        "peer-status degradation and confirmed data gaps must remain distinct states"
+    );
+}
+
+#[test]
+fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
+    let source = read_source("crash_diagnostics.rs");
+    assert!(source.contains("MAX_CRASH_ARTIFACTS"));
+    assert!(source.contains("Backtrace::force_capture()"));
+    assert!(source.contains("MiniDumpNormal"));
+    assert!(source.contains("EXCEPTION_CONTINUE_SEARCH"));
+    assert!(
+        !source.contains("MiniDumpWithFullMemory"),
+        "automatic crash diagnostics must not capture a full-process memory dump"
+    );
+    for forbidden in ["reqwest", "upload", "http://", "https://"] {
+        assert!(
+            !source.contains(forbidden),
+            "crash diagnostics must remain local-only: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
     for forbidden in [
