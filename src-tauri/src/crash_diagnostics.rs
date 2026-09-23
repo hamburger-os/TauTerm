@@ -86,10 +86,56 @@ pub fn maybe_run_helper() -> bool {
         .next()
         .and_then(|value| value.to_string_lossy().parse::<u32>().ok());
     if let Some(expected_pid) = expected_pid {
-        let directory = crash_directory();
-        let _ = run_native_crash_helper(expected_pid, &directory);
+        match crash_helper_parent_pid() {
+            Ok(parent_pid) if parent_pid == expected_pid => {
+                let directory = crash_directory();
+                let _ = run_native_crash_helper(expected_pid, &directory);
+            }
+            Ok(_) | Err(_) => {
+                // Hidden helper mode is intentionally fail-closed. A command-line PID alone is
+                // never authority to inspect another process.
+            }
+        }
     }
     true
+}
+
+#[cfg(target_os = "windows")]
+fn crash_helper_parent_pid() -> Result<u32, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "CreateToolhelp32Snapshot failed (Win32 {})",
+            unsafe { GetLastError() }
+        ));
+    }
+
+    let current_pid = unsafe { GetCurrentProcessId() };
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) };
+    while ok != 0 {
+        if entry.th32ProcessID == current_pid {
+            let parent_pid = entry.th32ParentProcessID;
+            unsafe {
+                CloseHandle(snapshot);
+            }
+            return Ok(parent_pid);
+        }
+        ok = unsafe { Process32NextW(snapshot, &mut entry) };
+    }
+
+    unsafe {
+        CloseHandle(snapshot);
+    }
+    Err("crash helper process was not present in ToolHelp snapshot".to_string())
 }
 
 pub fn directory() -> PathBuf {
