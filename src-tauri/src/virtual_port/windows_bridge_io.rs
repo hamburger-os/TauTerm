@@ -68,7 +68,7 @@ impl WindowsBridgeHandle {
         Ok(Self { handle })
     }
 
-    pub fn into_io(self) -> Result<WindowsBridgeIo, String> {
+    pub fn into_io(self) -> Result<Box<WindowsBridgeIo>, String> {
         WindowsBridgeIo::new(self.handle)
     }
 }
@@ -141,11 +141,11 @@ pub struct WindowsBridgeIo {
 }
 
 impl WindowsBridgeIo {
-    fn new(handle: OwnedHandle) -> Result<Self, String> {
+    fn new(handle: OwnedHandle) -> Result<Box<Self>, String> {
         let comm_event = create_manual_event("comm")?;
         let read_event = create_manual_event("read")?;
         let write_event = create_manual_event("write")?;
-        let mut this = Self {
+        let mut this = Box::new(Self {
             handle,
             comm_overlapped: overlapped_for(&comm_event),
             read_overlapped: overlapped_for(&read_event),
@@ -159,7 +159,7 @@ impl WindowsBridgeIo {
             read_pending: false,
             write_pending: false,
             write_buffer: None,
-        };
+        });
         if unsafe { SetCommMask(this.raw_handle(), EV_DSR | EV_ERR | EV_RXCHAR) } == 0 {
             return Err(format!("SetCommMask failed (Win32 {})", unsafe {
                 GetLastError()
