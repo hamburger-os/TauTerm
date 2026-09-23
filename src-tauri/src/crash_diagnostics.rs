@@ -19,6 +19,7 @@ pub fn install() {
             directory.display()
         );
     } else {
+        harden_directory_permissions(&directory);
         prune_old_artifacts(&directory);
     }
 
@@ -81,6 +82,7 @@ fn write_panic_report(info: &std::panic::PanicHookInfo<'_>) {
     if std::fs::create_dir_all(&directory).is_err() {
         return;
     }
+    harden_directory_permissions(&directory);
 
     let thread = std::thread::current();
     let thread_name = thread.name().unwrap_or("<unnamed>");
@@ -119,9 +121,30 @@ fn write_panic_report(info: &std::panic::PanicHookInfo<'_>) {
         Backtrace::force_capture()
     );
 
-    let _ = std::fs::write(directory.join(file_name), report);
+    let path = directory.join(file_name);
+    if std::fs::write(&path, report).is_ok() {
+        harden_file_permissions(&path);
+    }
     prune_old_artifacts(&directory);
 }
+
+#[cfg(unix)]
+fn harden_directory_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+fn harden_directory_permissions(_path: &Path) {}
+
+#[cfg(unix)]
+fn harden_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn harden_file_permissions(_path: &Path) {}
 
 fn prune_old_artifacts(directory: &Path) {
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -196,10 +219,12 @@ mod tests {
     #[test]
     fn crash_artifacts_use_a_user_local_directory() {
         let directory = crash_directory();
-        assert!(directory.ends_with(Path::new("TauTerm").join("crash"))
-            || directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("TauTerm-crash-")));
+        assert!(
+            directory.ends_with(Path::new("TauTerm").join("crash"))
+                || directory
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("TauTerm-crash-"))
+        );
     }
 }
