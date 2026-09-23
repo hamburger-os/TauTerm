@@ -34,7 +34,7 @@ App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹�
 
 System Log 只能覆盖仍能返回到 Rust 控制流的故障；native exception、驱动/FFI 导致的进程级异常可能在业务日志写入前直接终止进程。TauTerm 因此在 GUI 启动早期安装一层**本地、有限、非上传式** crash diagnostics：
 
-- Rust panic 记录版本、时间、PID、线程、源位置、panic payload 与 backtrace；
+- Rust panic 记录版本、时间、PID、线程、源位置、经系统日志同一规则脱敏的 panic payload 与 backtrace；
 - Windows 正常启动时预先拉起同一可执行文件的普通权限 crash-helper；未处理 native exception 的过滤器只向已建立的私有 pipe 写入固定大小异常上下文并短暂等待，真正的 `MiniDumpWriteDump(MiniDumpNormal)` 在独立 helper 进程中执行，随后主进程返回正常 Windows/WER 异常处理链；
 - crash artifact 正常保存在当前用户本地应用数据目录下的 `TauTerm/crash`；只有无法解析用户目录时才使用带 PID 的临时 fallback。Unix 目录/文本报告分别收紧为仅当前用户可访问/读写，并按数量上限清理旧文件；应用不会自动上传、网络发送或并入普通 Session/System Log；
 - 普通“导出诊断”只包含 crash artifact 数量与当前平台是否具备 native minidump 能力，不复制 dump 正文。
