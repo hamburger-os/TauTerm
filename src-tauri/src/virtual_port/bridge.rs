@@ -636,7 +636,7 @@ fn endpoint_actor_loop(
 
         if let Some((data, offset, _)) = pending_egress.as_ref() {
             if !port.write_pending() && *offset < data.len() {
-                if let Err(error) = port.start_write(&data[*offset..]) {
+                if let Err(error) = port.start_write(data.clone(), *offset) {
                     handle_windows_io_failure(
                         &mut port,
                         shared,
