@@ -57,6 +57,7 @@ macOS remains covered by build/Rust checks and manual release validation until a
 Reusable fixture assets include:
 
 - `scripts/test-serial-session.py`: high-fidelity RT-Thread/FinSH-style Serial device simulator, including transfer/script scenarios; real virtual COM use remains Windows/manual where com0com is required;
+- `scripts/test-vport-stress.ps1`: Windows real-com0com external-peer stress driver for rapid open/write/close cycles plus periodic open-without-reading stalls; run it against a VPort owned by a live TauTerm Serial Session;
 - `scripts/test-telnet-server.py`: deterministic Telnet negotiation/login/shell peer;
 - `scripts/test-protocol-fixtures.py`: automated fixture self-test;
 - `tools/trdp-test-peer/`: native TRDP interoperability peer used by the TRDP workflow.
@@ -116,7 +117,7 @@ Automation intentionally does not pretend to replace real environment testing. B
 - OS-specific installer/updater/reputation behavior;
 - visual judgment across GPUs, scaling factors and accessibility settings.
 
-For a release that changes Windows virtual-port ownership, bridge I/O, or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. Bridge-I/O changes additionally require repeated external COM open/close, open-without-reading, sustained bidirectional traffic, peer close during active write, parent Serial disconnect while the peer is active, and repeated reconnect/shutdown cycles. A stalled or crashing peer must never stop sibling VPorts or leave a detached bridge handle owner. When reproducing a process-level failure, preserve the generated local panic report/minidump together with the matching System Log.
+For a release that changes Windows virtual-port ownership, bridge I/O, or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. Bridge-I/O changes additionally require repeated external COM open/close, open-without-reading, sustained bidirectional traffic, peer close during active write, parent Serial disconnect while the peer is active, and repeated reconnect/shutdown cycles. `scripts/test-vport-stress.ps1 -Port COMxx` provides the repeatable external-peer half of this real-driver validation. A stalled or crashing peer must never stop sibling VPorts or leave a detached bridge handle owner. When reproducing a process-level failure, preserve the generated local panic report/minidump together with the matching System Log.
 
 These manual checks are still valuable release practice for OS and hardware boundaries, but they are not represented by a Release workflow SHA-attestation field.
 
