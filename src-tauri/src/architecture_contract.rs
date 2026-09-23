@@ -572,7 +572,7 @@ fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
         !source.contains("MiniDumpWithFullMemory"),
         "automatic crash diagnostics must not capture a full-process memory dump"
     );
-    for forbidden in ["reqwest", "upload", "http://", "https://"] {
+    for forbidden in ["reqwest", "ureq", "http://", "https://"] {
         assert!(
             !source.contains(forbidden),
             "crash diagnostics must remain local-only: {forbidden}"
