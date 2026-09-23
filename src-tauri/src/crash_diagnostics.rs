@@ -129,8 +129,7 @@ fn crash_directory() -> PathBuf {
             directories::BaseDirs::new()
                 .map(|dirs| dirs.data_local_dir().join("TauTerm").join("crash"))
                 .unwrap_or_else(|| {
-                    std::env::temp_dir()
-                        .join(format!("TauTerm-crash-{}", std::process::id()))
+                    std::env::temp_dir().join(format!("TauTerm-crash-{}", std::process::id()))
                 })
         })
         .clone()
@@ -311,10 +310,7 @@ unsafe extern "system" fn unhandled_exception_filter(
         std::ptr::null_mut(),
     );
     if success != 0 && written == std::mem::size_of::<CrashPacket>() as u32 {
-        let _ = WaitForSingleObject(
-            channel.helper_process_handle as _,
-            CRASH_HELPER_WAIT_MS,
-        );
+        let _ = WaitForSingleObject(channel.helper_process_handle as _, CRASH_HELPER_WAIT_MS);
     }
 
     // Preserve the normal Windows/WER crash path after the helper captured best-effort evidence.
