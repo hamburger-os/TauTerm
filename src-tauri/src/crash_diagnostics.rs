@@ -24,6 +24,8 @@ const CRASH_PACKET_MAGIC: u32 = 0x5441_5543; // "TAUC"
 const CRASH_HELPER_WAIT_MS: u32 = 5_000;
 #[cfg(target_os = "windows")]
 const CRASH_HELPER_READY: u8 = 0xA5;
+#[cfg(target_os = "windows")]
+const CRASH_HELPER_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -322,13 +324,22 @@ fn start_native_crash_helper() -> Result<(), String> {
         .stdout
         .take()
         .ok_or_else(|| "crash helper readiness pipe was not created".to_string())?;
-    let mut ready = [0u8; 1];
-    if stdout.read_exact(&mut ready).is_err() || ready[0] != CRASH_HELPER_READY {
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let ready_thread = std::thread::spawn(move || {
+        let mut ready = [0u8; 1];
+        let valid = stdout.read_exact(&mut ready).is_ok() && ready[0] == CRASH_HELPER_READY;
+        let _ = ready_tx.send(valid);
+    });
+    let ready = ready_rx
+        .recv_timeout(CRASH_HELPER_STARTUP_TIMEOUT)
+        .unwrap_or(false);
+    if !ready {
         let _ = child.kill();
         let _ = child.wait();
+        let _ = ready_thread.join();
         return Err("crash helper failed readiness handshake".to_string());
     }
-    drop(stdout);
+    let _ = ready_thread.join();
 
     let channel = CrashChannel {
         pipe_handle: stdin.as_raw_handle() as usize,
