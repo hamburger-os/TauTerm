@@ -579,6 +579,8 @@ fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
     assert!(source.contains("MiniDumpNormal"));
     assert!(source.contains("CRASH_HELPER_ARG"));
     assert!(source.contains("run_native_crash_helper"));
+    assert!(source.contains("crash_helper_parent_pid"));
+    assert!(source.contains("parent_pid == expected_pid"));
     assert!(source.contains("ClientPointers: 1"));
     assert!(source.contains("EXCEPTION_CONTINUE_SEARCH"));
     assert!(
