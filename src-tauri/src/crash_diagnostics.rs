@@ -85,8 +85,8 @@ pub fn maybe_run_helper() -> bool {
     let expected_pid = args
         .next()
         .and_then(|value| value.to_string_lossy().parse::<u32>().ok());
-    let directory = args.next().map(PathBuf::from);
-    if let (Some(expected_pid), Some(directory)) = (expected_pid, directory) {
+    if let Some(expected_pid) = expected_pid {
+        let directory = crash_directory();
         let _ = run_native_crash_helper(expected_pid, &directory);
     }
     true
@@ -255,7 +255,6 @@ fn start_native_crash_helper(directory: &Path) -> Result<(), String> {
     let mut child = Command::new(executable)
         .arg(CRASH_HELPER_ARG)
         .arg(std::process::id().to_string())
-        .arg(directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
