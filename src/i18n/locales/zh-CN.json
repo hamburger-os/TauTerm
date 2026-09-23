@@ -63,6 +63,9 @@
     "enableSendBar": "启用发送栏",
     "enableVirtualPort": "启用虚拟串口",
     "virtualPortCount": "设备数量",
+    "virtualPortBackpressured": "虚拟串口 {{ports}} 已暂停镜像，请关闭并重新打开对应外部端口",
+    "virtualPortDegraded": "虚拟串口 {{ports}} 状态暂不可用，正在自动恢复",
+    "virtualPortBridgeFailed": "虚拟串口桥接已停止，请查看日志详情",
     "virtualPort": {
       "notInstalled": "VPort 未就绪 — 驱动未安装",
       "retry": "修复",

@@ -18,6 +18,7 @@
 #[cfg(test)]
 mod architecture_contract;
 mod commands;
+mod crash_diagnostics;
 mod diagnostics;
 mod embedded_debug;
 mod ipc_transport;
@@ -33,8 +34,9 @@ mod transport;
 pub mod virtual_port;
 
 #[cfg(windows)]
-pub fn maybe_run_elevated_helper() -> bool {
-    virtual_port::elevated::maybe_run_helper()
+pub fn maybe_run_helper() -> bool {
+    crash_diagnostics::maybe_run_helper()
+        || virtual_port::elevated::maybe_run_helper()
         || plugins::catalog::maybe_run_elevated_shell_helper()
 }
 
@@ -90,6 +92,8 @@ pub fn run() {
     log::set_logger(&LogBridge)
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .ok();
+
+    crash_diagnostics::install();
 
     let plugin_runtime = plugins::catalog::build_runtime();
 
@@ -263,6 +267,12 @@ pub fn run() {
             }
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
             log::info!("日志目录: {:?}", log_dir);
+
+            log::info!(
+                "崩溃诊断目录: {:?} (native_minidump={})",
+                crash_diagnostics::directory(),
+                crash_diagnostics::native_minidump_enabled()
+            );
 
             if let Some(state) = app.try_state::<AppState>() {
                 plugins::catalog::attach_app_handle(&state.plugins, app.handle().clone());

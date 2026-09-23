@@ -539,6 +539,67 @@ fn rtt_connection_diagnostics_remain_observable() {
 }
 
 #[test]
+fn virtual_port_bridge_has_single_handle_ownership_and_deterministic_shutdown() {
+    let bridge = read_source("virtual_port/bridge.rs");
+    assert!(
+        bridge.contains("endpoint_actor_loop"),
+        "virtual-port endpoints must be owned by one serialized actor"
+    );
+    assert!(
+        !bridge.contains(".try_clone()") && !bridge.contains(".try_clone("),
+        "virtual-port bridge must not clone one driver handle into concurrent read/write workers"
+    );
+    let windows_io = read_source("virtual_port/windows_bridge_io.rs");
+    assert!(
+        windows_io.contains("FILE_FLAG_OVERLAPPED")
+            && windows_io.contains("WaitCommEvent")
+            && windows_io.contains("EV_DSR")
+            && windows_io.contains("EV_ERR")
+            && windows_io.contains("EV_RXCHAR")
+            && windows_io.contains("CancelIoEx"),
+        "Windows VPort I/O must use one overlapped handle with event-driven comm monitoring and cancellable I/O"
+    );
+    assert!(
+        !bridge.contains("CancelSynchronousIo") && !bridge.contains("detaching thread"),
+        "bridge shutdown must rely on actor-owned cancellable overlapped I/O and join every handle owner"
+    );
+    assert!(
+        bridge.contains("ENDPOINT_DEGRADED")
+            && bridge.contains("mark_degraded")
+            && bridge.contains("recover_after_reopen"),
+        "peer-status degradation and confirmed data gaps must remain distinct states"
+    );
+}
+
+#[test]
+fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
+    let source = read_source("crash_diagnostics.rs");
+    assert!(source.contains("MAX_CRASH_ARTIFACTS"));
+    assert!(source.contains("Backtrace::force_capture()"));
+    assert!(source.contains("MiniDumpNormal"));
+    assert!(source.contains("CRASH_HELPER_ARG"));
+    assert!(source.contains("run_native_crash_helper"));
+    assert!(source.contains("crash_helper_parent_pid"));
+    assert!(source.contains("parent_pid == expected_pid"));
+    assert!(source.contains("CRASH_HELPER_READY"));
+    assert!(source.contains("CRASH_HELPER_STARTUP_TIMEOUT"));
+    assert!(source.contains("recv_timeout"));
+    assert!(source.contains("failed readiness handshake"));
+    assert!(source.contains("ClientPointers: 1"));
+    assert!(source.contains("EXCEPTION_CONTINUE_SEARCH"));
+    assert!(
+        !source.contains("MiniDumpWithFullMemory"),
+        "automatic crash diagnostics must not capture a full-process memory dump"
+    );
+    for forbidden in ["reqwest", "ureq", "http://", "https://"] {
+        assert!(
+            !source.contains(forbidden),
+            "crash diagnostics must remain local-only: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
     for forbidden in [

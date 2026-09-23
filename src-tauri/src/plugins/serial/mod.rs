@@ -197,7 +197,21 @@ impl SerialRuntime {
                         }),
                     );
                 }
-                VirtualPortBridgeEvent::EndpointRecovered { external_path } => {
+                VirtualPortBridgeEvent::EndpointDegraded {
+                    external_path,
+                    reason,
+                } => {
+                    let _ = bridge_app.emit(
+                        "virtual-port-health",
+                        serde_json::json!({
+                            "session_id": bridge_session_id.as_str(),
+                            "external_path": external_path,
+                            "state": "degraded",
+                            "reason": reason,
+                        }),
+                    );
+                }
+                VirtualPortBridgeEvent::EndpointReady { external_path } => {
                     let _ = bridge_app.emit(
                         "virtual-port-health",
                         serde_json::json!({

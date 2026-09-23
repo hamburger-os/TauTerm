@@ -51,6 +51,12 @@ struct LogDiagnostic {
 }
 
 #[derive(Debug, Serialize)]
+struct CrashDiagnostic {
+    artifact_count: u64,
+    native_minidump_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct DiagnosticBundle {
     schema_version: u32,
     generated_at: String,
@@ -60,6 +66,7 @@ struct DiagnosticBundle {
     config_store_ready: bool,
     credential: CredentialDiagnostic,
     logging: LogDiagnostic,
+    crash: CrashDiagnostic,
     virtual_port: VirtualPortDiagnostic,
     plugins: Vec<PluginDiagnostic>,
     sessions: BTreeMap<String, SessionAggregate>,
@@ -153,8 +160,13 @@ pub async fn export_diagnostics(
         }
     };
 
+    let crash = CrashDiagnostic {
+        artifact_count: crate::crash_diagnostics::artifact_count(),
+        native_minidump_enabled: crate::crash_diagnostics::native_minidump_enabled(),
+    };
+
     let bundle = DiagnosticBundle {
-        schema_version: 1,
+        schema_version: 2,
         generated_at: chrono::Utc::now().to_rfc3339(),
         app_version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
@@ -162,6 +174,7 @@ pub async fn export_diagnostics(
         config_store_ready: state.config_store.persistence_ready(),
         credential,
         logging,
+        crash,
         virtual_port,
         plugins,
         sessions,

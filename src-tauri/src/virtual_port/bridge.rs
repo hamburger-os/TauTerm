@@ -1,27 +1,36 @@
 //! Virtual serial endpoint bridge.
 //!
-//! Physical serial ownership remains inside DataPlaneRuntime. The physical -> virtual subscription
-//! pump only performs bounded, non-blocking fan-out; every external endpoint owns an independent
-//! writer actor and byte budget so one stalled peer cannot block the DataPlane or sibling endpoints.
-//! Virtual -> physical readers remain per-endpoint workers and use confirmed SessionIo writes.
+//! Physical serial ownership remains inside DataPlaneRuntime. The subscription pump only performs
+//! bounded, non-blocking fan-out. Every virtual endpoint has one actor and one endpoint handle.
+//! On Windows that handle is opened for overlapped I/O and the actor multiplexes WaitCommEvent,
+//! ReadFile and WriteFile completions; on Unix the same actor owns the native PTY master.
 
+#[cfg(not(target_os = "windows"))]
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "windows"))]
 use serialport::SerialPort;
 
 use crate::session::SessionIo;
 use crate::transport::DataPlaneEvent;
 use crate::virtual_port::backend::VirtualEndpoint;
+#[cfg(target_os = "windows")]
+use crate::virtual_port::windows_bridge_io::{WindowsBridgeHandle, WindowsBridgeIo};
 
-const VPORT_READ_TIMEOUT_MS: u64 = 5;
+#[cfg(not(target_os = "windows"))]
+const VPORT_IO_TIMEOUT_MS: u64 = 5;
+#[cfg(not(target_os = "windows"))]
 const PEER_RETRY_DELAY_MS: u64 = 10;
 const WORKER_POLL_MS: u64 = 20;
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(target_os = "windows")]
+const DEGRADED_RECOVERY_POLL_MS: u64 = 250;
 const EGRESS_QUEUE_MESSAGES: usize = 1024;
+#[cfg(not(target_os = "windows"))]
+const EGRESS_ACTOR_BURST_MESSAGES: usize = 64;
 const EGRESS_BACKLOG_WINDOW_MS: u64 = 2_000;
 const EGRESS_MIN_BYTES: usize = 64 * 1024;
 const EGRESS_MAX_BYTES: usize = 1024 * 1024;
@@ -30,13 +39,19 @@ const VPORT_SUBSCRIPTION_MAX_MESSAGES: usize = 64 * 1024;
 const VPORT_SUBSCRIPTION_WINDOW_MS: u64 = 3_000;
 const WRITE_STALL_DEADLINE: Duration = Duration::from_secs(2);
 
-const ENDPOINT_ACTIVE: u8 = 0;
-const ENDPOINT_BACKPRESSURED: u8 = 1;
+const ENDPOINT_READY: u8 = 0;
+#[cfg(any(target_os = "windows", test))]
+const ENDPOINT_DEGRADED: u8 = 1;
+const ENDPOINT_BACKPRESSURED: u8 = 2;
 
 type BridgeEventHandler = Box<dyn Fn(VirtualPortBridgeEvent) + Send + 'static>;
 
 #[derive(Debug, Clone)]
 pub enum VirtualPortBridgeEvent {
+    EndpointDegraded {
+        external_path: String,
+        reason: String,
+    },
     EndpointBackpressured {
         external_path: String,
         reason: String,
@@ -44,7 +59,7 @@ pub enum VirtualPortBridgeEvent {
         backlog_limit_bytes: usize,
         stalled_for_ms: u64,
     },
-    EndpointRecovered {
+    EndpointReady {
         external_path: String,
     },
     Fatal {
@@ -54,17 +69,15 @@ pub enum VirtualPortBridgeEvent {
 
 struct BridgeEndpoint {
     external_path: String,
+    #[cfg(target_os = "windows")]
+    handle: WindowsBridgeHandle,
+    #[cfg(not(target_os = "windows"))]
     port: Box<dyn SerialPort>,
-}
-
-struct PreparedBridgeEndpoint {
-    writer: BridgeEndpoint,
-    reader: BridgeEndpoint,
-    initial_peer_open: bool,
 }
 
 struct EndpointShared {
     external_path: String,
+    peer_known: AtomicBool,
     peer_open: AtomicBool,
     state: AtomicU8,
     queued_bytes: AtomicUsize,
@@ -77,13 +90,15 @@ impl EndpointShared {
     fn new(
         external_path: String,
         backlog_limit_bytes: usize,
+        peer_known: bool,
         peer_open: bool,
         events: mpsc::Sender<VirtualPortBridgeEvent>,
     ) -> Self {
         Self {
             external_path,
+            peer_known: AtomicBool::new(peer_known),
             peer_open: AtomicBool::new(peer_open),
-            state: AtomicU8::new(ENDPOINT_ACTIVE),
+            state: AtomicU8::new(ENDPOINT_READY),
             queued_bytes: AtomicUsize::new(0),
             backlog_limit_bytes,
             last_progress: Mutex::new(Instant::now()),
@@ -93,6 +108,17 @@ impl EndpointShared {
 
     fn is_backpressured(&self) -> bool {
         self.state.load(Ordering::Acquire) == ENDPOINT_BACKPRESSURED
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn is_degraded(&self) -> bool {
+        self.state.load(Ordering::Acquire) == ENDPOINT_DEGRADED
+    }
+
+    fn can_enqueue(&self) -> bool {
+        self.state.load(Ordering::Acquire) != ENDPOINT_BACKPRESSURED
+            && self.peer_known.load(Ordering::Acquire)
+            && self.peer_open.load(Ordering::Acquire)
     }
 
     fn record_progress(&self) {
@@ -129,30 +155,69 @@ impl EndpointShared {
             });
     }
 
-    #[cfg(target_os = "windows")]
-    fn set_peer_open(&self, open: bool) {
+    #[cfg(any(target_os = "windows", test))]
+    fn observe_peer(&self, open: bool) {
+        let was_known = self.peer_known.swap(true, Ordering::AcqRel);
         let previous = self.peer_open.swap(open, Ordering::AcqRel);
-        if previous == open {
-            return;
+        if !was_known || previous != open {
+            if open {
+                log::info!("Virtual peer {} opened", self.external_path);
+            } else {
+                log::info!("Virtual peer {} closed", self.external_path);
+            }
         }
-        if open {
-            log::info!("Virtual peer {} opened", self.external_path);
-        } else {
-            log::info!("Virtual peer {} closed", self.external_path);
-        }
-    }
 
-    fn mark_backpressured(&self, reason: impl Into<String>) {
         if self
             .state
             .compare_exchange(
-                ENDPOINT_ACTIVE,
-                ENDPOINT_BACKPRESSURED,
+                ENDPOINT_DEGRADED,
+                ENDPOINT_READY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.record_progress();
+            log::info!(
+                "Virtual peer {} presence monitoring recovered",
+                self.external_path
+            );
+            let _ = self.events.send(VirtualPortBridgeEvent::EndpointReady {
+                external_path: self.external_path.clone(),
+            });
+        }
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn mark_degraded(&self, reason: impl Into<String>) {
+        if self
+            .state
+            .compare_exchange(
+                ENDPOINT_READY,
+                ENDPOINT_DEGRADED,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
             .is_err()
         {
+            return;
+        }
+
+        let reason = reason.into();
+        log::warn!(
+            "Virtual peer {} presence degraded: {}",
+            self.external_path,
+            reason
+        );
+        let _ = self.events.send(VirtualPortBridgeEvent::EndpointDegraded {
+            external_path: self.external_path.clone(),
+            reason,
+        });
+    }
+
+    fn mark_backpressured(&self, reason: impl Into<String>) {
+        let previous = self.state.swap(ENDPOINT_BACKPRESSURED, Ordering::AcqRel);
+        if previous == ENDPOINT_BACKPRESSURED {
             return;
         }
 
@@ -184,7 +249,7 @@ impl EndpointShared {
             .state
             .compare_exchange(
                 ENDPOINT_BACKPRESSURED,
-                ENDPOINT_ACTIVE,
+                ENDPOINT_READY,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
@@ -193,12 +258,14 @@ impl EndpointShared {
             return;
         }
         self.queued_bytes.store(0, Ordering::Release);
+        self.peer_known.store(true, Ordering::Release);
+        self.peer_open.store(true, Ordering::Release);
         self.record_progress();
         log::info!(
             "Virtual peer {} recovered after close/reopen; starting a fresh stream",
             self.external_path
         );
-        let _ = self.events.send(VirtualPortBridgeEvent::EndpointRecovered {
+        let _ = self.events.send(VirtualPortBridgeEvent::EndpointReady {
             external_path: self.external_path.clone(),
         });
     }
@@ -211,7 +278,7 @@ struct EgressTarget {
 
 impl EgressTarget {
     fn enqueue(&self, data: Arc<[u8]>) -> Result<(), String> {
-        if !self.shared.peer_open.load(Ordering::Acquire) || self.shared.is_backpressured() {
+        if !self.shared.can_enqueue() {
             return Ok(());
         }
 
@@ -234,7 +301,7 @@ impl EgressTarget {
             Err(mpsc::TrySendError::Disconnected(data)) => {
                 self.shared.release_bytes(data.len());
                 Err(format!(
-                    "virtual peer {} egress writer stopped unexpectedly",
+                    "virtual peer {} endpoint actor stopped unexpectedly",
                     self.shared.external_path
                 ))
             }
@@ -264,64 +331,32 @@ impl VirtualPortBridge {
         let subscription = io
             .subscribe_with_capacity("virtual-port-bridge", subscription_capacity_messages)
             .map_err(|error| error.to_string())?;
+
+        // Open every endpoint before any actor starts. Windows handles are opened once with
+        // FILE_FLAG_OVERLAPPED; the thread-local OVERLAPPED records are created only after the
+        // handle is moved into its single actor.
         let mut prepared = Vec::with_capacity(endpoints.len());
-
-        // Prepare every endpoint before spawning any worker. A later open/clone failure must not
-        // leave earlier workers alive without a VirtualPortBridge owner to cancel and join them.
         for endpoint in endpoints {
-            let reader_port = open_bridge_endpoint(&endpoint.bridge_path, baud_rate)?;
-            let writer_port = reader_port.try_clone().map_err(|error| {
-                format!(
-                    "failed to clone virtual endpoint {} for independent bridge workers: {error}",
-                    endpoint.external_path
-                )
-            })?;
-            let writer = BridgeEndpoint {
-                external_path: endpoint.external_path.clone(),
-                port: writer_port,
-            };
-            let reader = BridgeEndpoint {
-                external_path: endpoint.external_path.clone(),
-                port: reader_port,
-            };
-
-            #[cfg(target_os = "windows")]
-            let (writer, initial_peer_open) = {
-                let mut writer = writer;
-                let open = match peer_is_open(&mut writer) {
-                    Ok(open) => open,
-                    Err(error) => {
-                        log::warn!(
-                            "Virtual peer {} initial presence query failed: {}",
-                            endpoint.external_path,
-                            error
-                        );
-                        false
-                    }
-                };
-                (writer, open)
-            };
-            #[cfg(not(target_os = "windows"))]
-            let initial_peer_open = true;
-
-            prepared.push(PreparedBridgeEndpoint {
-                writer,
-                reader,
-                initial_peer_open,
-            });
+            prepared.push(open_bridge_endpoint(endpoint, baud_rate)?);
         }
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let (event_tx, event_rx) = mpsc::channel::<VirtualPortBridgeEvent>();
-        let mut worker_threads = Vec::with_capacity(prepared.len() * 2 + 1);
+        let mut worker_threads = Vec::with_capacity(prepared.len() + 1);
         let mut egress_targets = Vec::with_capacity(prepared.len());
 
-        for prepared_endpoint in prepared {
-            let external_path = prepared_endpoint.writer.external_path.clone();
+        for endpoint in prepared {
+            let external_path = endpoint.external_path.clone();
+            #[cfg(target_os = "windows")]
+            let (peer_known, peer_open) = (false, false);
+            #[cfg(not(target_os = "windows"))]
+            let (peer_known, peer_open) = (true, true);
+
             let shared = Arc::new(EndpointShared::new(
                 external_path.clone(),
                 backlog_limit_bytes,
-                prepared_endpoint.initial_peer_open,
+                peer_known,
+                peer_open,
                 event_tx.clone(),
             ));
             let (egress_tx, egress_rx) = mpsc::sync_channel(EGRESS_QUEUE_MESSAGES);
@@ -330,36 +365,25 @@ impl VirtualPortBridge {
                 shared: shared.clone(),
             });
 
-            {
-                let cancel = cancel_flag.clone();
-                let shared = shared.clone();
-                let events = event_tx.clone();
-                let writer = prepared_endpoint.writer;
-                worker_threads.push(std::thread::spawn(move || {
-                    if let Err(reason) =
-                        physical_to_virtual_writer_loop(writer, egress_rx, &shared, &cancel)
-                    {
-                        let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
-                    }
-                }));
-            }
-
-            {
-                let cancel = cancel_flag.clone();
-                let shared = shared.clone();
-                let events = event_tx.clone();
-                let io = io.clone();
-                let reader = prepared_endpoint.reader;
-                worker_threads.push(std::thread::spawn(move || {
-                    if let Err(reason) = virtual_to_physical_loop(reader, io, &shared, &cancel) {
-                        let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
-                    }
-                }));
-            }
+            let cancel = cancel_flag.clone();
+            let events = event_tx.clone();
+            let actor_io = io.clone();
+            worker_threads.push(std::thread::spawn(move || {
+                if let Err(reason) =
+                    endpoint_actor_loop(endpoint, egress_rx, actor_io, &shared, &cancel)
+                {
+                    let _ = events.send(VirtualPortBridgeEvent::Fatal { reason });
+                }
+            }));
 
             log::info!(
-                "Virtual bridge attached for external endpoint {} (egress_limit={} bytes, subscription_capacity={} messages)",
+                "Virtual bridge attached for external endpoint {} (actor_owner=single, io_model={}, egress_limit={} bytes, subscription_capacity={} messages)",
                 external_path,
+                if cfg!(target_os = "windows") {
+                    "overlapped"
+                } else {
+                    "native-pty"
+                },
                 backlog_limit_bytes,
                 subscription_capacity_messages
             );
@@ -405,21 +429,23 @@ impl VirtualPortBridge {
     }
 
     pub fn shutdown(mut self) {
-        self.cancel_flag.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        self.shutdown_inner();
+    }
 
-        if let Some(thread) = self.supervisor_thread.take() {
-            join_bridge_thread("supervisor", thread, deadline);
-        }
+    fn shutdown_inner(&mut self) {
+        self.cancel_flag.store(true, Ordering::SeqCst);
         for (index, thread) in self.worker_threads.drain(..).enumerate() {
-            join_bridge_thread(&format!("worker-{index}"), thread, deadline);
+            join_bridge_thread(&format!("worker-{index}"), thread);
+        }
+        if let Some(thread) = self.supervisor_thread.take() {
+            join_bridge_thread("supervisor", thread);
         }
     }
 }
 
 impl Drop for VirtualPortBridge {
     fn drop(&mut self) {
-        self.cancel_flag.store(true, Ordering::SeqCst);
+        self.shutdown_inner();
     }
 }
 
@@ -432,8 +458,6 @@ fn egress_backlog_limit_bytes(baud_rate: u32) -> usize {
 }
 
 fn vport_subscription_capacity_messages(baud_rate: u32) -> usize {
-    // DataPlane events may be very small on Windows serial drivers. Size the upstream queue from
-    // a worst-case one-byte event rate over a finite scheduling-jitter window, then cap memory.
     let bytes_per_second = (u64::from(baud_rate) / 10).max(1);
     let messages = bytes_per_second.saturating_mul(VPORT_SUBSCRIPTION_WINDOW_MS) / 1_000;
     usize::try_from(messages).unwrap_or(usize::MAX).clamp(
@@ -442,14 +466,7 @@ fn vport_subscription_capacity_messages(baud_rate: u32) -> usize {
     )
 }
 
-fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
-    while !thread.is_finished() {
-        if Instant::now() >= deadline {
-            log::error!("Bridge {name} did not exit within shutdown deadline; detaching thread");
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+fn join_bridge_thread(name: &str, thread: JoinHandle<()>) {
     if let Err(error) = thread.join() {
         let message = if let Some(message) = error.downcast_ref::<&str>() {
             message.to_string()
@@ -462,27 +479,42 @@ fn join_bridge_thread(name: &str, thread: JoinHandle<()>, deadline: Instant) {
     }
 }
 
-fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort>, String> {
-    #[cfg(not(target_os = "windows"))]
-    if let Some(master) = crate::virtual_port::pty::take_master_for_slave(name) {
-        log::info!("Native PTY master attached for {}", name);
-        return Ok(master);
+fn open_bridge_endpoint(
+    endpoint: VirtualEndpoint,
+    baud_rate: u32,
+) -> Result<BridgeEndpoint, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let handle = WindowsBridgeHandle::open(&endpoint.bridge_path, baud_rate)?;
+        Ok(BridgeEndpoint {
+            external_path: endpoint.external_path,
+            handle,
+        })
     }
 
-    serialport::new(name, baud_rate)
-        .timeout(Duration::from_millis(VPORT_READ_TIMEOUT_MS))
-        .open()
-        .map_err(|error| format!("failed to open virtual endpoint {name}: {error}"))
-}
-
-#[cfg(target_os = "windows")]
-fn peer_is_open(endpoint: &mut BridgeEndpoint) -> Result<bool, String> {
-    endpoint.port.read_data_set_ready().map_err(|error| {
-        format!(
-            "failed to query virtual peer {} presence: {error}",
-            endpoint.external_path
-        )
-    })
+    #[cfg(not(target_os = "windows"))]
+    {
+        let port = if let Some(master) =
+            crate::virtual_port::pty::take_master_for_slave(&endpoint.bridge_path)
+        {
+            log::info!("Native PTY master attached for {}", endpoint.bridge_path);
+            master
+        } else {
+            serialport::new(&endpoint.bridge_path, baud_rate)
+                .timeout(Duration::from_millis(VPORT_IO_TIMEOUT_MS))
+                .open()
+                .map_err(|error| {
+                    format!(
+                        "failed to open virtual endpoint {}: {error}",
+                        endpoint.bridge_path
+                    )
+                })?
+        };
+        Ok(BridgeEndpoint {
+            external_path: endpoint.external_path,
+            port,
+        })
+    }
 }
 
 fn fan_out_physical_chunk(targets: &[EgressTarget], data: Vec<u8>) -> Result<(), String> {
@@ -527,6 +559,295 @@ fn drain_egress_queue(receiver: &mpsc::Receiver<Arc<[u8]>>, shared: &EndpointSha
     }
 }
 
+#[cfg(target_os = "windows")]
+fn endpoint_actor_loop(
+    endpoint: BridgeEndpoint,
+    receiver: mpsc::Receiver<Arc<[u8]>>,
+    io: Arc<SessionIo>,
+    shared: &EndpointShared,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let external_path = endpoint.external_path;
+    let mut port = endpoint.handle.into_io().map_err(|error| {
+        format!("virtual peer {external_path} actor initialization failed: {error}")
+    })?;
+    let mut reopen_armed = false;
+    let mut next_degraded_probe = Instant::now();
+    let mut need_read_probe = true;
+    let mut pending_writeback: Option<Vec<u8>> = None;
+    let mut pending_egress: Option<(Arc<[u8]>, usize, Instant)> = None;
+
+    match port.peer_is_open() {
+        Ok(open) => shared.observe_peer(open),
+        Err(error) => {
+            shared.mark_degraded(format!(
+                "initial peer presence query failed for {external_path}: {error}"
+            ));
+        }
+    }
+
+    while !cancel.load(Ordering::SeqCst) {
+        if (shared.is_degraded() || !shared.peer_known.load(Ordering::Acquire))
+            && Instant::now() >= next_degraded_probe
+        {
+            next_degraded_probe = Instant::now() + Duration::from_millis(DEGRADED_RECOVERY_POLL_MS);
+            match port.peer_is_open() {
+                Ok(open) => {
+                    observe_windows_peer(shared, open, &mut reopen_armed);
+                    if open {
+                        need_read_probe = true;
+                    }
+                }
+                Err(error) => shared.mark_degraded(error),
+            }
+        }
+
+        let peer_ready = shared.peer_known.load(Ordering::Acquire)
+            && shared.peer_open.load(Ordering::Acquire)
+            && !shared.is_backpressured();
+
+        if !peer_ready {
+            if port.read_pending() {
+                port.cancel_read()?;
+            }
+            if port.write_pending() {
+                port.cancel_write()?;
+            }
+            pending_egress = None;
+            drain_egress_queue(&receiver, shared);
+        } else if pending_egress.is_none() && !port.write_pending() {
+            match receiver.try_recv() {
+                Ok(data) => {
+                    shared.release_bytes(data.len());
+                    pending_egress = Some((data, 0, Instant::now()));
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    return Err(format!(
+                        "virtual peer {external_path} endpoint actor queue disconnected unexpectedly"
+                    ));
+                }
+            }
+        }
+
+        if let Some((data, offset, _)) = pending_egress.as_ref() {
+            if !port.write_pending() && *offset < data.len() {
+                if let Err(error) = port.start_write(data.clone(), *offset) {
+                    handle_windows_io_failure(
+                        &mut port,
+                        shared,
+                        &receiver,
+                        &mut pending_egress,
+                        format!("write start failed: {error}"),
+                    )?;
+                }
+            }
+        }
+
+        if io.is_exclusive() {
+            if port.read_pending() {
+                port.cancel_read()?;
+            }
+            need_read_probe = true;
+        } else if let Some(data) = pending_writeback.take() {
+            match io.send(&data) {
+                Ok(()) => shared.record_progress(),
+                Err(_) if io.is_exclusive() => pending_writeback = Some(data),
+                Err(error) => {
+                    port.shutdown();
+                    return Err(format!("virtual endpoint writeback failed: {error}"));
+                }
+            }
+        }
+
+        if peer_ready && !io.is_exclusive() && need_read_probe && !port.read_pending() {
+            match port.input_available() {
+                Ok((available, errors)) => {
+                    if errors != 0 {
+                        shared.mark_backpressured(format!(
+                            "Windows communication line error flags=0x{errors:08x}"
+                        ));
+                        port.cancel_write()?;
+                        pending_egress = None;
+                        drain_egress_queue(&receiver, shared);
+                    } else if available > 0 {
+                        port.start_read(available)?;
+                        need_read_probe = false;
+                    } else {
+                        need_read_probe = false;
+                    }
+                }
+                Err(error) => {
+                    shared.mark_degraded(format!("input queue status unavailable: {error}"));
+                }
+            }
+        }
+
+        let poll = match port.poll(Duration::from_millis(WORKER_POLL_MS)) {
+            Ok(poll) => poll,
+            Err(error) => {
+                handle_windows_io_failure(
+                    &mut port,
+                    shared,
+                    &receiver,
+                    &mut pending_egress,
+                    format!("overlapped I/O completion failed: {error}"),
+                )?;
+                continue;
+            }
+        };
+
+        if let Some(error) = poll.peer_status_error {
+            shared.mark_degraded(error);
+        }
+        if let Some(open) = poll.peer_open {
+            observe_windows_peer(shared, open, &mut reopen_armed);
+            if open {
+                need_read_probe = true;
+            } else {
+                if port.read_pending() {
+                    port.cancel_read()?;
+                }
+                if port.write_pending() {
+                    port.cancel_write()?;
+                }
+                pending_egress = None;
+                drain_egress_queue(&receiver, shared);
+            }
+        }
+        if let Some(errors) = poll.line_error {
+            shared.mark_backpressured(format!(
+                "Windows communication line error flags=0x{errors:08x}"
+            ));
+            if port.read_pending() {
+                port.cancel_read()?;
+            }
+            if port.write_pending() {
+                port.cancel_write()?;
+            }
+            pending_egress = None;
+            drain_egress_queue(&receiver, shared);
+        }
+        if poll.rx_ready {
+            need_read_probe = true;
+        }
+
+        if let Some(data) = poll.read_data {
+            match io.send(&data) {
+                Ok(()) => {
+                    shared.record_progress();
+                    need_read_probe = true;
+                }
+                Err(_) if io.is_exclusive() => {
+                    pending_writeback = Some(data);
+                    need_read_probe = true;
+                }
+                Err(error) => {
+                    port.shutdown();
+                    return Err(format!("virtual endpoint writeback failed: {error}"));
+                }
+            }
+        }
+
+        if let Some(written) = poll.write_completed {
+            if let Some((data, offset, last_progress)) = pending_egress.as_mut() {
+                if written > 0 {
+                    *offset = offset.saturating_add(written).min(data.len());
+                    *last_progress = Instant::now();
+                    shared.record_progress();
+                }
+                if *offset >= data.len() {
+                    pending_egress = None;
+                }
+            }
+        }
+
+        if let Some((_, _, last_progress)) = pending_egress.as_ref() {
+            if last_progress.elapsed() >= WRITE_STALL_DEADLINE {
+                match port.peer_is_open() {
+                    Ok(false) => {
+                        port.cancel_write()?;
+                        shared.observe_peer(false);
+                        pending_egress = None;
+                        drain_egress_queue(&receiver, shared);
+                    }
+                    Ok(true) => {
+                        port.cancel_write()?;
+                        shared.mark_backpressured(format!(
+                            "no write progress for {} ms while peer remained open",
+                            WRITE_STALL_DEADLINE.as_millis()
+                        ));
+                        pending_egress = None;
+                        drain_egress_queue(&receiver, shared);
+                    }
+                    Err(error) => {
+                        port.cancel_write()?;
+                        shared.mark_backpressured(format!(
+                            "write stalled and peer presence could not be verified: {error}"
+                        ));
+                        pending_egress = None;
+                        drain_egress_queue(&receiver, shared);
+                    }
+                }
+            }
+        }
+    }
+
+    port.shutdown();
+    drain_egress_queue(&receiver, shared);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn observe_windows_peer(shared: &EndpointShared, open: bool, reopen_armed: &mut bool) {
+    shared.observe_peer(open);
+    if !shared.is_backpressured() {
+        return;
+    }
+    if !open {
+        *reopen_armed = true;
+    } else if *reopen_armed {
+        shared.recover_after_reopen();
+        *reopen_armed = false;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn handle_windows_io_failure(
+    port: &mut WindowsBridgeIo,
+    shared: &EndpointShared,
+    receiver: &mpsc::Receiver<Arc<[u8]>>,
+    pending_egress: &mut Option<(Arc<[u8]>, usize, Instant)>,
+    reason: String,
+) -> Result<(), String> {
+    match port.peer_is_open() {
+        Ok(false) => {
+            let _ = port.cancel_read();
+            let _ = port.cancel_write();
+            shared.observe_peer(false);
+        }
+        Ok(true) => {
+            let _ = port.cancel_read();
+            let _ = port.cancel_write();
+            shared.mark_backpressured(format!("{reason}; peer remained open"));
+        }
+        Err(status_error) => {
+            let _ = port.cancel_read();
+            let _ = port.cancel_write();
+            shared.mark_backpressured(format!(
+                "{reason}; peer presence could not be verified: {status_error}"
+            ));
+        }
+    }
+    *pending_egress = None;
+    drain_egress_queue(receiver, shared);
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
 enum WriteOutcome {
     Delivered,
     PeerUnavailable,
@@ -534,83 +855,98 @@ enum WriteOutcome {
     Cancelled,
 }
 
-fn physical_to_virtual_writer_loop(
+#[cfg(not(target_os = "windows"))]
+fn endpoint_actor_loop(
     mut endpoint: BridgeEndpoint,
     receiver: mpsc::Receiver<Arc<[u8]>>,
+    io: Arc<SessionIo>,
     shared: &EndpointShared,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let mut reopen_armed = false;
+    let mut read_buf = [0u8; 4096];
+    let mut pending_writeback: Option<Vec<u8>> = None;
 
     while !cancel.load(Ordering::SeqCst) {
-        #[cfg(target_os = "windows")]
-        {
-            let peer_open = match peer_is_open(&mut endpoint) {
-                Ok(open) => open,
-                Err(error) => {
-                    shared.mark_backpressured(error);
-                    drain_egress_queue(&receiver, shared);
-                    std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                    continue;
-                }
-            };
-            shared.set_peer_open(peer_open);
-            if shared.is_backpressured() {
-                drain_egress_queue(&receiver, shared);
-                if !peer_open {
-                    reopen_armed = true;
-                } else if reopen_armed {
-                    shared.recover_after_reopen();
-                    reopen_armed = false;
-                }
-                std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                continue;
-            }
-            if !peer_open {
-                drain_egress_queue(&receiver, shared);
-                std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                continue;
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
         if shared.is_backpressured() {
             drain_egress_queue(&receiver, shared);
             std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
             continue;
         }
 
-        let data = match receiver.recv_timeout(Duration::from_millis(WORKER_POLL_MS)) {
-            Ok(data) => data,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                if cancel.load(Ordering::SeqCst) {
-                    return Ok(());
+        for _ in 0..EGRESS_ACTOR_BURST_MESSAGES {
+            match receiver.try_recv() {
+                Ok(data) => {
+                    shared.release_bytes(data.len());
+                    match write_chunk_to_peer(&mut endpoint, &data, shared, cancel)? {
+                        WriteOutcome::Delivered => {}
+                        WriteOutcome::PeerUnavailable | WriteOutcome::Backpressured => {
+                            drain_egress_queue(&receiver, shared);
+                            break;
+                        }
+                        WriteOutcome::Cancelled => return Ok(()),
+                    }
                 }
-                return Err(format!(
-                    "virtual peer {} egress queue disconnected unexpectedly",
-                    endpoint.external_path
-                ));
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "virtual peer {} endpoint actor queue disconnected unexpectedly",
+                        endpoint.external_path
+                    ));
+                }
             }
-        };
-        shared.release_bytes(data.len());
+        }
 
-        match write_chunk_to_peer(&mut endpoint, &data, shared, cancel)? {
-            WriteOutcome::Delivered => {}
-            WriteOutcome::PeerUnavailable => {
-                drain_egress_queue(&receiver, shared);
+        if io.is_exclusive() {
+            std::thread::sleep(Duration::from_millis(VPORT_IO_TIMEOUT_MS));
+            continue;
+        }
+
+        if let Some(data) = pending_writeback.take() {
+            match io.send(&data) {
+                Ok(()) => {}
+                Err(_) if io.is_exclusive() => {
+                    pending_writeback = Some(data);
+                    std::thread::sleep(Duration::from_millis(VPORT_IO_TIMEOUT_MS));
+                    continue;
+                }
+                Err(error) => return Err(format!("virtual endpoint writeback failed: {error}")),
+            }
+        }
+
+        match endpoint.port.read(&mut read_buf) {
+            Ok(n) if n > 0 => {
+                let data = read_buf[..n].to_vec();
+                match io.send(&data) {
+                    Ok(()) => shared.record_progress(),
+                    Err(_) if io.is_exclusive() => pending_writeback = Some(data),
+                    Err(error) => {
+                        return Err(format!("virtual endpoint writeback failed: {error}"));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(ref error)
+                if error.kind() == std::io::ErrorKind::TimedOut
+                    || error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => {
+                log::trace!(
+                    "Virtual peer {} is currently unavailable: {}",
+                    endpoint.external_path,
+                    error
+                );
                 std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
             }
-            WriteOutcome::Backpressured => {
-                drain_egress_queue(&receiver, shared);
-            }
-            WriteOutcome::Cancelled => return Ok(()),
         }
     }
+
+    drain_egress_queue(&receiver, shared);
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn write_chunk_to_peer(
     endpoint: &mut BridgeEndpoint,
     data: &[u8],
@@ -637,174 +973,22 @@ fn write_chunk_to_peer(
                 continue;
             }
             Err(error) => {
-                #[cfg(target_os = "windows")]
-                {
-                    match peer_is_open(endpoint) {
-                        Ok(false) => {
-                            shared.set_peer_open(false);
-                            return Ok(WriteOutcome::PeerUnavailable);
-                        }
-                        Ok(true) => {
-                            if error.kind() != std::io::ErrorKind::TimedOut
-                                && error.kind() != std::io::ErrorKind::WouldBlock
-                            {
-                                shared.mark_backpressured(format!(
-                                    "write failed while peer remained open: {error}"
-                                ));
-                                return Ok(WriteOutcome::Backpressured);
-                            }
-                        }
-                        Err(status_error) => {
-                            shared.mark_backpressured(format!(
-                                "write failed and peer presence could not be verified: {error}; {status_error}"
-                            ));
-                            return Ok(WriteOutcome::Backpressured);
-                        }
-                    }
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    log::trace!(
-                        "Virtual peer {} is currently unavailable: {}",
-                        endpoint.external_path,
-                        error
-                    );
-                    return Ok(WriteOutcome::PeerUnavailable);
-                }
+                log::trace!(
+                    "Virtual peer {} is currently unavailable: {}",
+                    endpoint.external_path,
+                    error
+                );
+                return Ok(WriteOutcome::PeerUnavailable);
             }
         }
 
         if last_progress.elapsed() >= WRITE_STALL_DEADLINE {
-            #[cfg(target_os = "windows")]
-            {
-                match peer_is_open(endpoint) {
-                    Ok(false) => {
-                        shared.set_peer_open(false);
-                        return Ok(WriteOutcome::PeerUnavailable);
-                    }
-                    Ok(true) => {
-                        shared.mark_backpressured(format!(
-                            "no write progress for {} ms while peer remained open",
-                            WRITE_STALL_DEADLINE.as_millis()
-                        ));
-                        return Ok(WriteOutcome::Backpressured);
-                    }
-                    Err(error) => {
-                        shared.mark_backpressured(format!(
-                            "write stalled and peer presence query failed: {error}"
-                        ));
-                        return Ok(WriteOutcome::Backpressured);
-                    }
-                }
-            }
-
-            #[cfg(not(target_os = "windows"))]
             return Ok(WriteOutcome::PeerUnavailable);
         }
-
         std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
     }
 
     Ok(WriteOutcome::Delivered)
-}
-
-fn virtual_to_physical_loop(
-    mut endpoint: BridgeEndpoint,
-    io: Arc<SessionIo>,
-    shared: &EndpointShared,
-    cancel: &AtomicBool,
-) -> Result<(), String> {
-    let mut read_buf = [0u8; 4096];
-    let mut pending_write: Option<Vec<u8>> = None;
-
-    while !cancel.load(Ordering::SeqCst) {
-        if io.is_exclusive() || shared.is_backpressured() {
-            std::thread::sleep(Duration::from_millis(VPORT_READ_TIMEOUT_MS));
-            continue;
-        }
-
-        if let Some(data) = pending_write.take() {
-            match io.send(&data) {
-                Ok(()) => {}
-                Err(_) if io.is_exclusive() => {
-                    pending_write = Some(data);
-                    std::thread::sleep(Duration::from_millis(VPORT_READ_TIMEOUT_MS));
-                    continue;
-                }
-                Err(error) => return Err(format!("virtual endpoint writeback failed: {error}")),
-            }
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let open = match peer_is_open(&mut endpoint) {
-                Ok(open) => open,
-                Err(error) => {
-                    shared.mark_backpressured(error);
-                    std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                    continue;
-                }
-            };
-            shared.set_peer_open(open);
-            if !open {
-                std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                continue;
-            }
-        }
-
-        match endpoint.port.read(&mut read_buf) {
-            Ok(n) if n > 0 => {
-                let data = read_buf[..n].to_vec();
-                match io.send(&data) {
-                    Ok(()) => {}
-                    Err(_) if io.is_exclusive() => {
-                        pending_write = Some(data);
-                    }
-                    Err(error) => {
-                        return Err(format!("virtual endpoint writeback failed: {error}"));
-                    }
-                }
-            }
-            Ok(_) => {}
-            Err(ref error)
-                if error.kind() == std::io::ErrorKind::TimedOut
-                    || error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => {
-                #[cfg(target_os = "windows")]
-                {
-                    match peer_is_open(&mut endpoint) {
-                        Ok(false) => {
-                            shared.set_peer_open(false);
-                            std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                        }
-                        Ok(true) => {
-                            shared.mark_backpressured(format!(
-                                "read failed while peer remained open: {error}"
-                            ));
-                        }
-                        Err(status_error) => {
-                            shared.mark_backpressured(format!(
-                                "read failed and peer presence could not be verified: {error}; {status_error}"
-                            ));
-                        }
-                    }
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    log::trace!(
-                        "Virtual peer {} is currently unavailable: {}",
-                        endpoint.external_path,
-                        error
-                    );
-                    std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -812,6 +996,20 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+
+    fn ready_shared(
+        external_path: &str,
+        backlog_limit_bytes: usize,
+        events: mpsc::Sender<VirtualPortBridgeEvent>,
+    ) -> Arc<EndpointShared> {
+        Arc::new(EndpointShared::new(
+            external_path.into(),
+            backlog_limit_bytes,
+            true,
+            true,
+            events,
+        ))
+    }
 
     #[test]
     fn backlog_budget_is_bounded_and_scales_with_line_rate() {
@@ -834,13 +1032,8 @@ mod tests {
     #[test]
     fn one_backpressured_endpoint_does_not_block_siblings() {
         let (event_tx, event_rx) = mpsc::channel();
-        let a = Arc::new(EndpointShared::new(
-            "COM21".into(),
-            4,
-            true,
-            event_tx.clone(),
-        ));
-        let b = Arc::new(EndpointShared::new("COM23".into(), 16, true, event_tx));
+        let a = ready_shared("COM21", 4, event_tx.clone());
+        let b = ready_shared("COM23", 16, event_tx);
         let (a_tx, a_rx) = mpsc::sync_channel(8);
         let (b_tx, b_rx) = mpsc::sync_channel(8);
         let targets = vec![
@@ -879,13 +1072,8 @@ mod tests {
     #[test]
     fn sustained_stalled_endpoint_does_not_block_healthy_sibling() {
         let (event_tx, _event_rx) = mpsc::channel();
-        let stalled = Arc::new(EndpointShared::new(
-            "COM21".into(),
-            8,
-            true,
-            event_tx.clone(),
-        ));
-        let healthy = Arc::new(EndpointShared::new("COM23".into(), 32, true, event_tx));
+        let stalled = ready_shared("COM21", 8, event_tx.clone());
+        let healthy = ready_shared("COM23", 32, event_tx);
         let (stalled_tx, _stalled_rx) = mpsc::sync_channel(8);
         let (healthy_tx, healthy_rx) = mpsc::sync_channel(8);
         let targets = vec![
@@ -916,21 +1104,65 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_recovery_requires_explicit_reopen_transition() {
+    fn presence_query_failure_is_degraded_not_data_gap() {
         let (event_tx, event_rx) = mpsc::channel();
-        let shared = EndpointShared::new("COM21".into(), 64, true, event_tx);
-        shared.mark_backpressured("test stall");
-        assert!(shared.is_backpressured());
-        shared.recover_after_reopen();
-        assert!(!shared.is_backpressured());
+        let endpoint = ready_shared("COM21", 64, event_tx);
 
+        endpoint.mark_degraded("temporary modem-status query failure");
+        assert!(endpoint.is_degraded());
+        assert!(!endpoint.is_backpressured());
+        assert!(endpoint.can_enqueue());
+
+        match event_rx.try_recv().unwrap() {
+            VirtualPortBridgeEvent::EndpointDegraded { external_path, .. } => {
+                assert_eq!(external_path, "COM21");
+            }
+            other => panic!("unexpected bridge event: {other:?}"),
+        }
+
+        endpoint.observe_peer(true);
+        assert!(!endpoint.is_degraded());
+        assert!(!endpoint.is_backpressured());
+        assert!(endpoint.can_enqueue());
         assert!(matches!(
             event_rx.try_recv().unwrap(),
-            VirtualPortBridgeEvent::EndpointBackpressured { .. }
+            VirtualPortBridgeEvent::EndpointReady { .. }
         ));
+    }
+
+    #[test]
+    fn initial_unknown_presence_does_not_accept_egress() {
+        let (event_tx, _event_rx) = mpsc::channel();
+        let endpoint = Arc::new(EndpointShared::new(
+            "COM21".into(),
+            64,
+            false,
+            false,
+            event_tx,
+        ));
+
+        endpoint.mark_degraded("initial modem-status query failure");
+        assert!(endpoint.is_degraded());
+        assert!(!endpoint.can_enqueue());
+    }
+
+    #[test]
+    fn backpressure_recovery_starts_a_fresh_stream() {
+        let (event_tx, event_rx) = mpsc::channel();
+        let endpoint = ready_shared("COM21", 64, event_tx);
+
+        assert!(endpoint.reserve_bytes(12));
+        endpoint.mark_backpressured("test gap");
+        assert!(endpoint.is_backpressured());
+        assert_eq!(endpoint.queued_bytes.load(Ordering::Acquire), 12);
+        let _ = event_rx.try_recv().unwrap();
+
+        endpoint.recover_after_reopen();
+        assert!(!endpoint.is_backpressured());
+        assert_eq!(endpoint.queued_bytes.load(Ordering::Acquire), 0);
         assert!(matches!(
             event_rx.try_recv().unwrap(),
-            VirtualPortBridgeEvent::EndpointRecovered { .. }
+            VirtualPortBridgeEvent::EndpointReady { .. }
         ));
     }
 }

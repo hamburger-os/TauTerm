@@ -30,6 +30,17 @@ Release 构建无法连接服务时进入 `direct-uac-on-demand` 并记录真实
 
 App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；服务命名管道拒绝 remote clients，并在同目录可执行文件/PID 校验后为每个 GUI 连接建立独立处理线程，使多个 TauTerm 实例可以同时使用同一特权服务。每条连接必须先完成 hello，后续请求的 client_id 必须与该连接绑定值一致；com0com mutation 仍由共享 manager 与全局 mutex 串行化。管道断开本身不再等同于 GUI 退出：服务仅在已验证 GUI 进程实际退出后才清理该连接 endpoint，短暂 pipe 断开/重连保留 active ownership，避免旧连接线程与新连接 re-adoption 竞态误删仍在使用的端口。命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
+### 崩溃诊断与本地证据
+
+System Log 只能覆盖仍能返回到 Rust 控制流的故障；native exception、驱动/FFI 导致的进程级异常可能在业务日志写入前直接终止进程。TauTerm 因此在 GUI 启动早期安装一层**本地、有限、非上传式** crash diagnostics：
+
+- Rust panic 记录版本、时间、PID、线程、源位置、经系统日志同一规则脱敏的 panic payload 与 backtrace；
+- Windows 正常启动时预先拉起同一可执行文件的普通权限 crash-helper；helper 启动后必须核验自己的实际父进程 PID 与目标 TauTerm PID 一致，单独伪造命令行 PID 不能获得进程转储能力。未处理 native exception 的过滤器只向已建立的私有 pipe 写入固定大小异常上下文并短暂等待，真正的 `MiniDumpWriteDump(MiniDumpNormal)` 在独立 helper 进程中执行，随后主进程返回正常 Windows/WER 异常处理链；
+- crash artifact 正常保存在当前用户本地应用数据目录下的 `TauTerm/crash`；只有无法解析用户目录时才使用带 PID 的临时 fallback。Unix 目录/文本报告分别收紧为仅当前用户可访问/读写，并按数量上限清理旧文件；应用不会自动上传、网络发送或并入普通 Session/System Log；
+- 普通“导出诊断”只包含 crash artifact 数量与当前平台是否具备 native minidump 能力，不复制 dump 正文。
+
+即使使用 `MiniDumpNormal`，dump 仍可能包含线程栈和与崩溃现场有关的进程内存片段，必须视为潜在敏感诊断材料。产品不得静默上传、共享或扩大为 full-memory dump；用户主动提供 dump 时也应按敏感调试资料处理。
+
 ### Native helper 与动态库
 
 TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构建不能把当前工作目录当成可信可执行文件/DLL 搜索源。
@@ -69,6 +80,7 @@ flowchart LR
 - 密码、私钥、token 等不得进入普通日志或文档示例。
 - WebView 不获得没有当前功能需求支撑的通用文件系统 capability；用户通过 dialog 选择路径不等于授权前端任意文件 I/O。
 - 运行时可覆盖 native helper 的机制只能用于明确的受信开发场景，不能让导入配置变成任意代码执行入口。
+- Crash diagnostics 默认仅本地、有限保留；自动采集不得使用 full-memory dump，也不得建立隐式上传通道。
 - 安装/更新状态与应用版本元数据必须由发布流程验证，不能靠 README 手工同步。
 - Updater 运行资格由生产 bundle 决定；开发态不访问正式 endpoint，正式 manifest 不提供为开发运行准备的通用平台 fallback。
 - 安全漏洞披露流程只在根 `SECURITY.md` 维护。
@@ -78,6 +90,7 @@ flowchart LR
 - `src-tauri/src/security/`
 - `src-tauri/src/virtual_port/`
 - `src-tauri/src/bin/`
+- `src-tauri/src/crash_diagnostics.rs`
 - `src-tauri/tauri*.conf.json`
 - `src/hooks/useUpdater.ts`
 - `scripts/prepare-service-bin.js`
@@ -87,6 +100,6 @@ flowchart LR
 
 ## 何时更新本文
 
-修改凭据后端、权限模型、服务/helper IPC、native 加载路径、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
+修改凭据后端、权限模型、服务/helper IPC、native 加载路径、崩溃诊断/转储策略、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
 
 Tauri/Windows 平台权威资料见 [PLATFORM_SECURITY.md](../knowledge/PLATFORM_SECURITY.md)；第三方分发和许可证依据见 [LICENSE_COMPLIANCE.md](../knowledge/LICENSE_COMPLIANCE.md)。

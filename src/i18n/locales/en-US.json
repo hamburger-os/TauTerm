@@ -63,6 +63,9 @@
     "enableSendBar": "Enable Send Bar",
     "enableVirtualPort": "Enable Virtual Port",
     "virtualPortCount": "Device Count",
+    "virtualPortBackpressured": "Virtual port {{ports}} mirroring is paused; close and reopen the external port",
+    "virtualPortDegraded": "Virtual port {{ports}} status is temporarily unavailable and is recovering automatically",
+    "virtualPortBridgeFailed": "Virtual port bridge stopped — see the log for details",
     "virtualPort": {
       "notInstalled": "VPort not ready — driver not installed",
       "retry": "Fix",

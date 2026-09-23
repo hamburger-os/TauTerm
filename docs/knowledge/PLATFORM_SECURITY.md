@@ -23,6 +23,22 @@ TauTerm 的 IPC 能力、CSP、资源打包、sidecar/updater 等设计必须与
 
 TauTerm 的长期原则是主 GUI 保持普通权限，只把必要动作放到窄特权边界。平台 API 允许做某事不等于 TauTerm 应扩大权限范围。
 
+### Windows 崩溃诊断
+
+进程级异常与本地 minidump 以 Microsoft Learn 为权威来源：
+
+- SetUnhandledExceptionFilter: https://learn.microsoft.com/windows/win32/api/errhandlingapi/nf-errhandlingapi-setunhandledexceptionfilter
+- MiniDumpWriteDump: https://learn.microsoft.com/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
+- MINIDUMP_EXCEPTION_INFORMATION: https://learn.microsoft.com/windows/win32/api/minidumpapiset/ns-minidumpapiset-minidump_exception_information
+- Windows Error Reporting LocalDumps: https://learn.microsoft.com/windows/win32/wer/collecting-user-mode-dumps
+- CreateToolhelp32Snapshot: https://learn.microsoft.com/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot
+- Process32FirstW / parent PID: https://learn.microsoft.com/windows/win32/api/tlhelp32/nf-tlhelp32-process32firstw
+- Overlapped communications I/O: https://learn.microsoft.com/windows/win32/devio/overlapped-operations
+- WaitCommEvent: https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-waitcommevent
+- CancelIoEx: https://learn.microsoft.com/windows/win32/fileio/cancelioex-func
+
+TauTerm 自己只采集最小必要的本地崩溃证据，不把平台提供的 full-memory dump 能力自动打开，也不把 dump 当作普通遥测上传。Windows com0com bridge 应使用 overlapped communications I/O 与 WaitCommEvent，不用固定周期轮询模拟状态事件。确定性 shutdown 使用 CancelIoEx 时，必须仍由 handle owner 收口完成状态并等待线程退出，不能把“发出 cancel”当作资源已经销毁。
+
 ## 凭据与加密
 
 TauTerm 当前凭据存储设计由 [PLATFORM_SECURITY 模块文档](../modules/PLATFORM_SECURITY.md) 负责。密码派生和 AEAD 算法实现应依据所使用 Rust crates 的当前官方文档与相应算法规范，不在知识库复制密码学细节。
