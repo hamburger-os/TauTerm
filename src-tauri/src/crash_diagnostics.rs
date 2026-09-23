@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn crash_artifact_retention_is_bounded() {
-        assert!(MAX_CRASH_ARTIFACTS > 0);
-        assert!(MAX_CRASH_ARTIFACTS <= 32);
+        let configured = MAX_CRASH_ARTIFACTS;
+        assert!((1..=32).contains(&configured));
     }
 }
