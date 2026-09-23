@@ -42,7 +42,7 @@ if (!/^license\s*=\s*"MIT OR Apache-2\.0"$/m.test(cargoToml)) {
 }
 
 const notice = read("THIRD_PARTY_LICENSES.md");
-for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "serialport 4.10.0", "THIRD_PARTY_DEPENDENCY_LICENSES.txt", "Npcap", "libpcap"]) {
+for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "serialport 4.10.1", "THIRD_PARTY_DEPENDENCY_LICENSES.txt", "Npcap", "libpcap"]) {
   if (!notice.includes(marker)) fail("THIRD_PARTY_LICENSES.md missing inventory marker: " + marker);
 }
 
