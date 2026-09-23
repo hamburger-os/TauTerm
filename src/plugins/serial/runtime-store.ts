@@ -1,7 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginRuntimeStore } from "../../core/plugin-registry";
 
-export type SerialVirtualEndpointState = "ready" | "backpressured";
+export type SerialVirtualEndpointState = "ready" | "degraded" | "backpressured";
 
 export interface SerialVirtualEndpoint {
   external_path: string;
@@ -56,7 +56,7 @@ function endpointFromHealth(
   return {
     external_path: endpoint.external_path,
     state: event.state,
-    reason: event.state === "backpressured" ? event.reason : undefined,
+    reason: event.state === "ready" ? undefined : event.reason,
     queued_bytes: event.state === "backpressured" ? event.queued_bytes : undefined,
     backlog_limit_bytes:
       event.state === "backpressured" ? event.backlog_limit_bytes : undefined,
