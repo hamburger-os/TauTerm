@@ -29,7 +29,7 @@ Move the completed `Unreleased` entries into:
 ## [X.Y.Z] — YYYY-MM-DD
 ```
 
-Keep a fresh `## [Unreleased]` section above it for future work. Do not cut the version section until its entries describe all merged user-visible and release-critical changes.
+Keep a fresh `## [Unreleased]` section above it for future work. Do not cut the version section until its entries describe all merged user-visible and release-critical changes. `release:check` fails closed when `Unreleased` still contains content before the target version, so changes merged after release preparation must be moved into that release section before publishing.
 
 Then validate metadata, documentation/licensing, and build the current platform release:
 

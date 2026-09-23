@@ -91,5 +91,5 @@
 3. 版本/工具链检查通过，`package.json`、npm lock、Tauri、Cargo manifest 与 `Cargo.lock` 版本一致；
 4. CI 三平台与 PR Runtime E2E 已完成；
 5. 正式 Release 会在 exact SHA 上重新执行 CI、TRDP Native、Runtime E2E、依赖安全、性能合同与 release reliability qualification，不使用旧 workflow 结果替代；
-6. 如果 hosted Windows Runtime E2E 显示 `blocked`，只能在真实 Windows 上验证同一个 release SHA 后提交该 SHA 作为证据，不能把 `blocked` 当作 `passed`；
+6. hosted Windows Runtime E2E 的 `blocked` / `failed` 发布处理直接遵循 [社区发布文档](../community/RELEASING.md) 的唯一规则，本手册不维护第二套 SHA attestation 流程；
 7. 第三方源码、许可证和二进制分发方式没有在本版本中发生未记录变化。

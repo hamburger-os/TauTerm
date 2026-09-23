@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { assertReleaseBoundary } from "./release-changelog.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -62,14 +63,14 @@ if (!cargoLockVersion) {
 
 if (releaseMode) {
   const changelog = readFileSync(resolve(root, "CHANGELOG.md"), "utf8");
-  const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const changelogHeading = new RegExp(`^## \\[${escaped}\\](?:\\s|$)`, "m");
-  if (!changelogHeading.test(changelog)) {
-    fail(`CHANGELOG.md: missing release heading for ${expected}`);
-  } else {
-    console.log(`✅ CHANGELOG.md: release ${expected} is documented`);
+  try {
+    assertReleaseBoundary(changelog, expected);
+    console.log(
+      `✅ CHANGELOG.md: release ${expected} is documented and Unreleased is empty`,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-
 }
 
 if (process.exitCode) {
