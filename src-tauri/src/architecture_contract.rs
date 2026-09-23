@@ -582,6 +582,8 @@ fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
     assert!(source.contains("crash_helper_parent_pid"));
     assert!(source.contains("parent_pid == expected_pid"));
     assert!(source.contains("CRASH_HELPER_READY"));
+    assert!(source.contains("CRASH_HELPER_STARTUP_TIMEOUT"));
+    assert!(source.contains("recv_timeout"));
     assert!(source.contains("failed readiness handshake"));
     assert!(source.contains("ClientPointers: 1"));
     assert!(source.contains("EXCEPTION_CONTINUE_SEARCH"));
