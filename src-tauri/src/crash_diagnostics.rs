@@ -115,7 +115,7 @@ pub fn artifact_count() -> u64 {
 pub fn native_minidump_enabled() -> bool {
     #[cfg(target_os = "windows")]
     {
-        return NATIVE_MINIDUMP_READY.load(Ordering::Acquire);
+        NATIVE_MINIDUMP_READY.load(Ordering::Acquire)
     }
     #[cfg(not(target_os = "windows"))]
     {
