@@ -86,7 +86,14 @@ fn write_panic_report(info: &std::panic::PanicHookInfo<'_>) {
     };
     let location = info
         .location()
-        .map(|location| format!("{}:{}:{}", location.file(), location.line(), location.column()))
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
         .unwrap_or_else(|| "<unknown>".to_string());
     let timestamp = chrono::Utc::now();
     let file_name = format!(
@@ -152,9 +159,7 @@ unsafe extern "system" fn unhandled_exception_filter(
     let _ = std::fs::create_dir_all(&directory);
     let process_id = GetCurrentProcessId();
     let thread_id = GetCurrentThreadId();
-    let path = directory.join(format!(
-        "TauTerm_native_p{process_id}_t{thread_id}.dmp"
-    ));
+    let path = directory.join(format!("TauTerm_native_p{process_id}_t{thread_id}.dmp"));
 
     if let Ok(file) = std::fs::File::create(path) {
         let exception = MINIDUMP_EXCEPTION_INFORMATION {
