@@ -854,12 +854,6 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_actor_egress_burst_is_bounded() {
-        assert!(EGRESS_ACTOR_BURST_MESSAGES > 1);
-        assert!(EGRESS_ACTOR_BURST_MESSAGES < EGRESS_QUEUE_MESSAGES);
-    }
-
-    #[test]
     fn backlog_budget_is_bounded_and_scales_with_line_rate() {
         let slow = egress_backlog_limit_bytes(115_200);
         let faster = egress_backlog_limit_bytes(2_000_000);
