@@ -3,6 +3,11 @@
 //! System/Session logs can only describe failures that return through Rust control flow. Native
 //! faults and abrupt process termination may bypass those log paths entirely, so TauTerm keeps a
 //! small, local-only crash artifact directory. Nothing in this module uploads data.
+//!
+//! On Windows the crashing GUI never calls MiniDumpWriteDump itself. A same-binary, unprivileged
+//! helper is started during normal initialization and blocks on a private inherited pipe. The
+//! exception filter only writes one fixed-size packet and waits briefly for that helper to exit;
+//! the helper opens the crashing process and writes the minidump out-of-process.
 
 use std::backtrace::Backtrace;
 use std::path::{Path, PathBuf};
@@ -10,6 +15,37 @@ use std::sync::OnceLock;
 
 const MAX_CRASH_ARTIFACTS: usize = 12;
 static CRASH_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+const CRASH_HELPER_ARG: &str = "--tauterm-crash-handler";
+#[cfg(target_os = "windows")]
+const CRASH_PACKET_MAGIC: u32 = 0x5441_5543; // "TAUC"
+#[cfg(target_os = "windows")]
+const CRASH_HELPER_WAIT_MS: u32 = 5_000;
+
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "windows")]
+static NATIVE_MINIDUMP_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static CRASH_CHANNEL: OnceLock<CrashChannel> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+struct CrashChannel {
+    pipe_handle: usize,
+    helper_process_handle: usize,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CrashPacket {
+    magic: u32,
+    process_id: u32,
+    thread_id: u32,
+    _reserved: u32,
+    exception_pointers: usize,
+}
 
 pub fn install() {
     let directory = crash_directory();
@@ -26,10 +62,34 @@ pub fn install() {
     install_panic_hook();
 
     #[cfg(target_os = "windows")]
-    unsafe {
-        use windows_sys::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
-        SetUnhandledExceptionFilter(Some(unhandled_exception_filter));
+    match start_native_crash_helper(&directory) {
+        Ok(()) => unsafe {
+            use windows_sys::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
+            SetUnhandledExceptionFilter(Some(unhandled_exception_filter));
+            NATIVE_MINIDUMP_READY.store(true, Ordering::Release);
+        },
+        Err(error) => {
+            eprintln!("TauTerm: native crash helper unavailable: {error}");
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn maybe_run_helper() -> bool {
+    let mut args = std::env::args_os();
+    let _program = args.next();
+    if args.next().as_deref() != Some(std::ffi::OsStr::new(CRASH_HELPER_ARG)) {
+        return false;
+    }
+
+    let expected_pid = args
+        .next()
+        .and_then(|value| value.to_string_lossy().parse::<u32>().ok());
+    let directory = args.next().map(PathBuf::from);
+    if let (Some(expected_pid), Some(directory)) = (expected_pid, directory) {
+        let _ = run_native_crash_helper(expected_pid, &directory);
+    }
+    true
 }
 
 pub fn directory() -> PathBuf {
@@ -52,8 +112,15 @@ pub fn artifact_count() -> u64 {
         .count() as u64
 }
 
-pub const fn native_minidump_enabled() -> bool {
-    cfg!(target_os = "windows")
+pub fn native_minidump_enabled() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return NATIVE_MINIDUMP_READY.load(Ordering::Acquire);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
 }
 
 fn crash_directory() -> PathBuf {
@@ -173,43 +240,172 @@ fn prune_old_artifacts(directory: &Path) {
 }
 
 #[cfg(target_os = "windows")]
+fn start_native_crash_helper(directory: &Path) -> Result<(), String> {
+    if CRASH_CHANNEL.get().is_some() {
+        return Ok(());
+    }
+
+    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    let executable =
+        std::env::current_exe().map_err(|error| format!("resolve current executable: {error}"))?;
+    let mut child = Command::new(executable)
+        .arg(CRASH_HELPER_ARG)
+        .arg(std::process::id().to_string())
+        .arg(directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|error| format!("start crash helper: {error}"))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "crash helper stdin pipe was not created".to_string())?;
+
+    let channel = CrashChannel {
+        pipe_handle: stdin.as_raw_handle() as usize,
+        helper_process_handle: child.as_raw_handle() as usize,
+    };
+    CRASH_CHANNEL
+        .set(channel)
+        .map_err(|_| "crash helper channel already initialized".to_string())?;
+
+    // These handles intentionally live until process teardown. On a normal exit Windows closes the
+    // pipe, the helper observes EOF and exits; on a crash the exception filter uses both handles.
+    let _ = Box::leak(Box::new(stdin));
+    let _ = Box::leak(Box::new(child));
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 unsafe extern "system" fn unhandled_exception_filter(
     exception_pointers: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
 ) -> i32 {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::Diagnostics::Debug::{
-        MiniDumpNormal, MiniDumpWriteDump, EXCEPTION_CONTINUE_SEARCH,
-        MINIDUMP_EXCEPTION_INFORMATION,
-    };
+    use windows_sys::Win32::Storage::FileSystem::WriteFile;
+    use windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH;
     use windows_sys::Win32::System::Threading::{
-        GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId,
+        GetCurrentProcessId, GetCurrentThreadId, WaitForSingleObject,
     };
 
-    let directory = crash_directory();
-    let _ = std::fs::create_dir_all(&directory);
-    let process_id = GetCurrentProcessId();
-    let thread_id = GetCurrentThreadId();
-    let path = directory.join(format!("TauTerm_native_p{process_id}_t{thread_id}.dmp"));
-
-    if let Ok(file) = std::fs::File::create(path) {
-        let exception = MINIDUMP_EXCEPTION_INFORMATION {
-            ThreadId: thread_id,
-            ExceptionPointers: exception_pointers,
-            ClientPointers: 0,
-        };
-        let _ = MiniDumpWriteDump(
-            GetCurrentProcess(),
-            process_id,
-            file.as_raw_handle() as _,
-            MiniDumpNormal,
-            &exception,
-            std::ptr::null(),
-            std::ptr::null(),
+    let Some(channel) = CRASH_CHANNEL.get() else {
+        return EXCEPTION_CONTINUE_SEARCH;
+    };
+    let packet = CrashPacket {
+        magic: CRASH_PACKET_MAGIC,
+        process_id: GetCurrentProcessId(),
+        thread_id: GetCurrentThreadId(),
+        _reserved: 0,
+        exception_pointers: exception_pointers as usize,
+    };
+    let mut written = 0u32;
+    let success = WriteFile(
+        channel.pipe_handle as _,
+        (&packet as *const CrashPacket).cast(),
+        std::mem::size_of::<CrashPacket>() as u32,
+        &mut written,
+        std::ptr::null_mut(),
+    );
+    if success != 0 && written == std::mem::size_of::<CrashPacket>() as u32 {
+        let _ = WaitForSingleObject(
+            channel.helper_process_handle as _,
+            CRASH_HELPER_WAIT_MS,
         );
     }
 
-    // Keep the normal Windows/WER crash path alive after taking our bounded local dump.
+    // Preserve the normal Windows/WER crash path after the helper captured best-effort evidence.
     EXCEPTION_CONTINUE_SEARCH
+}
+
+#[cfg(target_os = "windows")]
+fn run_native_crash_helper(expected_pid: u32, directory: &Path) -> Result<(), String> {
+    use std::io::Read;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Diagnostics::Debug::{
+        MiniDumpNormal, MiniDumpWriteDump, EXCEPTION_POINTERS, MINIDUMP_EXCEPTION_INFORMATION,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let mut packet = CrashPacket {
+        magic: 0,
+        process_id: 0,
+        thread_id: 0,
+        _reserved: 0,
+        exception_pointers: 0,
+    };
+    let packet_bytes = unsafe {
+        std::slice::from_raw_parts_mut(
+            (&mut packet as *mut CrashPacket).cast::<u8>(),
+            std::mem::size_of::<CrashPacket>(),
+        )
+    };
+    if std::io::stdin().read_exact(packet_bytes).is_err() {
+        // Normal parent exit closes the pipe without a packet.
+        return Ok(());
+    }
+    if packet.magic != CRASH_PACKET_MAGIC || packet.process_id != expected_pid {
+        return Err("invalid crash helper packet".to_string());
+    }
+
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("create crash directory: {error}"))?;
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            0,
+            packet.process_id,
+        )
+    };
+    if process.is_null() {
+        return Err("open crashing process failed".to_string());
+    }
+
+    let timestamp = chrono::Utc::now();
+    let path = directory.join(format!(
+        "TauTerm_{}_native_p{}.dmp",
+        timestamp.format("%Y%m%d_%H%M%S_%3f"),
+        packet.process_id
+    ));
+    let result = (|| {
+        let file =
+            std::fs::File::create(&path).map_err(|error| format!("create minidump: {error}"))?;
+        let exception = MINIDUMP_EXCEPTION_INFORMATION {
+            ThreadId: packet.thread_id,
+            ExceptionPointers: packet.exception_pointers as *mut EXCEPTION_POINTERS,
+            ClientPointers: 1,
+        };
+        let ok = unsafe {
+            MiniDumpWriteDump(
+                process,
+                packet.process_id,
+                file.as_raw_handle() as _,
+                MiniDumpNormal,
+                &exception,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if ok == 0 {
+            let _ = std::fs::remove_file(&path);
+            return Err("MiniDumpWriteDump failed".to_string());
+        }
+        Ok(())
+    })();
+
+    unsafe {
+        CloseHandle(process);
+    }
+    if result.is_ok() {
+        prune_old_artifacts(directory);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -226,5 +422,11 @@ mod tests {
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.starts_with("TauTerm-crash-"))
         );
+    }
+
+    #[test]
+    fn crash_artifact_retention_is_bounded() {
+        assert!(MAX_CRASH_ARTIFACTS > 0);
+        assert!(MAX_CRASH_ARTIFACTS <= 32);
     }
 }
