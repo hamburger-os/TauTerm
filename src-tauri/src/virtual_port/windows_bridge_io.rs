@@ -286,9 +286,7 @@ impl WindowsBridgeIo {
                 unsafe { GetLastError() }
             ));
         }
-        if wait != WAIT_TIMEOUT
-            && (wait < WAIT_OBJECT_0 || wait >= WAIT_OBJECT_0 + handles.len() as u32)
-        {
+        if wait != WAIT_TIMEOUT && wait >= WAIT_OBJECT_0 + handles.len() as u32 {
             return Err(format!("unexpected wait result {wait}"));
         }
 
