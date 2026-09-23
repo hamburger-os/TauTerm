@@ -75,7 +75,7 @@ The current Cargo graph also contains unmodified MPL-2.0 crates that are not mai
 - `dtoa-short 0.3.5`
 - `option-ext 0.2.0`
 - `selectors 0.36.1`
-- `serialport 4.10.0`
+- `serialport 4.10.1`
 
 These versions and their MPL-2.0 expressions are explicitly reviewed by `scripts/check-cargo-licenses.js`. An upgrade or license-expression change fails closed and requires another review. Their resolved package metadata and available license/notice texts are included in the generated dependency notice shipped with TauTerm.
 

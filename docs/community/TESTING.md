@@ -14,7 +14,7 @@ This document is the repository source of truth for automated verification level
 | Runtime E2E | Real TauTerm desktop app driven through Tauri WebDriver on Windows/Linux | Every PR + release exact SHA | Verify user-visible application paths in an actual WebView |
 | Performance contract | Release-mode I/O dispatch and persistence benchmark with JSON artifact | Scheduled/manual + release exact SHA | Track performance trends and keep release evidence current |
 | Reliability soak | Repeated create/write/shutdown I/O lifecycle for configurable duration | Scheduled/manual + release exact SHA | Find leaks, hangs and lifecycle accumulation |
-| Dependency security | npm + RustSec advisory reports and Dependabot | Scheduled/manual + release exact SHA | Keep dependency risk visible |
+| Dependency security | npm + RustSec advisory reports and Dependabot | Every PR + master push + scheduled/manual + release exact SHA | Keep dependency risk visible before release qualification |
 
 ## Pull-request gate
 
@@ -97,7 +97,7 @@ Dependabot tracks npm, Cargo and GitHub Actions dependencies weekly. The Depende
 - full npm advisory report;
 - RustSec cargo audit.
 
-Security reports are stored as workflow artifacts for review. Release re-runs this workflow against the exact source SHA rather than relying on the age of the last scheduled report.
+Security reports are stored as workflow artifacts for review. The workflow runs on every pull request targeting `master` and every push to `master`, in addition to the scheduled/manual checks. Release still re-runs the same gate against the exact source SHA rather than relying on an earlier PR, master, or scheduled result.
 
 ## Diagnostics during testing
 

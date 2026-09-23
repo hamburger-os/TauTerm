@@ -7,17 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-09-23
+
 ### Added
 - **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.
 - **RTT Debug Assistant** — adds a first-class embedded RTT Session with native debug-probe access through probe-rs, coexistence with existing local J-Link sessions, independent Up/Down multi-channel I/O, ELF/AXF-assisted Control Block discovery, shared SendBar/Auto Reply/Lua integration, bounded background history, channel-labelled Session Data Logs, Terminal/Log/HEX raw observation views, and a native SystemView/RTOS Trace observer with target-time task/ISR timeline, event/task statistics and protocol control.
 
 ### Changed
+- **Release dependency hygiene** — updates the locked serial transport dependency from the yanked `serialport 4.10.0` release to `4.10.1` without changing TauTerm's serial API contract.
 - **Embedded observability foundation** — promotes native debug-probe ownership into a process-local shared target registry keyed by canonical physical probe identity, with one worker-owned probe-rs Session per probe, explicit target-configuration conflicts, per-service bounded round-robin scheduling and service leases. Canonical observation producers can fan out typed bounded raw streams without duplicating hardware readers. RTT now consumes that shared target runtime; AutomationRx and SystemView both subscribe to one canonical RTT observation source, browsing is independent from Automation source selection, protocol-owned Down Channels can be claimed away from generic SendBar writes, and history/automation/decoder/presentation loss semantics remain independent.
 - **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
 - **Virtual-port capability boundary** — isolates the DataPlane subscription pump from per-endpoint reader/writer actors, gives every external peer an independent bounded byte budget, uses explicit peer presence on Windows, keeps UAC/service selection inside the virtual-port backend, versions the privileged-service handshake, and moves direct-UAC allocation into a typed privileged transaction with a shared protected machine ownership ledger.
 - **Chronological log segment names** — System and Session log segments now start with their actual segment creation timestamp so filename sorting follows creation order across processes, sessions and rotations.
 
 ### Security
+- **TLS dependency hardening** — updates the locked `rustls` dependency from `0.23.43` to `0.23.45`, resolving `RUSTSEC-2026-0285` before the 0.6.6 release.
 - **Windows virtual-port ownership is no longer authorized by user-writable state** — TauTermService and the direct-UAC helper share a protected `%ProgramData%\TauTerm\virtual-port` ledger (Authenticated Users read-only; SYSTEM/Administrators write). The direct helper resolves ProgramData through the Windows known-folder API, authenticates its random local pipe by PID, accepts only typed operations, and never executes caller-supplied shell/setupc text. Release-mode direct UAC is restricted to the protected Program Files installation boundary; user-writable portable locations fail closed instead of elevating their `setupc.exe`.
 
 ### Fixed
