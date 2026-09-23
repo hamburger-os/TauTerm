@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Windows-only; privileged setupc operations require TauTermService or an explicit administrative maintenance context."
 metadata:
   author: tauterm
-  version: "3.5"
+  version: "3.6"
 ---
 
 # TauTerm com0com 虚拟串口维护参考
@@ -31,7 +31,7 @@ metadata:
 11. **当前 endpoint ownership schema 唯一，不做旧 bus-only 兼容迁移。** 预稳定阶段遇到旧/损坏 schema，只允许特权边界做诊断备份并重置；普通 GUI 不修写机器级状态。
 12. **com0com 驱动是系统级共享资源，driver ownership 与 endpoint ownership 完全分离。** 只有安装前确认系统没有 com0com、且本次由 TauTerm 成功安装时，才写 `%ProgramData%\TauTerm\service\driver-owned.marker`。卸载时必须同时满足“driver-owned marker 存在”和“`setupc list` 已确认没有任何端口对”，才允许全局 `setupc uninstall`；否则保留共享驱动。
 13. **DataPlane pump 不做 external COM 阻塞 I/O。** 物理 → 虚拟 fan-out 只向每个 endpoint 的独立有界 egress 入队；一个已打开但停止读取的 external peer 只能把自己的 endpoint 标记为 backpressured，不能堵塞 DataPlane 或其它 endpoint。Windows 发生数据完整性缺口后必须观察到 close → reopen 才以 fresh stream 恢复，不补发缺口期间的历史数据。
-14. **每个 bridge endpoint 只有一个 handle owner。** 一个 Endpoint Actor 串行执行 DSR/presence 检查、physical→virtual 写入和 virtual→physical 读取；禁止用 `SerialPort::try_clone` 把同一个 com0com bridge handle 交给并发 reader/writer worker。presence 查询失败只表示 health degraded，不能自行制造数据缺口；真实 gap 仍按 backpressure + close→reopen 恢复。shutdown 必须取消阻塞 I/O 并 join handle owner，禁止 detach。
+14. **每个 bridge endpoint 只有一个 handle owner，并使用 event-driven overlapped I/O。** Windows bridge handle 必须以 `FILE_FLAG_OVERLAPPED` 打开；一个 Endpoint Actor 通过 `WaitCommEvent(EV_DSR | EV_ERR | EV_RXCHAR)`、独立的 overlapped `ReadFile` / `WriteFile` 串行拥有该 handle，禁止用 `SerialPort::try_clone` 建立并发 reader/writer worker，也禁止恢复固定周期 DSR 轮询。presence 查询失败只表示 health degraded，不能自行制造数据缺口；真实 gap 仍按 backpressure + close→reopen 恢复。shutdown 由 Actor 使用 `CancelIoEx` 收口未完成 I/O，再由 Bridge join handle owner，禁止 detach。
 
 典型数据流：
 
@@ -64,7 +64,8 @@ com0com bus
 | App ↔ 特权服务客户端 | `src-tauri/src/virtual_port/service_backend.rs` |
 | Windows LocalSystem 服务 | `src-tauri/src/bin/tauterm-service.rs` |
 | Serial Session / VPort 生命周期编排 | `src-tauri/src/plugins/serial/mod.rs` |
-| VPort 数据桥接与 endpoint backpressure | `src-tauri/src/virtual_port/bridge.rs` |
+| VPort 数据桥接、endpoint actor 与 backpressure | `src-tauri/src/virtual_port/bridge.rs` |
+| Windows overlapped COM I/O / WaitCommEvent | `src-tauri/src/virtual_port/windows_bridge_io.rs` |
 | 驱动状态/显式残留清理 Tauri 命令 | `src-tauri/src/commands/platform.rs` |
 | Serial 端点发现与展示描述 | `src-tauri/src/plugins/serial/mod.rs` |
 | 前端 VPort runtime 状态 | `src/plugins/serial/runtime-store.ts` |
@@ -377,7 +378,7 @@ NSIS 规则：
 | DSR/presence 查询短暂失败 | endpoint 显示 degraded；若最后已知 peer 打开则双向 I/O 继续，不把监测失败伪装成数据 gap |
 | external 已打开但停止读取 | 仅该 endpoint 进入 backpressured；DataPlane、父 Serial 与其它 endpoint 继续运行 |
 | backpressured external 关闭后重新打开 | endpoint 以 fresh stream 恢复，不补发缺口期间历史数据 |
-| 父 Session/App 关闭且 bridge worker 正阻塞 | 取消阻塞 I/O并 join 所有 handle owner；不得遗留 detached COM worker |
+| 父 Session/App 关闭且 Windows overlapped I/O 未完成 | `CancelIoEx` 收口 comm/read/write 并 join 所有 handle owner；不得遗留 detached COM worker |
 | Debug 构建启动 | 直接进入 direct-uac-on-demand，不探测正式 TauTermService，不产生预期身份拒绝 WARN |
 | 父 Serial Session 断开 | 只清理该 Session 的端点 |
 | App 崩溃 | 服务检测管道断开并清理该 client |
