@@ -486,10 +486,10 @@ fn open_bridge_endpoint(
     #[cfg(target_os = "windows")]
     {
         let handle = WindowsBridgeHandle::open(&endpoint.bridge_path, baud_rate)?;
-        return Ok(BridgeEndpoint {
+        Ok(BridgeEndpoint {
             external_path: endpoint.external_path,
             handle,
-        });
+        })
     }
 
     #[cfg(not(target_os = "windows"))]
