@@ -574,8 +574,7 @@ fn endpoint_actor_loop(
         #[cfg(target_os = "windows")]
         {
             if Instant::now() >= next_peer_probe {
-                next_peer_probe =
-                    Instant::now() + Duration::from_millis(PEER_STATUS_POLL_MS);
+                next_peer_probe = Instant::now() + Duration::from_millis(PEER_STATUS_POLL_MS);
                 match peer_is_open(&mut endpoint) {
                     Ok(open) => {
                         shared.observe_peer(open);
