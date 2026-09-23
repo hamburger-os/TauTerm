@@ -7,6 +7,7 @@
 
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::sync::Arc;
 use std::time::Duration;
 
 use windows_sys::Win32::Devices::Communication::{
@@ -29,7 +30,6 @@ use windows_sys::Win32::System::Threading::{
 };
 
 const READ_BUFFER_BYTES: usize = 4096;
-const WRITE_WAIT_SLICE: Duration = Duration::from_millis(20);
 
 pub struct WindowsBridgeHandle {
     handle: OwnedHandle,
@@ -137,7 +137,8 @@ pub struct WindowsBridgeIo {
     read_buffer: Box<[u8; READ_BUFFER_BYTES]>,
     read_pending: bool,
     write_pending: bool,
-    write_buffer: Option<Vec<u8>>,
+    write_buffer: Option<Arc<[u8]>>,
+    write_offset: usize,
 }
 
 impl WindowsBridgeIo {
@@ -159,6 +160,7 @@ impl WindowsBridgeIo {
             read_pending: false,
             write_pending: false,
             write_buffer: None,
+            write_offset: 0,
         });
         if unsafe { SetCommMask(this.raw_handle(), EV_DSR | EV_ERR | EV_RXCHAR) } == 0 {
             return Err(format!("SetCommMask failed (Win32 {})", unsafe {
@@ -191,25 +193,27 @@ impl WindowsBridgeIo {
         self.read_pending
     }
 
-    pub fn start_write(&mut self, data: &[u8]) -> Result<(), String> {
+    pub fn start_write(&mut self, data: Arc<[u8]>, offset: usize) -> Result<(), String> {
         if self.write_pending {
             return Err("overlapped virtual-port write already pending".into());
         }
-        if data.is_empty() {
+        if offset >= data.len() {
             return Ok(());
         }
 
-        self.write_buffer = Some(data.to_vec());
+        self.write_buffer = Some(data);
+        self.write_offset = offset;
         reset_overlapped(&mut self.write_overlapped, &self.write_event)?;
         let buffer = self
             .write_buffer
             .as_ref()
             .expect("write buffer stored before overlapped write");
+        let remaining = &buffer[self.write_offset..];
         let result = unsafe {
             WriteFile(
                 self.raw_handle(),
-                buffer.as_ptr(),
-                buffer.len().min(u32::MAX as usize) as u32,
+                remaining.as_ptr(),
+                remaining.len().min(u32::MAX as usize) as u32,
                 std::ptr::null_mut(),
                 &mut self.write_overlapped,
             )
@@ -220,6 +224,7 @@ impl WindowsBridgeIo {
             if error != ERROR_IO_PENDING {
                 self.write_pending = false;
                 self.write_buffer = None;
+                self.write_offset = 0;
                 return Err(format!("WriteFile failed (Win32 {error})"));
             }
         }
@@ -325,6 +330,7 @@ impl WindowsBridgeIo {
         cancel_and_drain(self.raw_handle(), &self.write_overlapped, "write")?;
         self.write_pending = false;
         self.write_buffer = None;
+        self.write_offset = 0;
         Ok(())
     }
 
@@ -440,6 +446,7 @@ impl WindowsBridgeIo {
         };
         self.write_pending = false;
         self.write_buffer = None;
+        self.write_offset = 0;
         if ok == 0 {
             let error = unsafe { GetLastError() };
             if error == ERROR_OPERATION_ABORTED {
@@ -521,6 +528,3 @@ fn cancel_and_drain(
     }
 }
 
-pub const fn write_wait_slice() -> Duration {
-    WRITE_WAIT_SLICE
-}
