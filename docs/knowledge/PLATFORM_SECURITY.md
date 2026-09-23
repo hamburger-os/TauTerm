@@ -31,9 +31,11 @@ TauTerm 的长期原则是主 GUI 保持普通权限，只把必要动作放到�
 - MiniDumpWriteDump: https://learn.microsoft.com/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
 - MINIDUMP_EXCEPTION_INFORMATION: https://learn.microsoft.com/windows/win32/api/minidumpapiset/ns-minidumpapiset-minidump_exception_information
 - Windows Error Reporting LocalDumps: https://learn.microsoft.com/windows/win32/wer/collecting-user-mode-dumps
-- CancelSynchronousIo: https://learn.microsoft.com/windows/win32/fileio/cancelsynchronousio-func
+- Overlapped communications I/O: https://learn.microsoft.com/windows/win32/devio/overlapped-operations
+- WaitCommEvent: https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-waitcommevent
+- CancelIoEx: https://learn.microsoft.com/windows/win32/fileio/cancelioex-func
 
-TauTerm 自己只采集最小必要的本地崩溃证据，不把平台提供的 full-memory dump 能力自动打开，也不把 dump 当作普通遥测上传。Windows 串口 worker 的确定性 shutdown 使用系统取消 API 时，必须仍等待线程退出并释放 handle，不能把“发出 cancel”当作资源已经销毁。
+TauTerm 自己只采集最小必要的本地崩溃证据，不把平台提供的 full-memory dump 能力自动打开，也不把 dump 当作普通遥测上传。Windows com0com bridge 应使用 overlapped communications I/O 与 WaitCommEvent，不用固定周期轮询模拟状态事件。确定性 shutdown 使用 CancelIoEx 时，必须仍由 handle owner 收口完成状态并等待线程退出，不能把“发出 cancel”当作资源已经销毁。
 
 ## 凭据与加密
 
