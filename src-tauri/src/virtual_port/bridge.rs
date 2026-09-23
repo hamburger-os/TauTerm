@@ -102,7 +102,7 @@ impl EndpointShared {
     }
 
     fn can_enqueue(&self) -> bool {
-        self.state.load(Ordering::Acquire) == ENDPOINT_READY
+        self.state.load(Ordering::Acquire) != ENDPOINT_BACKPRESSURED
             && self.peer_known.load(Ordering::Acquire)
             && self.peer_open.load(Ordering::Acquire)
     }
@@ -175,7 +175,6 @@ impl EndpointShared {
     }
 
     fn mark_degraded(&self, reason: impl Into<String>) {
-        self.peer_known.store(false, Ordering::Release);
         if self
             .state
             .compare_exchange(
@@ -592,9 +591,16 @@ fn endpoint_actor_loop(
                     }
                     Err(error) => {
                         shared.mark_degraded(error);
-                        drain_egress_queue(&receiver, shared);
-                        std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
-                        continue;
+                        // A modem-status query failure is not itself a data gap. Preserve the last
+                        // confirmed peer state and keep I/O moving when that peer was known open.
+                        // Only the initial unknown state (or a known-closed peer) suppresses data.
+                        if !shared.peer_known.load(Ordering::Acquire)
+                            || !shared.peer_open.load(Ordering::Acquire)
+                        {
+                            drain_egress_queue(&receiver, shared);
+                            std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
+                            continue;
+                        }
                     }
                 }
             }
@@ -602,7 +608,6 @@ fn endpoint_actor_loop(
             if !shared.peer_known.load(Ordering::Acquire)
                 || !shared.peer_open.load(Ordering::Acquire)
                 || shared.is_backpressured()
-                || shared.is_degraded()
             {
                 drain_egress_queue(&receiver, shared);
                 std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
@@ -730,7 +735,7 @@ fn write_chunk_to_peer(
         if cancel.load(Ordering::SeqCst) {
             return Ok(WriteOutcome::Cancelled);
         }
-        if shared.is_backpressured() || shared.is_degraded() {
+        if shared.is_backpressured() {
             return Ok(WriteOutcome::Backpressured);
         }
 
@@ -939,7 +944,7 @@ mod tests {
         endpoint.mark_degraded("temporary modem-status query failure");
         assert!(endpoint.is_degraded());
         assert!(!endpoint.is_backpressured());
-        assert!(!endpoint.can_enqueue());
+        assert!(endpoint.can_enqueue());
 
         match event_rx.try_recv().unwrap() {
             VirtualPortBridgeEvent::EndpointDegraded { external_path, .. } => {
@@ -956,6 +961,22 @@ mod tests {
             event_rx.try_recv().unwrap(),
             VirtualPortBridgeEvent::EndpointReady { .. }
         ));
+    }
+
+    #[test]
+    fn initial_unknown_presence_does_not_accept_egress() {
+        let (event_tx, _event_rx) = mpsc::channel();
+        let endpoint = Arc::new(EndpointShared::new(
+            "COM21".into(),
+            64,
+            false,
+            false,
+            event_tx,
+        ));
+
+        endpoint.mark_degraded("initial modem-status query failure");
+        assert!(endpoint.is_degraded());
+        assert!(!endpoint.can_enqueue());
     }
 
     #[test]
