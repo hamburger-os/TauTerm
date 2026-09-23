@@ -23,6 +23,7 @@ const PEER_RETRY_DELAY_MS: u64 = 10;
 const PEER_STATUS_POLL_MS: u64 = 50;
 const WORKER_POLL_MS: u64 = 20;
 const EGRESS_QUEUE_MESSAGES: usize = 1024;
+const EGRESS_ACTOR_BURST_MESSAGES: usize = 64;
 const EGRESS_BACKLOG_WINDOW_MS: u64 = 2_000;
 const EGRESS_MIN_BYTES: usize = 64 * 1024;
 const EGRESS_MAX_BYTES: usize = 1024 * 1024;
@@ -625,26 +626,31 @@ fn endpoint_actor_loop(
             continue;
         }
 
-        match receiver.try_recv() {
-            Ok(data) => {
-                shared.release_bytes(data.len());
-                match write_chunk_to_peer(&mut endpoint, &data, shared, cancel)? {
-                    WriteOutcome::Delivered => {}
-                    WriteOutcome::PeerUnavailable | WriteOutcome::Backpressured => {
-                        drain_egress_queue(&receiver, shared);
+        // Keep one handle owner without turning serialization into a throughput bottleneck:
+        // consume a bounded physical->virtual burst, then always return to the reverse direction.
+        for _ in 0..EGRESS_ACTOR_BURST_MESSAGES {
+            match receiver.try_recv() {
+                Ok(data) => {
+                    shared.release_bytes(data.len());
+                    match write_chunk_to_peer(&mut endpoint, &data, shared, cancel)? {
+                        WriteOutcome::Delivered => {}
+                        WriteOutcome::PeerUnavailable | WriteOutcome::Backpressured => {
+                            drain_egress_queue(&receiver, shared);
+                            break;
+                        }
+                        WriteOutcome::Cancelled => return Ok(()),
                     }
-                    WriteOutcome::Cancelled => return Ok(()),
                 }
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                if cancel.load(Ordering::SeqCst) {
-                    return Ok(());
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if cancel.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "virtual peer {} endpoint actor queue disconnected unexpectedly",
+                        endpoint.external_path
+                    ));
                 }
-                return Err(format!(
-                    "virtual peer {} endpoint actor queue disconnected unexpectedly",
-                    endpoint.external_path
-                ));
             }
         }
 
@@ -845,6 +851,12 @@ mod tests {
             true,
             events,
         ))
+    }
+
+    #[test]
+    fn endpoint_actor_egress_burst_is_bounded() {
+        assert!(EGRESS_ACTOR_BURST_MESSAGES > 1);
+        assert!(EGRESS_ACTOR_BURST_MESSAGES < EGRESS_QUEUE_MESSAGES);
     }
 
     #[test]
