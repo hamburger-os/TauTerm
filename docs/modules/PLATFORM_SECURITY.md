@@ -36,7 +36,7 @@ System Log 只能覆盖仍能返回到 Rust 控制流的故障；native exceptio
 
 - Rust panic 记录版本、时间、PID、线程、源位置、panic payload 与 backtrace；
 - Windows 未处理 native exception 尝试生成 `MiniDumpNormal`，随后返回正常的 Windows/WER 异常处理链，不把系统 crash reporting 吞掉；
-- crash artifact 保存在当前用户临时目录下的 `TauTerm/crash`，并按数量上限清理旧文件；应用不会自动上传、网络发送或并入普通 Session/System Log；
+- crash artifact 正常保存在当前用户本地应用数据目录下的 `TauTerm/crash`；只有无法解析用户目录时才使用带 PID 的临时 fallback。Unix 目录/文本报告分别收紧为仅当前用户可访问/读写，并按数量上限清理旧文件；应用不会自动上传、网络发送或并入普通 Session/System Log；
 - 普通“导出诊断”只包含 crash artifact 数量与当前平台是否具备 native minidump 能力，不复制 dump 正文。
 
 即使使用 `MiniDumpNormal`，dump 仍可能包含线程栈和与崩溃现场有关的进程内存片段，必须视为潜在敏感诊断材料。产品不得静默上传、共享或扩大为 full-memory dump；用户主动提供 dump 时也应按敏感调试资料处理。
