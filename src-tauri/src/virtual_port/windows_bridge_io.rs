@@ -22,10 +22,10 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE,
     OPEN_EXISTING,
 };
-use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
     CreateEventW, ResetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 const READ_BUFFER_BYTES: usize = 4096;
 
@@ -518,4 +518,3 @@ fn cancel_and_drain(
         ))
     }
 }
-
