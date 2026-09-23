@@ -62,7 +62,7 @@ pub fn install() {
     install_panic_hook();
 
     #[cfg(target_os = "windows")]
-    match start_native_crash_helper(&directory) {
+    match start_native_crash_helper() {
         Ok(()) => unsafe {
             use windows_sys::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
             SetUnhandledExceptionFilter(Some(unhandled_exception_filter));
@@ -240,7 +240,7 @@ fn prune_old_artifacts(directory: &Path) {
 }
 
 #[cfg(target_os = "windows")]
-fn start_native_crash_helper(directory: &Path) -> Result<(), String> {
+fn start_native_crash_helper() -> Result<(), String> {
     if CRASH_CHANNEL.get().is_some() {
         return Ok(());
     }
@@ -283,7 +283,7 @@ fn start_native_crash_helper(directory: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn unhandled_exception_filter(
-    exception_pointers: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+    exception_pointers: *const windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
 ) -> i32 {
     use windows_sys::Win32::Storage::FileSystem::WriteFile;
     use windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH;
