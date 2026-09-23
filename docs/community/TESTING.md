@@ -101,9 +101,9 @@ Security reports are stored as workflow artifacts for review. The workflow runs 
 
 ## Diagnostics during testing
 
-Settings → About → Diagnostics can export a sanitized JSON support bundle. It contains build/runtime health, plugin metadata, aggregated Session state and log loss counters.
+Settings → About → Diagnostics can export a sanitized JSON support bundle. It contains build/runtime health, plugin metadata, aggregated Session state, log loss counters, and only the count/capability status of local crash artifacts.
 
-It excludes credentials, endpoint values, Session names, raw Session payloads, System Log contents and Session Data Log contents. The native save dialog is opened by Rust so the WebView does not receive the destination path. Diagnostics are support evidence, not an Engineering Recording.
+It excludes credentials, endpoint values, Session names, raw Session payloads, System Log contents, Session Data Log contents, and crash dump contents. Rust panic reports and Windows native minidumps remain local under the current user's temporary `TauTerm/crash` directory and are never automatically included or uploaded. The native save dialog is opened by Rust so the WebView does not receive the destination path. Diagnostics are support evidence, not an Engineering Recording.
 
 ## Manual validation that still matters
 
@@ -116,6 +116,8 @@ Automation intentionally does not pretend to replace real environment testing. B
 - OS-specific installer/updater/reputation behavior;
 - visual judgment across GPUs, scaling factors and accessibility settings.
 
-For a release that changes Windows virtual-port ownership or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. These manual checks are still valuable release practice for OS and hardware boundaries, but they are not represented by a Release workflow SHA-attestation field.
+For a release that changes Windows virtual-port ownership, bridge I/O, or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. Bridge-I/O changes additionally require repeated external COM open/close, open-without-reading, sustained bidirectional traffic, peer close during active write, parent Serial disconnect while the peer is active, and repeated reconnect/shutdown cycles. A stalled or crashing peer must never stop sibling VPorts or leave a detached bridge handle owner. When reproducing a process-level failure, preserve the generated local panic report/minidump together with the matching System Log.
+
+These manual checks are still valuable release practice for OS and hardware boundaries, but they are not represented by a Release workflow SHA-attestation field.
 
 The goal is to reduce manual testing to cases where real hardware, OS policy or human visual judgment is genuinely necessary, while making those remaining cases explicit rather than hiding them behind a green workflow result.
