@@ -19,6 +19,7 @@ use crate::virtual_port::backend::VirtualEndpoint;
 
 const VPORT_IO_TIMEOUT_MS: u64 = 5;
 const PEER_RETRY_DELAY_MS: u64 = 10;
+#[cfg(target_os = "windows")]
 const PEER_STATUS_POLL_MS: u64 = 50;
 const WORKER_POLL_MS: u64 = 20;
 const EGRESS_QUEUE_MESSAGES: usize = 1024;
@@ -31,6 +32,7 @@ const VPORT_SUBSCRIPTION_WINDOW_MS: u64 = 3_000;
 const WRITE_STALL_DEADLINE: Duration = Duration::from_secs(2);
 
 const ENDPOINT_READY: u8 = 0;
+#[cfg(any(target_os = "windows", test))]
 const ENDPOINT_DEGRADED: u8 = 1;
 const ENDPOINT_BACKPRESSURED: u8 = 2;
 
@@ -97,6 +99,7 @@ impl EndpointShared {
         self.state.load(Ordering::Acquire) == ENDPOINT_BACKPRESSURED
     }
 
+    #[cfg(any(target_os = "windows", test))]
     fn is_degraded(&self) -> bool {
         self.state.load(Ordering::Acquire) == ENDPOINT_DEGRADED
     }
@@ -174,6 +177,7 @@ impl EndpointShared {
         }
     }
 
+    #[cfg(any(target_os = "windows", test))]
     fn mark_degraded(&self, reason: impl Into<String>) {
         if self
             .state
