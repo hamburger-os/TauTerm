@@ -104,7 +104,7 @@ Security reports are stored as workflow artifacts for review. The workflow runs 
 
 Settings → About → Diagnostics can export a sanitized JSON support bundle. It contains build/runtime health, plugin metadata, aggregated Session state, log loss counters, and only the count/capability status of local crash artifacts.
 
-It excludes credentials, endpoint values, Session names, raw Session payloads, System Log contents, Session Data Log contents, and crash dump contents. Rust panic reports and Windows native minidumps remain local under the current user's local application-data `TauTerm/crash` directory (with a PID-scoped temporary fallback only when a user directory cannot be resolved) and are never automatically included or uploaded. The native save dialog is opened by Rust so the WebView does not receive the destination path. Diagnostics are support evidence, not an Engineering Recording.
+It excludes credentials, endpoint values, Session names, raw Session payloads, System Log contents, Session Data Log contents, and crash dump contents. Rust panic reports and Windows native minidumps remain local under the current user's local application-data `TauTerm/crash` directory (with a PID-scoped temporary fallback only when a user directory cannot be resolved) and are never automatically included or uploaded. Windows native dumps are written by a pre-started, unprivileged same-binary crash helper rather than from the already-faulting GUI process. The native save dialog is opened by Rust so the WebView does not receive the destination path. Diagnostics are support evidence, not an Engineering Recording.
 
 ## Manual validation that still matters
 
