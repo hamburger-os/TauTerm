@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] — 2026-10-27
+
+### Changed
+- **Session runtime ownership** — binds lifecycle events, I/O, child connections, plugin cleanup and transfer jobs to a monotonic runtime identity. SessionStore remains the sole lifecycle owner; obsolete lifecycle paths are removed, and blocking cleanup runs outside store locks so old work cannot interfere with a reconnected Session.
+- **Frontend Session and Workspace state** — centralizes transition and transfer-state reducers, keeps transfer activity independent of connection health, preserves existing workspace context on Session catalog load failures, and consolidates Network Debug receive/send presentation in its runtime store.
+- **Automation execution safety** — introduces bounded Lua callback/instruction execution with cancellation-aware cleanup, and rejects custom `__gc` / `__close` handlers that could evade interruption.
+- **Desktop runtime verification** — adds an isolated Tauri E2E application identity, locked E2E dependencies, real TCP/UDP loopback fixtures and regression contracts for lifecycle races, disconnect/reconnect and cleanup.
+
+### Fixed
+- **Stale Session work after reconnect** — rejects delayed or duplicate lifecycle notifications and prevents cleanup or transfer callbacks belonging to a previous runtime from acting on the current connection.
+- **Terminal and child-channel teardown** — retains terminal tail output and child exit diagnostics, and preserves the active context when a container closes.
+- **Linux context menus** — removes competing global dismissal handling that could close a native right-click menu immediately after opening.
+
+### Security
+- **Dependency and updater hardening** — updates audited crypto/TLS/runtime dependencies, pins Rust and JavaScript Tauri updater components to the same validated 2.14.0 version, and disables unused legacy ZIP update extraction while retaining the supported installer and updater formats.
 ## [0.6.6] — 2026-09-23
 
 ### Added
