@@ -29,9 +29,8 @@ async function visibleTestId(id) {
   return visible;
 }
 async function findSessionEntry(name) {
-  const entries = await $$('[data-testid="session-entry"]');
-  for (const entry of entries) if (await entry.getAttribute("data-session-name") === name) return entry;
-  return null;
+  const entry = $(`[data-testid="session-entry"][data-session-name=${JSON.stringify(name)}]`);
+  return await entry.isExisting() ? entry : null;
 }
 async function sessionEntry(name) {
   let entry;
