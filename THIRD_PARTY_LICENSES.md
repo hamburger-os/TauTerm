@@ -70,11 +70,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 The current Cargo graph also contains unmodified MPL-2.0 crates that are not maintained as TauTerm forks:
 
-- `cssparser 0.36.0`
-- `cssparser-macros 0.6.1`
+- `cssparser 0.37.0`
+- `cssparser-macros 0.7.1`
 - `dtoa-short 0.3.5`
 - `option-ext 0.2.0`
-- `selectors 0.36.1`
+- `selectors 0.38.0`
 - `serialport 4.10.1`
 
 These versions and their MPL-2.0 expressions are explicitly reviewed by `scripts/check-cargo-licenses.js`. An upgrade or license-expression change fails closed and requires another review. Their resolved package metadata and available license/notice texts are included in the generated dependency notice shipped with TauTerm.

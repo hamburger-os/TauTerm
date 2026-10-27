@@ -80,7 +80,7 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
-// Tauri updater 2.10.1 first resolves {os}-{arch}-{installer}. v0.5.0 is
+// Tauri updater first resolves {os}-{arch}-{installer}. v0.5.0 is
 // the first updater baseline, so publish exact bundle targets only and fail
 // closed if the installed bundle marker is unknown or damaged.
 const updaterTargets = [

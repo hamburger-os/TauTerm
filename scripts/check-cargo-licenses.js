@@ -21,11 +21,11 @@ const metadata = JSON.parse(result.stdout);
 const failures = [];
 const copyleft = [];
 const reviewedMpl = new Map([
-  ["cssparser@0.36.0", "MPL-2.0"],
-  ["cssparser-macros@0.6.1", "MPL-2.0"],
+  ["cssparser@0.37.0", "MPL-2.0"],
+  ["cssparser-macros@0.7.1", "MPL-2.0"],
   ["dtoa-short@0.3.5", "MPL-2.0"],
   ["option-ext@0.2.0", "MPL-2.0"],
-  ["selectors@0.36.1", "MPL-2.0"],
+  ["selectors@0.38.0", "MPL-2.0"],
   ["serialport@4.10.1", "MPL-2.0"],
 ]);
 

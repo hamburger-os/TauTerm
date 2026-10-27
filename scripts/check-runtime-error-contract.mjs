@@ -188,13 +188,22 @@ if (aboutSettings.includes('t("updater.checkFailed"')) {
 // Rust and JS updater bindings are a release-infrastructure pair. Keep them on
 // the same exact resolved version so an npm/cargo refresh cannot silently drift.
 const cargoToml = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
-const rustSpec = cargoToml.match(/tauri-plugin-updater\s*=\s*"=(\d+\.\d+\.\d+)"/);
+const updaterSpec = cargoToml.match(/^tauri-plugin-updater\s*=\s*(.+)$/m)?.[1] ?? "";
+const rustSpec = updaterSpec.match(/\bversion\s*=\s*"=(\d+\.\d+\.\d+)"/);
+if (!updaterSpec.includes("default-features = false") || !updaterSpec.includes('"rustls-tls"')
+  || !updaterSpec.includes('"system-proxy"') || updaterSpec.includes('"zip"')) {
+  fail("Updater must explicitly enable TLS/system proxy without legacy ZIP extraction.");
+}
 if (!rustSpec) {
   fail("tauri-plugin-updater must be pinned to an exact version in Cargo.toml.");
 } else {
   const cargoLock = fs.readFileSync("src-tauri/Cargo.lock", "utf8");
   const rustResolved = cargoLock.match(/\[\[package\]\]\s+name = "tauri-plugin-updater"\s+version = "([^"]+)"/);
   const packageLock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  if (packageJson.dependencies?.["@tauri-apps/plugin-updater"] !== rustSpec[1]) {
+    fail("JS updater dependency must be pinned to the same exact version as Rust.");
+  }
   const jsResolved = packageLock.packages?.["node_modules/@tauri-apps/plugin-updater"]?.version;
   if (!rustResolved) fail("Cargo.lock is missing tauri-plugin-updater.");
   if (!jsResolved) fail("package-lock.json is missing @tauri-apps/plugin-updater.");

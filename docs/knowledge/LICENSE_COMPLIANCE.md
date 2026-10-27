@@ -61,7 +61,7 @@ TauTerm 通过 `mlua` 的 vendored Lua 5.4 构建链嵌入 Lua runtime，因此�
 
 ## Cargo 依赖中的 MPL / 多许可证表达式
 
-当前完整 Cargo graph 中有 6 个已人工审核、未作为 TauTerm fork 维护的 MPL-2.0 crate：`cssparser 0.36.0`、`cssparser-macros 0.6.1`、`dtoa-short 0.3.5`、`option-ext 0.2.0`、`selectors 0.36.1`、`serialport 4.10.0`。这些版本/许可证组合被 `scripts/check-cargo-licenses.js` 精确 allowlist；版本或许可证表达式变化必须重新审核。
+已人工审核、未作为 TauTerm fork 维护的 MPL-2.0 crate 及其当前版本以[根第三方清单](../../THIRD_PARTY_LICENSES.md#reviewed-package-managed-mpl-20-crates)为准。这些版本/许可证组合被 `scripts/check-cargo-licenses.js` 精确 allowlist；版本或许可证表达式变化必须重新审核，知识索引不再维护第二份版本清单。
 
 Cargo 的 SPDX `OR` 表示使用者可选择其中一个许可证。例如当前 `r-efi` 同时提供 MIT / Apache-2.0 / LGPL 选项，`unescaper` 同时提供 MIT / GPL 选项；TauTerm 选择宽松许可证分支，不应因为表达式里出现 GPL/LGPL 字样就错误判定整个依赖为 copyleft。Cargo manifest 的许可证字段语义见：https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields
 

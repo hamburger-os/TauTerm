@@ -388,6 +388,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                 {/* 父节点 */}
                 <motion.div
                   data-testid="session-entry"
+                  data-session-name={node.tab.name}
                   className={`${styles.item} ${state.activeTabId === node.tab.id ? styles.active : ""}`}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}

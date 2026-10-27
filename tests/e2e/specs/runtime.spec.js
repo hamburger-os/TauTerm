@@ -11,10 +11,17 @@ async function visibleTestId(id) {
   }, { timeout: 10_000, timeoutMsg: `Visible control missing: ${id}` });
   return visible;
 }
-async function sessionEntry(name) {
+async function findSessionEntry(name) {
   const entries = await $$('[data-testid="session-entry"]');
-  for (const entry of entries) if ((await entry.getText()).includes(name)) return entry;
-  throw new Error(`Session entry missing: ${name}`);
+  for (const entry of entries) if (await entry.getAttribute("data-session-name") === name) return entry;
+  return null;
+}
+async function sessionEntry(name) {
+  let entry;
+  await browser.waitUntil(async () => Boolean(entry = await findSessionEntry(name)), {
+    timeout: 10_000, timeoutMsg: `Session entry missing: ${name}`,
+  });
+  return entry;
 }
 async function sessionAction(name, action) {
   const entry = await sessionEntry(name);
@@ -64,7 +71,7 @@ async function runtimeSnapshot(name) {
   }, name);
 }
 async function removeSession(name) {
-  const entry = await sessionEntry(name).catch(() => null);
+  const entry = await findSessionEntry(name);
   if (!entry) return;
   const runtime = await runtimeSnapshot(name);
   if (runtime?.state === "connected") {
@@ -75,7 +82,7 @@ async function removeSession(name) {
   const confirm = $('[role="alertdialog"] [data-action="confirm"]');
   await confirm.waitForDisplayed();
   await confirm.click();
-  await browser.waitUntil(async () => !(await sessionEntry(name).catch(() => null)), { timeout: 10_000 });
+  await browser.waitUntil(async () => !(await findSessionEntry(name)), { timeout: 10_000 });
 }
 
 describe("TauTerm runtime smoke", () => {
@@ -129,7 +136,7 @@ describe("TauTerm runtime smoke", () => {
     }
     const previousFixtures = [];
     for (const entry of await $$('[data-testid="session-entry"]')) {
-      const name = (await entry.getText()).split("\n")[0].trim();
+      const name = await entry.getAttribute("data-session-name");
       if (/^E2E (TCP|UDP|Server) \d+$/.test(name)) previousFixtures.push(name);
     }
     for (const name of previousFixtures) await removeSession(name);
