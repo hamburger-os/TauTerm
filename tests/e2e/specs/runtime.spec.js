@@ -45,7 +45,11 @@ async function sessionAction(name, action) {
   const entry = await sessionEntry(name);
   await entry.click();
   await entry.click({ button: "right" });
-  await $('[role="menu"]').waitForDisplayed();
+  try { await $('[role="menu"]').waitForDisplayed(); }
+  catch (error) {
+    console.error("Context menu pointer trace:", await browser.execute(() => window.__tautermE2ePointerEvents));
+    throw error;
+  }
   const item = testId(`context-action-${action}`);
   await item.waitForDisplayed();
   await item.click();
@@ -124,6 +128,15 @@ describe("TauTerm runtime smoke", () => {
 
     await browser.execute(() => {
       window.__tautermE2eErrors = [];
+      window.__tautermE2ePointerEvents = [];
+      for (const type of ["pointerdown", "pointerup", "click", "auxclick", "contextmenu"]) {
+        document.addEventListener(type, event => {
+          window.__tautermE2ePointerEvents.push({ type, button: event.button, shift: event.shiftKey,
+            target: event.target.closest?.("[data-testid]")?.getAttribute("data-testid"),
+            menuVisible: Boolean(document.querySelector('[role="menu"]')) });
+          if (window.__tautermE2ePointerEvents.length > 30) window.__tautermE2ePointerEvents.shift();
+        }, true);
+      }
       window.addEventListener("error", event => {
         window.__tautermE2eErrors.push(String(event.error || event.message));
       });
