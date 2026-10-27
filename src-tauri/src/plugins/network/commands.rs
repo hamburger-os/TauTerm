@@ -2,7 +2,7 @@
 
 use chrono::Local;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{try_send_session_log, DataDirection, DataLogEntry};
@@ -24,14 +24,34 @@ pub(crate) fn session_connector(
 // ── 网络调试会话命令 ────────────────────────────────
 
 /// 获取网络调试会话的对端列表（自定义视图初始化用）
+#[derive(serde::Serialize)]
+pub struct NetworkPeerSnapshot {
+    runtime_id: crate::session::RuntimeId,
+    peers: Vec<crate::plugins::network::NetworkPeerInfo>,
+}
+
 #[tauri::command]
 pub fn list_network_peers(
     state: State<'_, AppState>,
     session_id: String,
-) -> Result<Vec<crate::plugins::network::NetworkPeerInfo>, String> {
-    Ok(state
+) -> Result<Option<NetworkPeerSnapshot>, String> {
+    let store = state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let Some(identity) = store
+        .runtime_identity(&session_id)
+        .filter(|identity| store.runtime_is_connected(identity))
+    else {
+        return Ok(None);
+    };
+    let peers = state
         .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
-        .list_peers(&session_id))
+        .list_peers(&session_id);
+    Ok(Some(NetworkPeerSnapshot {
+        runtime_id: identity.runtime_id,
+        peers,
+    }))
 }
 
 /// 关闭单个对端（网络调试）。
@@ -65,10 +85,18 @@ pub async fn close_network_peer(
     Ok(())
 }
 
-fn rollback_startup_session(state: &State<'_, AppState>, session_id: &str, cause: &str) {
+fn rollback_startup_session(
+    state: &State<'_, AppState>,
+    identity: &crate::session::RuntimeIdentity,
+    cause: &str,
+) {
+    let session_id = identity.session_id.as_str();
     match state.session_store.lock() {
         Ok(mut store) => {
-            if let Err(cleanup_error) = store.close_session(session_id) {
+            if let Err(cleanup_error) = store
+                .close_if_current(identity)
+                .map(|cleanup| cleanup.schedule())
+            {
                 log::warn!(
                     "网络调试启动失败后的会话清理也失败 (session={}): {}；原始错误: {}",
                     session_id,
@@ -114,7 +142,7 @@ async fn connect_session(
         .await
         .map_err(|e| e.to_string())?;
 
-    let sid = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_session(
             SessionCreateOptions {
@@ -133,22 +161,26 @@ async fn connect_session(
             app.clone(),
         )?
     };
+    let sid = runtime_identity.session_id.clone();
 
     // attach 后从 Network 插件 typed registry 获取 runtime，再启动监听/接收线程。
-    let network_runtime = match state
-        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
-        .runtime(&sid)
-    {
-        Some(runtime) => runtime,
-        None => {
-            let error = "网络调试 runtime 注册失败".to_string();
-            rollback_startup_session(&state, &sid, &error);
-            return Err(error);
-        }
-    };
-    if let Err(error) = network_runtime.start(app.clone(), &sid) {
+    let network_runtime =
+        match crate::plugin_application::capture_session_runtime(&state, &runtime_identity, || {
+            state
+                .plugin::<crate::plugins::network::NetworkAdapter>(
+                    crate::plugins::network::PLUGIN_ID,
+                )
+                .runtime(&sid)
+        }) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                rollback_startup_session(&state, &runtime_identity, &error);
+                return Err(error);
+            }
+        };
+    if let Err(error) = network_runtime.start(app.clone(), &runtime_identity) {
         let error = error.to_string();
-        rollback_startup_session(&state, &sid, &error);
+        rollback_startup_session(&state, &runtime_identity, &error);
         return Err(error);
     }
 
@@ -166,10 +198,10 @@ async fn connect_session(
         .udp_client_local_addr()
         .map(|address| address.to_string());
 
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": sid,
             "endpoint": endpoint,
             "connection_type": "network",
             "plugin_id": "network",
@@ -181,12 +213,7 @@ async fn connect_session(
             "send_bar_enabled": send_bar_enabled.unwrap_or(true),
             "local_addr": udp_local_addr,
         }),
-    );
-    state
-        .session_store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .activate_data_plane(&sid)?;
+    )?;
     Ok(sid)
 }
 
@@ -197,13 +224,24 @@ async fn connect_session(
 fn udp_send_impl(
     state: &State<'_, AppState>,
     session_id: String,
+    runtime_id: crate::session::RuntimeId,
     data: Vec<u8>,
     target: Option<&str>,
     transcode: bool,
 ) -> Result<Vec<u8>, String> {
     // 锁内：取侧通道 Arc + 会话编码/数据模式（转码 + TX 日志用），随后立即释放锁
-    let (encoding, data_mode) = {
+    let (encoding, data_mode, net) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        if !store.runtime_is_connected(&crate::session::RuntimeIdentity {
+            session_id: session_id.clone(),
+            runtime_id,
+        }) {
+            return Err("网络会话运行时已变化或断开".into());
+        }
+        let net = state
+            .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
+            .runtime(&session_id)
+            .ok_or("会话不是网络调试会话")?;
         let handle = store.get_session(&session_id);
         let encoding = handle
             .and_then(|h| h.params.get("encoding"))
@@ -215,12 +253,8 @@ fn udp_send_impl(
             .and_then(|v| v.as_str())
             .unwrap_or("dual")
             .to_string();
-        (encoding, data_mode)
+        (encoding, data_mode, net)
     };
-    let net = state
-        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
-        .runtime(&session_id)
-        .ok_or("会话不是网络调试会话".to_string())?;
     // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 SessionIo::send_text 一致）；
     // 字节路径（HEX 发送）原样透传
     let out = if transcode {
@@ -260,11 +294,19 @@ fn udp_send_impl(
 pub fn network_udp_send_to(
     state: State<'_, AppState>,
     session_id: String,
+    runtime_id: crate::session::RuntimeId,
     target_addr: String,
     data: Vec<u8>,
     transcode: bool,
 ) -> Result<Vec<u8>, String> {
-    udp_send_impl(&state, session_id, data, Some(&target_addr), transcode)
+    udp_send_impl(
+        &state,
+        session_id,
+        runtime_id,
+        data,
+        Some(&target_addr),
+        transcode,
+    )
 }
 
 /// UDP 固定远端发送（client：不 connect，按记录的固定远端 `send_to`）
@@ -272,10 +314,11 @@ pub fn network_udp_send_to(
 pub fn network_udp_send(
     state: State<'_, AppState>,
     session_id: String,
+    runtime_id: crate::session::RuntimeId,
     data: Vec<u8>,
     transcode: bool,
 ) -> Result<Vec<u8>, String> {
-    udp_send_impl(&state, session_id, data, None, transcode)
+    udp_send_impl(&state, session_id, runtime_id, data, None, transcode)
 }
 
 /// 同步网络调试会话的「当前发送目标」到后端脚本引擎。

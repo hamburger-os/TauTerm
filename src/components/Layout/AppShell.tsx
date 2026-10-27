@@ -12,7 +12,7 @@ interface AppShellProps {
 /**
  * 顶层布局容器 — 包裹所有 Context Provider。
  * SplitLayoutProvider 必须位于 SessionProvider 内部，以便把 selected Pane
- * 与既有 active session 语义同步；它只保存本次进程中的分屏状态，不做持久化。
+ * 与 active session 语义同步；布局恢复与持久化由它统一协调。
  */
 export default function AppShell({ children }: AppShellProps) {
   return (

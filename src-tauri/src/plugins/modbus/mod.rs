@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
@@ -49,7 +49,7 @@ impl SessionAttach for RuntimeAttach {
     }
 
     fn on_detached(&self, session_id: &str) {
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 
@@ -241,7 +241,7 @@ async fn connect_session(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "Modbus 调试助手".to_string());
 
-    let session_id = {
+    let runtime_identity = {
         let mut store = state
             .session_store
             .lock()
@@ -268,11 +268,12 @@ async fn connect_session(
             },
         )?
     };
+    let session_id = runtime_identity.session_id.clone();
 
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": session_id,
             "plugin_id": "modbus",
             "connection_type": "modbus",
             "content_type": "custom",
@@ -282,7 +283,7 @@ async fn connect_session(
             "send_bar_enabled": false,
             "transfer_enabled": false
         }),
-    );
+    )?;
     Ok(session_id)
 }
 

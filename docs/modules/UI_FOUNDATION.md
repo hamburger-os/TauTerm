@@ -8,6 +8,16 @@
 
 ## 当前方案
 
+连接状态类型与纯 reducer 由 `core/session-lifecycle.ts`、`core/session-state.ts` 单一拥有；SessionContext 负责 IPC 和同步状态快照的衔接，renderer、profile 与状态栏复用这些合同。连接身份规则见 [CORE.md](CORE.md)，传输活动规则见 [TRANSFER.md](TRANSFER.md)。断开命令失败后的查询只允许校正仍在 Disconnecting 的同一实例，不能覆盖已收到的断开终态。
+
+根会话断开时，删除活动子终端必须把活动上下文回退到根会话；保留现场的子终端各自保存实际退出原因和退出码，父容器的汇总断开信息不能覆盖已结束子终端。展示数据按运行身份过滤，同一实例在 EOF 前入队的尾批仍可写入保留终端，不能被连接状态提前截断。
+
+共享 ContextMenu 组件统一拥有外部 `pointerdown` 与 Escape 关闭、焦点恢复和键盘导航；菜单状态 hook 只管理状态。不得再用第二个全局 `click` 监听器关闭菜单，避免把右键打开过程中的平台事件误判为关闭操作。
+
+插件 Session store 区分注册存活期、连接实例和查询请求：注册 token 防止删除后重新使用同 ID 产生 ABA；连接事件按 runtime 身份推进；每次状态查询只允许最新请求提交。断连使在途查询失效，即使插件要求 keepAlive 也一样；getStatus 内部的状态写入同样经过守卫，异步初始化完成时若注册已撤销则立即清理监听。
+
+真实桌面回归使用独立应用标识和外部 WebDriver，不向生产运行时加入测试命令、状态注入或自动化插件。测试边界与准备流程由 [测试文档](../community/TESTING.md#runtime-e2e) 单一维护。
+
 React 应用由全局上下文和通用组件组成：
 
 - `App.tsx` 负责桌面应用壳与顶层组合；

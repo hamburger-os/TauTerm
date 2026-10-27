@@ -21,7 +21,7 @@ use error::RttError;
 use runtime::RttRuntime;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 pub struct RttPlugin {
     runtimes: SessionRuntimeRegistry<RttRuntime>,
@@ -50,7 +50,7 @@ impl SessionAttach for RuntimeAttach {
     }
 
     fn on_detached(&self, session_id: &str) {
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 
@@ -118,7 +118,7 @@ async fn connect_session(
         config::RttBackendKind::JlinkExisting => "RTT @ J-Link Existing".to_string(),
     });
 
-    let new_session_id = {
+    let runtime_identity = {
         let mut store = state
             .session_store
             .lock()
@@ -148,14 +148,21 @@ async fn connect_session(
             },
         )?
     };
+    let new_session_id = runtime_identity.session_id.clone();
 
     let start_runtime = runtime.clone();
     let start_app = app.clone();
-    let start_session_id = new_session_id.clone();
+    let start_identity = runtime_identity.clone();
     let start_result =
-        tokio::task::spawn_blocking(move || start_runtime.start(start_app, &start_session_id))
+        match tokio::task::spawn_blocking(move || start_runtime.start(start_app, &start_identity))
             .await
-            .map_err(|error| format!("RTT worker 启动任务失败: {error}"))?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                cleanup_failed_session(app.clone(), runtime_identity.clone()).await;
+                return Err(format!("RTT worker 启动任务失败: {error}"));
+            }
+        };
 
     if let Err(error) = start_result {
         log::error!(
@@ -164,7 +171,7 @@ async fn connect_session(
             error.code.as_str(),
             error.message
         );
-        cleanup_failed_session(app.clone(), new_session_id.clone()).await;
+        cleanup_failed_session(app.clone(), runtime_identity.clone()).await;
         return Err(format_rtt_connect_error(error));
     }
 
@@ -177,10 +184,10 @@ async fn connect_session(
             .get_session(&new_session_id)
             .and_then(|handle| handle.connected_at)
     };
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         json!({
-            "session_id": new_session_id,
             "endpoint": endpoint,
             "connection_type": PLUGIN_ID,
             "plugin_id": PLUGIN_ID,
@@ -191,19 +198,21 @@ async fn connect_session(
             "transfer_protocol": Value::Null,
             "send_bar_enabled": true,
         }),
-    );
+    )?;
     Ok(new_session_id)
 }
 
-async fn cleanup_failed_session(app: AppHandle, session_id: String) {
-    let _ = tokio::task::spawn_blocking(move || {
+async fn cleanup_failed_session(app: AppHandle, identity: crate::session::RuntimeIdentity) {
+    let cleanup = {
         let state: State<'_, AppState> = app.state();
         let Ok(mut store) = state.session_store.lock() else {
             return;
         };
-        let _ = store.close_session(&session_id);
-    })
-    .await;
+        store.close_if_current(&identity).ok()
+    };
+    if let Some(cleanup) = cleanup {
+        let _ = cleanup.finish().await;
+    }
 }
 
 fn format_rtt_connect_error(error: RttError) -> String {

@@ -13,6 +13,7 @@ export type OverwritePolicy = "replace" | "skip" | "keep-both";
 
 /** 传输启动确认。transfer_id 是取消、进度和终态匹配的唯一任务身份。 */
 export interface TransferStartAck {
+  runtime_id: string;
   transfer_id: string;
 }
 
@@ -142,6 +143,7 @@ export type ReceiveProtocolOptions =
 /** 前端 → 后端发送命令：协议专有设置只存在于 role-aware protocolOptions。 */
 export interface FileTransferSendRequest {
   sessionId: string;
+  runtimeId: string;
   protocolOptions: SendProtocolOptions;
   filePaths: string[];
   remoteDir?: string;
@@ -151,6 +153,7 @@ export interface FileTransferSendRequest {
 /** 前端 → 后端接收命令：不会复用发送方配置。 */
 export interface FileTransferReceiveRequest {
   sessionId: string;
+  runtimeId: string;
   protocolOptions: ReceiveProtocolOptions;
   downloadDir: string;
   remotePaths: string[];
@@ -162,6 +165,7 @@ export interface FileTransferReceiveRequest {
 
 /** 后端 file-transfer:started 事件。 */
 export interface TransferStartedPayload {
+  runtime_id: string;
   session_id: string;
   transfer_id: string;
   protocol: string;
@@ -177,6 +181,7 @@ export type TransferProgressKind =
 
 /** 后端 file-transfer:progress 统一事件。 */
 export interface UnifiedTransferProgressPayload {
+  runtime_id: string;
   session_id: string;
   transfer_id: string;
   kind: TransferProgressKind;
@@ -204,6 +209,7 @@ export interface BatchFileResult {
 
 /** 后端 file-transfer:finished 终态事件；每个字段都是任务终态协议的一部分。 */
 export interface TransferFinishedPayload {
+  runtime_id: string;
   session_id: string;
   transfer_id: string;
   protocol: string;

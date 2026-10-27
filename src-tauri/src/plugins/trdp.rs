@@ -13,7 +13,7 @@ pub const PLUGIN_ID: &str = "trdp";
 
 use crate::kernel::plugin_adapter::{SessionAttach, SessionService};
 use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
-use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
+use crate::kernel::session_store::ContainerSessionCreateOptions;
 use crate::plugin_application::{ConnectSessionRequest, SessionConnectFuture};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -82,7 +82,7 @@ impl SessionAttach for RuntimeAttach {
         self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 
@@ -320,7 +320,12 @@ impl TrdpRuntime {
         }
     }
 
-    fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
+    fn start(
+        &self,
+        app: AppHandle,
+        identity: &crate::session::RuntimeIdentity,
+    ) -> Result<(), String> {
+        let session_id = identity.session_id.as_str();
         let _start_guard = self
             .start_control
             .lock()
@@ -381,6 +386,7 @@ impl TrdpRuntime {
         self.alive.store(true, Ordering::Release);
 
         let event_session_id = session_id.to_string();
+        let event_identity = identity.clone();
         let event_app = app.clone();
         let capture_id = Arc::clone(&self.capture_id);
         let capture_running = Arc::clone(&self.capture_running);
@@ -491,13 +497,14 @@ impl TrdpRuntime {
                             let _ = event_app.emit(
                                 "trdp-event",
                                 json!({
-                                    "event": "capture_progress",
-                                    "session_id": event_session_id,
-                                    "capture_id": current_capture_id,
-                                    "frame_count": frame_count,
-                                    "packet_count": packet_count,
-                                    "dropped_frames": dropped_frames,
-                                }),
+                                        "event": "capture_progress",
+                                        "session_id": event_session_id,
+                                "runtime_id": event_identity.runtime_id,
+                                        "capture_id": current_capture_id,
+                                        "frame_count": frame_count,
+                                        "packet_count": packet_count,
+                                        "dropped_frames": dropped_frames,
+                                    }),
                             );
                         }
                     }
@@ -582,6 +589,10 @@ impl TrdpRuntime {
 
                 if let Some(object) = payload.as_object_mut() {
                     object.insert("session_id".into(), Value::String(event_session_id.clone()));
+                    object.insert(
+                        "runtime_id".into(),
+                        serde_json::to_value(event_identity.runtime_id).unwrap_or(Value::Null),
+                    );
                 }
                 let _ = event_app.emit("trdp-event", payload);
             }
@@ -611,14 +622,21 @@ impl TrdpRuntime {
             let was_ready = ready.swap(false, Ordering::AcqRel);
             if was_ready && !shutting_down.load(Ordering::Acquire) {
                 let state: State<'_, AppState> = event_app.state();
-                if let Ok(mut store) = state.session_store.lock() {
-                    store.mark_disconnected(&event_session_id);
+                let cleanup = state
+                    .session_store
+                    .lock()
+                    .ok()
+                    .and_then(|mut store| store.mark_disconnected(&event_identity));
+                let accepted = cleanup.is_some();
+                if let Some(cleanup) = cleanup {
+                    cleanup.schedule();
                 }
-                if connected_announced.load(Ordering::Acquire) {
+                if accepted && connected_announced.load(Ordering::Acquire) {
                     let _ = event_app.emit(
                         "session-disconnected",
                         json!({
                             "session_id": event_session_id,
+                            "runtime_id": event_identity.runtime_id,
                             "reason": "TRDP native runtime exited unexpectedly"
                         }),
                     );
@@ -750,7 +768,7 @@ async fn connect_session(
             "TRDP @ Node".to_string()
         }
     });
-    let session_id = {
+    let runtime_identity = {
         let mut store = state
             .session_store
             .lock()
@@ -780,11 +798,14 @@ async fn connect_session(
             },
         )?
     };
+    let session_id = runtime_identity.session_id.clone();
 
     if mode == "node" {
-        if let Err(error) = runtime.start(app.clone(), &session_id) {
+        if let Err(error) = runtime.start(app.clone(), &runtime_identity) {
             if let Ok(mut store) = state.session_store.lock() {
-                let _ = store.close_session(&session_id);
+                let _ = store
+                    .close_if_current(&runtime_identity)
+                    .map(|cleanup| cleanup.schedule());
             }
             return Err(error);
         }
@@ -799,7 +820,9 @@ async fn connect_session(
     {
         drop(lifecycle_guard);
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.close_session(&session_id);
+            let _ = store
+                .close_if_current(&runtime_identity)
+                .map(|cleanup| cleanup.schedule());
         }
         return Err("TRDP native runtime exited during connection startup".to_string());
     }
@@ -814,10 +837,10 @@ async fn connect_session(
             .and_then(|handle| handle.connected_at)
     };
     runtime.connected_announced.store(true, Ordering::Release);
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         json!({
-            "session_id": session_id,
             "endpoint": endpoint,
             "connection_type": "trdp",
             "plugin_id": "trdp",
@@ -828,7 +851,7 @@ async fn connect_session(
             "transfer_protocol": Value::Null,
             "send_bar_enabled": false,
         }),
-    );
+    )?;
     drop(lifecycle_guard);
     Ok(session_id)
 }
@@ -1192,10 +1215,20 @@ pub fn trdp_command(
         _ => {}
     }
 
-    let trdp = state
-        .plugin::<TrdpPlugin>(PLUGIN_ID)
-        .runtime(&session_id)
-        .ok_or("会话不是 TRDP 会话")?;
+    let (trdp, operation_identity) = {
+        let store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let identity = store
+            .runtime_identity(&session_id)
+            .ok_or("TRDP runtime is unavailable")?;
+        let runtime = state
+            .plugin::<TrdpPlugin>(PLUGIN_ID)
+            .runtime(&session_id)
+            .ok_or("会话不是 TRDP 会话")?;
+        (runtime, identity)
+    };
     let operation = command
         .get("command")
         .and_then(Value::as_str)
@@ -1240,18 +1273,14 @@ pub fn trdp_command(
         return Ok(json!({ "released": had_capture }));
     }
 
-    let runtime_connected = {
+    {
         let store = state
             .session_store
             .lock()
             .map_err(|error| error.to_string())?;
-        matches!(
-            store.session_state(&session_id),
-            Some(SessionState::Connected | SessionState::Transferring)
-        )
-    };
-    if !runtime_connected {
-        return Err("TRDP runtime operation requires a connected session".to_string());
+        if !store.runtime_is_connected(&operation_identity) {
+            return Err("TRDP runtime operation requires a connected session".into());
+        }
     }
 
     if trdp
@@ -1260,7 +1289,7 @@ pub fn trdp_command(
         .map_err(|error| error.to_string())?
         .is_none()
     {
-        trdp.start(app.clone(), &session_id)?;
+        trdp.start(app.clone(), &operation_identity)?;
     }
     if operation == "capture_start" {
         let _control = trdp
@@ -1390,6 +1419,7 @@ pub fn trdp_command(
                 json!({
                     "event": "object_state",
                     "session_id": session_id,
+                    "runtime_id": operation_identity.runtime_id,
                     "id": id,
                     "state": next,
                 }),
@@ -1426,6 +1456,7 @@ pub fn trdp_command(
                 json!({
                     "event": "object_state",
                     "session_id": session_id,
+                    "runtime_id": operation_identity.runtime_id,
                     "id": id,
                     "state": next_state,
                 }),

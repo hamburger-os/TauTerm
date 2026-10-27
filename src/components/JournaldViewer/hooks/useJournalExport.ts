@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "../../../context/SessionContext";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { JournaldErrorPayload, JournaldFilter } from "../types";
@@ -11,22 +12,26 @@ import {
 
 interface ExportProgressEvent {
   session_id: string;
+  runtime_id: string;
   loaded: number;
 }
 
 interface ExportCompleteEvent {
   session_id: string;
+  runtime_id: string;
   file_path: string;
   total: number;
 }
 
 interface ExportErrorEvent {
   session_id: string;
+  runtime_id: string;
   error: JournaldErrorPayload;
 }
 
 interface ExportCancelledEvent {
   session_id: string;
+  runtime_id: string;
 }
 
 export interface UseJournalExportReturn {
@@ -44,8 +49,11 @@ function defaultExportName(): string {
 
 export function useJournalExport(
   sessionId: string,
+  runtimeId: string | null,
   isConnected: boolean,
 ): UseJournalExportReturn {
+  const { isSessionRuntimeCurrent } = useSession();
+  const registrationRef = useRef<object>({});
   const [exporting, setExporting] = useState(false);
   const [exportLoaded, setExportLoaded] = useState(0);
   const [error, setError] = useState<JournaldErrorPayload | null>(null);
@@ -63,95 +71,109 @@ export function useJournalExport(
 
   const ensureListeners = useCallback(async () => {
     if (listenersReadyRef.current) return listenersReadyRef.current;
+    const registration = registrationRef.current;
+    const accepts = (payload: { session_id: string; runtime_id: string }) => registrationRef.current === registration
+      && payload.session_id === sessionId && payload.runtime_id === runtimeId
+      && isSessionRuntimeCurrent(sessionId, payload.runtime_id);
 
     listenersReadyRef.current = (async () => {
       const collected: UnlistenFn[] = [];
       try {
         collected.push(
           await listen<ExportProgressEvent>("journald:export-progress", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (!accepts(event.payload)) return;
             setExportLoaded(event.payload.loaded);
           }),
         );
         collected.push(
           await listen<ExportCompleteEvent>("journald:export-complete", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (!accepts(event.payload)) return;
             setExportLoaded(event.payload.total);
             setExportingState(false);
           }),
         );
         collected.push(
           await listen<ExportErrorEvent>("journald:export-error", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (!accepts(event.payload)) return;
             setError(event.payload.error);
             setExportingState(false);
           }),
         );
         collected.push(
           await listen<ExportCancelledEvent>("journald:export-cancelled", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (!accepts(event.payload)) return;
             setExportingState(false);
           }),
         );
+        if (registrationRef.current !== registration) {
+          collected.forEach(unlisten => unlisten());
+          return;
+        }
         unlistenersRef.current = collected;
       } catch (listenerError) {
         collected.forEach((unlisten) => unlisten());
-        listenersReadyRef.current = null;
+        if (registrationRef.current === registration) listenersReadyRef.current = null;
         throw listenerError;
       }
     })();
 
     return listenersReadyRef.current;
-  }, [sessionId, setExportingState]);
+  }, [sessionId, runtimeId, isSessionRuntimeCurrent, setExportingState]);
 
   const start = useCallback(
     async (filter: JournaldFilter) => {
-      if (!isConnected || exportingRef.current) return;
+      if (!isConnected || !runtimeId || exportingRef.current || !isSessionRuntimeCurrent(sessionId, runtimeId)) return;
+      const registration = registrationRef.current;
+      const isCurrent = () => registrationRef.current === registration && isSessionRuntimeCurrent(sessionId, runtimeId);
       const filePath = await save({
         defaultPath: defaultExportName(),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
-      if (!filePath) return;
+      if (!filePath || !isCurrent()) return;
 
       setError(null);
       setExportLoaded(0);
       setExportingState(true);
       try {
         await ensureListeners();
-        await startJournalExport(sessionId, filePath, filter);
+        if (!isCurrent()) return;
+        await startJournalExport(sessionId, runtimeId, filePath, filter);
       } catch (startError) {
+        if (!isCurrent()) return;
         setError(normalizeJournaldError(startError));
         setExportingState(false);
       }
     },
-    [ensureListeners, isConnected, sessionId, setExportingState],
+    [ensureListeners, isConnected, sessionId, runtimeId, isSessionRuntimeCurrent, setExportingState],
   );
 
   const cancel = useCallback(async () => {
-    if (!exportingRef.current) return;
+    if (!exportingRef.current || !runtimeId) return;
     try {
-      await cancelJournalExport(sessionId);
+      await cancelJournalExport(sessionId, runtimeId);
       // Keep exporting=true until journald:export-cancelled arrives. The worker
       // emits that event only while leaving, so a new export cannot race it.
     } catch (cancelError) {
       setError(normalizeJournaldError(cancelError));
       setExportingState(false);
     }
-  }, [sessionId, setExportingState]);
+  }, [sessionId, runtimeId, setExportingState]);
 
   useEffect(() => {
+    const registration = registrationRef.current;
     void ensureListeners().catch((listenerError) => {
-      setError(normalizeJournaldError(listenerError));
+      if (registrationRef.current === registration) setError(normalizeJournaldError(listenerError));
     });
     return () => {
+      registrationRef.current = {};
       unlistenersRef.current.forEach((unlisten) => unlisten());
       unlistenersRef.current = [];
       listenersReadyRef.current = null;
-      if (exportingRef.current) {
-        void cancelJournalExport(sessionId).catch(() => undefined);
+      if (runtimeId && exportingRef.current) {
+        void cancelJournalExport(sessionId, runtimeId).catch(() => undefined);
       }
     };
-  }, [ensureListeners, sessionId]);
+  }, [ensureListeners, sessionId, runtimeId]);
 
   useEffect(() => {
     if (!isConnected && exportingRef.current) {

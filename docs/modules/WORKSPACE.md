@@ -12,6 +12,8 @@ Workspace 是 TauTerm 的工程上下文容器。长期它不仅回答“在哪�
 
 布局数据和运行时连接严格分离：应用重启后可恢复 Pane 树、分割比例和配置引用，但 Session 仍保持断开，等待用户显式连接。
 
+启动恢复依赖两个明确的读取结果：SessionContext 单独拥有 Session Library 加载，并一次提交目录与 loading/ready/error 状态；SplitLayoutContext 只读取布局，不再维护第二份目录快照或等待预期 ID 的平行 barrier。空目录的成功读取同样进入 ready。只有布局读取成功、目录 ready 且恢复结束后才允许自动保存；任一读取失败都保留磁盘原内容，本次进程不以默认单 Pane 覆盖未成功读取的布局。应用重启后会重新尝试读取。
+
 进程内的 Session 视图连续性也与持久化严格分离。非终端 Session 一旦在本次应用运行期间真正打开，Workspace 以稳定 Session ID 保留该视图实例；切换左侧会话、把 Session 从一个 Pane 移到另一个 Pane、清空 Pane 或关闭 Pane，只改变视图的投放位置/可见性，不把“暂时不可见”解释成 Session 结束。这样页面导航、筛选、选中项、临时输入等 React 运行态可以自然保留，运行中的插件任务也不会因为 Pane assignment 改变而收到组件卸载清理。该实例池不是持久化机制：应用重启后不会恢复这些临时 UI 状态，也不会因此自动恢复连接或任务。
 
 为避免把全部 Saved Sessions 在启动时都挂载，非终端实例池采用按需保留：只有实际打开过的 Session 才进入实例池。默认 `workspace.availability = "connected"` 的工作区在 Session 真正断开后释放视图实例；声明 `always` 的离线工作台在断连后仍保留，因为其客户端/离线功能本身就是有效工作区。Session 被永久删除后自然从实例池消失。

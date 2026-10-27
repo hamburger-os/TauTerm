@@ -87,7 +87,6 @@ function renderNonTerminalContent(tab: TabInfo) {
 
 function terminalHasRuntime(tab: TabInfo): boolean {
   return tab.state === "connected"
-    || tab.state === "transferring"
     || Boolean(tab.disconnectInfo?.retain_terminal);
 }
 
@@ -97,8 +96,8 @@ function getConnectionStateFallback(state: TabInfo["state"]): string {
       return "连接中...";
     case "connected":
       return "已连接";
-    case "transferring":
-      return "传输中";
+    case "disconnecting":
+      return "断开中...";
     case "disconnected":
     default:
       return "未连接";
@@ -546,7 +545,7 @@ export default function SplitView({
         const stateLabel = tab
           ? t(`session.${tab.state}`, getConnectionStateFallback(tab.state))
           : "";
-        const lifecycleClass = tab?.state === "connected" || tab?.state === "transferring"
+        const lifecycleClass = tab?.state === "connected"
           ? styles.lifecycleConnected
           : tab?.state === "connecting"
             ? styles.lifecycleConnecting

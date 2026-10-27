@@ -55,6 +55,8 @@ Windows Authenticode 发布者签名当前尚未启用：开发阶段的 NSIS、
 
 依赖风险由 Dependabot 与定时 Dependency Security workflow 持续检查；npm 生产依赖高危 advisory 和 RustSec advisory 会形成明确失败/报告。许可证合规与漏洞风险是两个独立合同，不能用其中一个替代另一个。
 
+修复传递依赖公告时优先更新当前依赖范围内的锁定版本；若修复跨越上游组件的依赖边界，则同步升级直接依赖并重新验证其接口。Updater 的 Rust core 与 JavaScript bindings 成对精确锁定，仅启用 TLS 与系统代理，按[当前发布资产合同](../community/RELEASING.md)直接消费原生安装包；不编译旧式 ZIP 更新包解压路径，macOS 必需的 app archive 支持仍由上游平台依赖提供。不能通过忽略公告或放宽 HTTPS、签名校验规避失败。
+
 正式 bundle 前会从锁定的 Cargo/npm 依赖图生成第三方依赖 notice，并与 TauTerm 自有许可证、TCNOpen MPL 许可证和特殊第三方清单一起进入安装包；Windows 再包含 com0com GPL/来源材料。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名、合规资源和可下载内容，并把 com0com 对应官方源码作为同一 Release 的 fail-closed 资产。
 
 具体平台支持矩阵和发布步骤属于社区工程文档，不在本文复制。

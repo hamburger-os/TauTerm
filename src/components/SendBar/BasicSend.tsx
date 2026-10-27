@@ -223,6 +223,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
     <div className={styles.basicSend}>
       <div className={styles.inputArea}>
         <textarea
+          data-testid="send-input"
           ref={inputRef}
           className={`${styles.inputField} liquid-glass-input ${sendMode === "hex" ? styles.hexInput : ""}`}
           value={inputText}
@@ -327,6 +328,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
 
         <button
           className={`${styles.sendBtn} liquid-primary-button`}
+          data-testid="send-button"
           onClick={() => { void doSend(); }}
           disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexInputValid(inputText))}
         >

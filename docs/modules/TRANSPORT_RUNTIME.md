@@ -107,6 +107,8 @@ Transport 错误是结构化语义：resolve、connect、bind、timeout、permis
 
 DataPlane 的 `connected` / exclusive 运行态必须在正常退出和 panic unwind 两条路径都清零。Session receive subscription 在未请求 shutdown 的情况下突然关闭，应作为 transport actor 异常终止上报，而不是静默结束并让 UI 保持绿色连接态。
 
+Session-facing receive pump 的注册与发布屏障由 [CORE.md](CORE.md) 管理；pump 捕获原运行实例身份。显式 shutdown 会唤醒尚未发布的 pump，并抑制后续合成断开回调，防止正常清理再制造一次异常生命周期事件。
+
 Tauri async command 需要等待 OS 线程退出时，必须先释放 SessionStore 等共享锁，再通过 `spawn_blocking` 执行 `join()`；不得直接占用 async runtime worker 等待线程退出。`close_channel` 的 WebView 边界遵循这一规则。
 
 ## Modbus

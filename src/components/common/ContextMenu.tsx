@@ -58,16 +58,21 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
 
   // 点击外部关闭
   useEffect(() => {
+    if (!state.visible) return;
     const handler = (e: PointerEvent) => {
-      if (!state.visible) return;
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
     // pointerdown + capture: 在任何子元素（含 xterm.js canvas/textarea）拦截之前捕获
     document.addEventListener("pointerdown", handler, true);
+    document.addEventListener("keydown", handleKey);
     return () => {
       document.removeEventListener("pointerdown", handler, true);
+      document.removeEventListener("keydown", handleKey);
     };
   }, [state.visible, onClose]);
 
@@ -189,6 +194,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
                 key={item.id}
                 type="button"
                 role="menuitem"
+                data-testid={`context-action-${item.id}`}
                 tabIndex={-1}
                 className={`${styles.menuItem} ${item.danger ? styles.danger : ""} ${item.disabled ? styles.disabled : ""}`}
                 onClick={() => {

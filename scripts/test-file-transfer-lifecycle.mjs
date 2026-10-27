@@ -7,7 +7,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = (relativePath) => readFile(path.join(ROOT, relativePath), "utf8");
 
 // ── One frontend task owner ─────────────────────────────────────────────────
-const context = await source("src/context/TransferContext.tsx");
+const context = (await source("src/context/TransferContext.tsx")) + "\n" + (await source("src/core/transfer-state.ts"));
 assert.match(context, /tasksById:\s*Record<string, ManagedTransferTask>/);
 assert.match(context, /taskIdsBySession:\s*Record<string, string\[\]>/);
 assert.match(context, /startErrorsBySession:\s*Record<string, string>/);
@@ -284,19 +284,16 @@ assert.match(
 );
 assert.match(
   orchestrator,
-  /drop\(transfer\);[\s\S]*restore_session_state\(&task_app, &task_sid, &task_transfer_id\);[\s\S]*emit_transfer_finished/,
-  "Inline ExclusiveIo must be released and Session state restored before terminal event is emitted",
+  /drop\(transfer\);[\s\S]*release_transfer_slot\([\s\S]*runtime_id[\s\S]*emit_transfer_finished/,
+  "Inline ExclusiveIo and its runtime-specific scheduler slot must be released before the terminal event",
 );
 for (const legacyToken of ["HandoffPort", "channel_return_tx", "try_handoff", "return_port("]) {
   if (orchestrator.includes(legacyToken)) {
     throw new Error(`legacy inline-transfer handoff token must be removed: ${legacyToken}`);
   }
 }
-assert.match(
-  orchestrator,
-  /handle\.state != SessionState::Disconnected[\s\S]{0,120}handle\.state = SessionState::Connected/,
-  "Inline cleanup must never resurrect a Session that was disconnected while a background transfer was finishing",
-);
+assert.doesNotMatch(orchestrator, /handle\.state\s*=/, "Transfer completion must not change connection health");
+assert.match(orchestrator, /runtime_id/, "Every task event belongs to its captured runtime");
 assert.doesNotMatch(orchestrator, /emit_transfer_failed/);
 assert.doesNotMatch(orchestrator, /active_transfer_id|cancel_transfer_tx/);
 

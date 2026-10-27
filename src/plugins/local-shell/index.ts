@@ -67,7 +67,7 @@ export const localShellPlugin = definePlugin({
     {
       id: "local-shell-type",
       priority: 860,
-      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      when: ({ activeTab }) => activeTab?.state === "connected",
       render: () => createElement(StatusBarBadge, null, "SHELL"),
     },
   ],

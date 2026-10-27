@@ -1,6 +1,6 @@
 import type { TabInfo } from "../context/SessionContext";
 import type { ProfileResolver, SessionProfile } from "./types";
-import type { IconName } from "../components/common/Icon";
+import { statusIconName, statusValue } from "./status";
 
 export const localShellProfile: ProfileResolver = (tab: TabInfo): SessionProfile => {
   const params = tab.params ?? {};
@@ -35,23 +35,3 @@ export const localShellProfile: ProfileResolver = (tab: TabInfo): SessionProfile
     ],
   };
 };
-
-function statusIconName(state: string): IconName {
-  switch (state) {
-    case "connected": return "status-connected";
-    case "disconnected": return "status-disconnected";
-    case "connecting": return "status-connecting";
-    case "transferring": return "status-transferring";
-    default: return "status-idle";
-  }
-}
-
-function statusValue(state: string): string {
-  switch (state) {
-    case "connected": return "statusBar.connected";
-    case "disconnected": return "statusBar.disconnected";
-    case "connecting": return "statusBar.connecting";
-    case "transferring": return "transfer.transferringStatus";
-    default: return state;
-  }
-}

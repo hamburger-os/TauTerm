@@ -320,7 +320,7 @@ function AppInner() {
                               sessionId={tab.id}
                               pluginId={tab.pluginId}
                               params={tab.params ?? {}}
-                              isConnected={tab.state === "connected" || tab.state === "transferring"}
+                              isConnected={tab.state === "connected"}
                               initialProtocol={tab.transferProtocol as ProtocolType | undefined}
                               showTransmission={showTransmission}
                             />

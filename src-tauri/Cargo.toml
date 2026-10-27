@@ -24,7 +24,7 @@ thiserror = "1"
 tauri-plugin-dialog = "2"
 # Updater is release infrastructure: keep the Rust side pinned to the version
 # validated with the committed JS bindings/lockfile instead of drifting on build.
-tauri-plugin-updater = "=2.10.1"
+tauri-plugin-updater = { version = "=2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-process = "2"
 log = "0.4"
 env_logger = "0.11"

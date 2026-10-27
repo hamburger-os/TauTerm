@@ -488,16 +488,26 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Ok(mut store) = state.session_store.lock() {
+                    let cleanups = if let Ok(mut store) = state.session_store.lock() {
+                        let mut cleanups = Vec::new();
                         let ids: Vec<String> = store.tab_ids().to_vec();
                         for id in &ids {
-                            if let Err(e) = store.close_session(id) {
-                                log::warn!("退出时关闭会话 {} 失败: {}", id, e);
+                            match store.close_session(id) {
+                                Ok(cleanup) => cleanups.push(cleanup),
+                                Err(error) => log::warn!("退出时关闭会话 {id} 失败: {error}"),
                             }
                         }
                         // Saved Session Library is configuration state, not an exit snapshot.
                         // Closing runtime resources must never overwrite it.
-                    }
+                        cleanups
+                    } else { Vec::new() };
+                    tauri::async_runtime::block_on(async move {
+                        for cleanup in cleanups {
+                            if let Err(error) = cleanup.finish().await {
+                                log::warn!("退出时等待会话清理失败: {error}");
+                            }
+                        }
+                    });
                     if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                         vpm.cleanup_all();
                     }

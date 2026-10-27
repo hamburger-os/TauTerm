@@ -22,7 +22,6 @@ struct SessionAggregate {
     total: u64,
     connecting: u64,
     connected: u64,
-    transferring: u64,
     disconnected: u64,
     child_connections: u64,
     tx_bytes: u64,
@@ -107,7 +106,6 @@ pub async fn export_diagnostics(
             match session.state {
                 SessionState::Connecting => aggregate.connecting += 1,
                 SessionState::Connected => aggregate.connected += 1,
-                SessionState::Transferring => aggregate.transferring += 1,
                 SessionState::Disconnected => aggregate.disconnected += 1,
             }
             aggregate.child_connections += session.sub_connections.len() as u64;

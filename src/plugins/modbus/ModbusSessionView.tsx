@@ -33,7 +33,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const params = useMemo(() => normalizeModbusSessionParams(tab?.params ?? {}), [tab?.params]);
   const role = params.role;
   const mode = params.mode as ModbusMode;
-  const connected = tab?.state === "connected" || tab?.state === "transferring";
+  const connected = tab?.state === "connected";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [targetUnit, setTargetUnit] = useState(params.unit_id);
   const identityNormalizationKey = useRef<string | null>(null);

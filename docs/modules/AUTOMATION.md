@@ -22,6 +22,14 @@ Command Set、Auto Reply Config 与 Lua Script 不把浏览器本地存储作为
 
 自动回复与 Lua Script 启动时使用不可变运行快照。SendBar 从启动请求发出开始占有执行权，直到启动失败、停止成功或会话断开后才释放；运行期间禁止切换会改变当前执行语义的状态。命令面板执行同样基于启动时选中命令的串行快照。 插件 TargetBar 也是该执行快照的一部分；执行锁存在时公共 SendBar 通过统一 `disabled` contract 禁用 Network/RTT 等目标控件，不能在运行中悄悄改写目标。
 
+Lua VM 可以长期驻留，但脚本加载、每个数据回调和每个定时回调分别获得独立指令预算；空闲驻留与 `sleep()` 等待不消耗总生命周期限额。执行控制由公共脚本运行时拥有，不由 Serial、Network、RTT 等插件各自实现。指令 hook 与受控 `pcall`/`xpcall`/coroutine 入口共同传播宿主中断，脚本不能吞掉预算或取消结果；原生库调用 Lua 回调时也检查同一预算。预算限制 Lua 指令计算，不能抢占正在执行的原生库或 Rust I/O 调用；这些调用仍遵循各自的超时/背压合同。
+
+沙箱禁止自定义 `__gc`/`__close` 清理函数，避免 Lua 在关闭 hook 的 finalizer 阶段重新进入不可中断的用户计算。普通 metatable 仍可安装、替换与移除；安装和无保护标记的读取都使用快照，修改原始表或读取结果不会修改已安装的 metatable。需要更新时必须重新安装；显式 `__metatable` 保护语义保留。该限制是当前自动化沙箱合同，不建立旧脚本兼容分支。
+
+错误处理器也属于受控执行范围；宿主先接住原始 Lua 错误值，再生成诊断，不通过用户错误对象的 `__tostring` 进行格式化，避免错误报告本身绕过预算。字符串错误与宿主 I/O 错误保留具体原因。
+
+每个 Session 的脚本命令队列、取消标志和线程由一个 `ScriptRuntime` 持有。取消独立于命令队列容量，不向可能已满的队列同步发送 Shutdown；热加载采用非阻塞准入，满队列明确失败。接收数据按有限批次调度，避免持续 RX 饿死取消与命令处理。停止操作先在 SessionStore 锁内取消并移出 cleanup owner，再在锁外 blocking worker 等待退出；`sleep()` 与发送入口检查同一取消状态。
+
 Network Debug 与 RTT 的目标选择都由各自插件 runtime store 拥有；公共 SendBar 只通过 `sendTarget` / `sendData` contribution 挂载目标选择和发送策略。Network 目标同步只在已连接 runtime 上执行。RTT 将“当前 Up automation receive source”和“当前 Down send target”建模为两个独立选择，重连 generation 变化后重新同步，不能假设同 index 一定双向；有多个普通 Up Channel 时，两者统一在 TargetBar 中选择，不再把接收源控件塞进 RTT viewer header。AutomationRx 在启动时捕获 Up source，因此运行中的 Auto Reply/Lua 不会因为用户浏览其它 RTT Channel 而改变输入流。
 
 ## 数据流

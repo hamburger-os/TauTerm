@@ -17,15 +17,17 @@ Inline 传输不会取得具体 `serialport::SerialPort` 或做协议层 downcas
 
 Exclusive acquire 是无损所有权交接：申请开始后 actor 不再启动新的共享 read；若已有 read 正在进行，则该 read 返回但尚未交付共享订阅者的字节进入 handoff buffer。尚未交给任何订阅者的 startup bytes 也随 driver 一起交给 lease。协议先消费这些 prefetched bytes，再读取 driver。lease 归还时仍未消费的 prefetched bytes 会随 driver 返回 actor 并重新进入共享接收流。Inline 适配层禁止在取得 lease 后无条件清空 RX，避免丢失切换边界已经到达的 `C`、`NAK` 或 ZModem 初始化帧。
 
-编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和 Session 状态恢复。每个 Session 的活动任务准入、精确任务 ID 和取消状态由 `TransferScheduler` 单一拥有；默认 `max_active=1`。Inline 与 Auxiliary 使用同一个共享原子取消令牌，资源占用方式不再决定取消机制；协议循环、用户取消和 Session shutdown 观察同一状态源，不创建每任务一个阻塞 OS 线程做取消桥接。
+编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和调度槽释放。每个 Session 的活动任务准入、精确任务 ID 和取消状态由 `TransferScheduler` 单一拥有；默认 `max_active=1`。Inline 与 Auxiliary 使用同一个共享原子取消令牌，资源占用方式不再决定取消机制；协议循环、用户取消和 Session shutdown 观察同一状态源，不创建每任务一个阻塞 OS 线程做取消桥接。串口适配器根据这个取消源返回明确的 Cancelled，不解析协议错误文案猜测用户意图。
 
-每个已启动传输分配唯一 `transfer_id`。启动命令返回 `TransferStartAck { transfer_id }`，事件仍保留 `started` 作为观察型广播。统一事件顺序是：
+每个已启动传输分配唯一 `transfer_id`，并绑定 [CORE.md](CORE.md) 定义的原连接身份。启动 ACK 和每个事件都携带 `runtime_id`。后端顺序是：
 
-`command accepted/ack → file-transfer:started → file-transfer:progress* → progress broadcaster drain → ExclusiveIo/Auxiliary 资源释放 → Session 状态恢复 → file-transfer:finished`。
+`任务登记 → file-transfer:started → 开放执行 gate → file-transfer:progress* → progress broadcaster drain → ExclusiveIo/Auxiliary 资源释放 → 原实例调度槽释放 → file-transfer:finished`。
+
+启动 ACK 与事件走不同返回通道，不能假设 ACK 先抵达，快速任务甚至可能先完成。前端先完成监听注册再启动任务；started 是建任务的唯一事件，ACK 只补充已登记任务的初始文件清单。终态任务拒绝迟到 progress；已清理任务也不能被旧 ACK/progress 重建。任务完成只释放原实例的调度槽，不把已断开的连接恢复为 Connected。
 
 辅助传输命令只负责接受并注册后台任务，不能等待整个 SFTP 传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
 
-前端 `TransferContext` 是 started/progress/finished 的唯一监听者，并按 Session 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。发送命令返回 `transfer_id` 后，`TransferContext` 立即把用户本次选择的完整文件清单种入任务为 `pending`，后续协议 progress 再逐项覆盖真实状态。批量 UI 因此不能依赖“协议已经走到第几个文件”来推断用户最初选择了多少文件；即使第一个文件在块 0 阶段失败，其余已选择文件仍必须可见并在终态被解释为未执行/跳过。
+前端 `TransferContext` 是 started/progress/finished 的唯一监听者，纯任务 reducer 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。ACK 补充用户本次选择的完整文件清单，协议 progress 逐项覆盖真实状态；ACK 晚于 finished 时直接按终态解释尚未执行的文件，不能留下 pending。批量 UI 因此不能依赖“协议已经走到第几个文件”推断用户最初选择了多少文件。任务活动只有在所属实例仍连接时才投影到终端和状态栏。
 
 ## 数据流
 
@@ -74,10 +76,10 @@ flowchart LR
 - **100% 是 payload 字节进度，不等价于完整生命周期结束。** 最后一个字节后仍可能存在 flush、metadata、协议收尾和资源释放；真正 `finished` 前 UI 显示 Finalizing。
 - `bytes_done` 表示已经确认完成的 payload 字节，`bytes_total` 表示该文件原始总大小；失败的 `file_complete` 不能把 `bytes_total` 改写成已完成字节，否则会把部分失败伪装成 100%。
 - **吞吐率由后端真实 I/O 路径使用单调时钟采样并通过 `bytes_per_second` 上报。** 串口 X/Y/ZModem 在已确认 payload 进度上使用短滑动窗口测速，SFTP 在 async I/O 层测速；首个无充分样本的进度允许返回 `None`。WebView 只展示后端样本，禁止使用 IPC/React 事件到达时间或任务开始时间反推速率。
-- 正常完成路径必须先排空进度广播队列，再释放传输资源并恢复 Session，最后 emit `finished`。用户收到完成事件时可以立即安全启动下一次传输。
+- 正常完成路径必须先排空进度广播队列，再释放传输资源和原实例调度槽，最后 emit `finished`。用户收到完成事件时可以立即安全启动下一次传输。
 - 辅助文件传输后台 task 使用 start gate：先把 JoinHandle 注册进 SessionStore，再 emit `started`，最后打开 gate，确保会话关闭能够看到并等待已接受任务。
 - 批量传输中 failed 必须使最终传输失败；用户取消进入 cancelled；显式覆盖策略产生的 skipped 属于已解析用户意图。
-- 失败、取消和 panic 都必须释放 lease/auxiliary resource 并把 Session 恢复到可解释状态。
+- 失败、取消和 panic 都必须释放 lease/auxiliary resource，不改写连接健康状态。
 - `cancel` 优先使用精确 `transfer_id`；Session 不是任务身份。
 - 文件路径、覆盖策略、远端路径语义由对应传输实现负责，统一层只携带协议无关 `FileTransferOptions`。
 - **SFTP 覆盖事务式提交。** 上传/下载先写同目录 TauTerm 临时文件，完成 write/flush/metadata 后才提交；Replace 使用 backup + rollback，取消/失败不能删除或截断用户原有正式文件。

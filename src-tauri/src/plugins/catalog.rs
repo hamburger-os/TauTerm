@@ -7,7 +7,7 @@
 use super::{iperf, local_shell, modbus, network, rtt, serial, ssh, telnet, tftp, trdp};
 use crate::kernel::plugin_adapter::{PluginId, PluginManifest, ProtocolAdapter};
 use crate::kernel::plugin_runtime::PluginRuntime;
-use crate::plugin_application::{SessionConnectHandler, SessionDisconnectedHook};
+use crate::plugin_application::SessionConnectHandler;
 use std::{any::Any, path::Path, sync::Arc};
 use tauri::AppHandle;
 
@@ -180,21 +180,6 @@ pub fn build_runtime() -> PluginRuntime {
         modbus::ModbusAdapter::new(),
         modbus::session_connector,
     );
-
-    for (id, hook) in [
-        (
-            tftp::PLUGIN_ID,
-            tftp::commands::session_disconnected as SessionDisconnectedHook,
-        ),
-        (
-            iperf::PLUGIN_ID,
-            iperf::commands::session_disconnected as SessionDisconnectedHook,
-        ),
-    ] {
-        runtime
-            .register_contribution(&plugin_id(id), hook)
-            .unwrap_or_else(|error| panic!("注册 Session 断开 contribution 失败: {error}"));
-    }
 
     for (id, handler) in [
         (ssh::PLUGIN_ID, ssh::application::session_config_handler()),

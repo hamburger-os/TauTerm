@@ -4,30 +4,16 @@ import {
   useContext,
   useEffect,
   useReducer,
+  useRef,
   type ReactNode,
 } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useSession } from "./SessionContext";
 import {
   cancelFileTransfer,
   startFileTransfer,
 } from "../services/transferService";
-import type {
-  BatchFileEntry,
-  FileTransferReceiveRequest,
-  FileTransferSendRequest,
-  FileTransferState,
-  ProtocolType,
-  ReceiveProtocolOptions,
-  SendProtocolOptions,
-  TransferConfig,
-  TransferDirection,
-  TransferFinishedPayload,
-  TransferHistoryItem,
-  TransferStartedPayload,
-  TransferStartAck,
-  TransferStatus,
-  UnifiedTransferProgressPayload,
-} from "../types/transfer";
+import type { BatchFileEntry, FileTransferReceiveRequest, FileTransferSendRequest, ReceiveProtocolOptions, SendProtocolOptions, TransferConfig, TransferDirection, TransferFinishedPayload, TransferHistoryItem, TransferStartedPayload, TransferStartAck, TransferStatus, UnifiedTransferProgressPayload } from "../types/transfer";
 import { PROTOCOL_REGISTRY } from "../types/transfer";
 
 export type {
@@ -37,585 +23,9 @@ export type {
   TransferStatus,
 };
 
-export type ManagedTransferPhase =
-  | "preparing"
-  | "transferring"
-  | "finalizing"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export interface ManagedTransferTask {
-  transferId: string;
-  sessionId: string;
-  protocol: string;
-  direction: TransferDirection;
-  phase: ManagedTransferPhase;
-  fileName: string;
-  bytesDone: number;
-  bytesTotal: number;
-  percent: number;
-  speed: number | null;
-  /** Successful-task completion timestamp used only for UI retention/cleanup. */
-  completedAt: number | null;
-  error: string | null;
-  fileIndex: number;
-  totalFiles: number;
-  aggregateBytes: number;
-  aggregateTotal: number;
-  files: BatchFileEntry[];
-}
-
-export interface TransferState {
-  /** transfer_id 是前端任务存储的唯一主键。 */
-  tasksById: Record<string, ManagedTransferTask>;
-  /** Session 仅保存任务 ID 索引；当前后端默认 1 个活动任务，但模型允许未来扩展。 */
-  taskIdsBySession: Record<string, string[]>;
-  /** 启动阶段尚未产生 transfer_id 时的 Session 级错误。 */
-  startErrorsBySession: Record<string, string>;
-  /** 仅供应用级 Toast 投影最近一次错误；不参与任务所有权或生命周期判断。 */
-  error: string | null;
-  history: TransferHistoryItem[];
-}
-
-type TransferAction =
-  | {
-      type: "TASK_STARTED";
-      payload: TransferStartedPayload;
-      initialFiles?: BatchFileEntry[];
-    }
-  | { type: "TASK_PROGRESS"; payload: UnifiedTransferProgressPayload }
-  | { type: "TASK_FINISHED"; payload: TransferFinishedPayload }
-  | { type: "TASK_CANCELLING"; sessionId: string; transferId: string }
-  | {
-      type: "TASK_CANCEL_REJECTED";
-      sessionId: string;
-      transferId: string;
-      previousPhase: ManagedTransferPhase;
-      error: string;
-    }
-  | { type: "TASK_START_FAILED"; sessionId: string; error: string }
-  | { type: "TASK_CLEAR_ERROR"; sessionId?: string }
-  | { type: "TASK_DISCARD"; sessionId: string; transferId: string }
-  | { type: "TASK_DISCARD_SESSION"; sessionId: string }
-  | { type: "CLEAR_HISTORY" };
-
-const initialState: TransferState = {
-  tasksById: {},
-  taskIdsBySession: {},
-  startErrorsBySession: {},
-  error: null,
-  history: [],
-};
-
-export function isManagedTransferTerminalPhase(phase: ManagedTransferPhase): boolean {
-  return phase === "completed" || phase === "failed" || phase === "cancelled";
-}
-
-function knownHistoryProtocol(protocol: string): ProtocolType | "unknown" {
-  return Object.prototype.hasOwnProperty.call(PROTOCOL_REGISTRY, protocol)
-    ? (protocol as ProtocolType)
-    : "unknown";
-}
-
-function createTask(
-  sessionId: string,
-  transferId: string,
-  protocol: string,
-  direction: TransferDirection,
-): ManagedTransferTask {
-  return {
-    transferId,
-    sessionId,
-    protocol,
-    direction,
-    phase: "preparing",
-    fileName: "",
-    bytesDone: 0,
-    bytesTotal: 0,
-    percent: 0,
-    speed: null,
-    completedAt: null,
-    error: null,
-    fileIndex: 0,
-    totalFiles: 1,
-    aggregateBytes: 0,
-    aggregateTotal: 0,
-    files: [],
-  };
-}
-
-function fileNameFromPath(path: string): string {
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized.split("/").pop() || path;
-}
-
-function selectedFileEntries(filePaths?: string[]): BatchFileEntry[] | undefined {
-  if (!filePaths || filePaths.length === 0) return undefined;
-  return filePaths.map((path) => ({
-    fileName: fileNameFromPath(path),
-    status: "pending" as const,
-    bytesTransferred: 0,
-    totalBytes: 0,
-  }));
-}
-
-function mergeInitialFiles(
-  current: BatchFileEntry[],
-  initialFiles: BatchFileEntry[] | undefined,
-): BatchFileEntry[] {
-  if (!initialFiles || initialFiles.length === 0) return current;
-  const length = Math.max(current.length, initialFiles.length);
-  return Array.from({ length }, (_, index) => current[index] ?? initialFiles[index]);
-}
-
-function addTaskToSessionIndex(
-  taskIdsBySession: Record<string, string[]>,
-  sessionId: string,
-  transferId: string,
-): Record<string, string[]> {
-  const current = taskIdsBySession[sessionId] ?? [];
-  if (current.includes(transferId)) return taskIdsBySession;
-  return {
-    ...taskIdsBySession,
-    [sessionId]: [...current, transferId],
-  };
-}
-
-function latestTaskForSession(
-  state: TransferState,
-  sessionId: string,
-): ManagedTransferTask | undefined {
-  const ids = state.taskIdsBySession[sessionId] ?? [];
-  for (let i = ids.length - 1; i >= 0; i -= 1) {
-    const task = state.tasksById[ids[i]];
-    if (task) return task;
-  }
-  return undefined;
-}
-
-function latestActiveTaskForSession(
-  state: TransferState,
-  sessionId: string,
-): ManagedTransferTask | undefined {
-  const ids = state.taskIdsBySession[sessionId] ?? [];
-  for (let i = ids.length - 1; i >= 0; i -= 1) {
-    const task = state.tasksById[ids[i]];
-    if (task && !isManagedTransferTerminalPhase(task.phase)) return task;
-  }
-  return undefined;
-}
-
-function updateFileProjection(
-  current: ManagedTransferTask,
-  payload: UnifiedTransferProgressPayload,
-): BatchFileEntry[] {
-  if (payload.kind === "batch_complete" || !payload.file_name) {
-    return current.files;
-  }
-
-  const index = Math.max(0, payload.file_index);
-  const next = [...current.files];
-  const existing = next[index];
-  const status: FileTransferState = payload.kind === "file_complete"
-    ? (payload.file_success === false ? "failed" : "completed")
-    : "transferring";
-  const preserveFailedProgress =
-    payload.kind === "file_complete"
-    && payload.file_success === false
-    && payload.bytes_total <= 0;
-
-  next[index] = {
-    fileName: payload.file_name,
-    status,
-    bytesTransferred: preserveFailedProgress
-      ? (existing?.bytesTransferred ?? payload.bytes_done)
-      : payload.bytes_done,
-    totalBytes: preserveFailedProgress
-      ? (existing?.totalBytes ?? payload.bytes_total)
-      : payload.bytes_total,
-    error: payload.file_error ?? existing?.error,
-  };
-  return next;
-}
-
-function resultProjection(
-  payload: TransferFinishedPayload,
-  currentFiles: BatchFileEntry[],
-): BatchFileEntry[] | null {
-  if (!payload.results) return null;
-
-  // Terminal results may include synthesized/skipped entries that never emitted progress.
-  // Reconcile byte progress by file identity instead of assuming result indexes match progress indexes.
-  const remainingFiles = [...currentFiles];
-  return payload.results.map((result) => {
-    const existingIndex = remainingFiles.findIndex(
-      (entry) => entry.fileName === result.file_name,
-    );
-    const existing = existingIndex >= 0
-      ? remainingFiles.splice(existingIndex, 1)[0]
-      : undefined;
-    const completed = result.status === "completed";
-    const bytesTransferred = completed
-      ? result.size
-      : (existing?.bytesTransferred ?? 0);
-    const totalBytes = existing?.totalBytes && existing.totalBytes > 0
-      ? existing.totalBytes
-      : Math.max(result.size, bytesTransferred);
-    return {
-      fileName: result.file_name,
-      status: result.status,
-      bytesTransferred,
-      totalBytes,
-      error: result.error ?? existing?.error,
-    };
-  });
-}
-
-function transferReducer(state: TransferState, action: TransferAction): TransferState {
-  switch (action.type) {
-    case "TASK_STARTED": {
-      const payload = action.payload;
-      const existing = state.tasksById[payload.transfer_id];
-      if (existing) {
-        const files = mergeInitialFiles(existing.files, action.initialFiles);
-        if (files === existing.files) return state;
-        return {
-          ...state,
-          tasksById: {
-            ...state.tasksById,
-            [payload.transfer_id]: {
-              ...existing,
-              fileName: existing.fileName || files[0]?.fileName || "",
-              totalFiles: Math.max(existing.totalFiles, files.length),
-              files,
-            },
-          },
-        };
-      }
-
-      const oldIds = state.taskIdsBySession[payload.session_id] ?? [];
-      const retainedIds = oldIds.filter((id) => {
-        const task = state.tasksById[id];
-        return task && !isManagedTransferTerminalPhase(task.phase);
-      });
-      const tasksById = { ...state.tasksById };
-      for (const id of oldIds) {
-        if (!retainedIds.includes(id)) delete tasksById[id];
-      }
-      const task = createTask(
-        payload.session_id,
-        payload.transfer_id,
-        payload.protocol,
-        payload.direction,
-      );
-      const files = mergeInitialFiles(task.files, action.initialFiles);
-      tasksById[payload.transfer_id] = {
-        ...task,
-        fileName: files[0]?.fileName || task.fileName,
-        totalFiles: files.length > 0 ? files.length : task.totalFiles,
-        files,
-      };
-      const startErrorsBySession = { ...state.startErrorsBySession };
-      delete startErrorsBySession[payload.session_id];
-      return {
-        ...state,
-        tasksById,
-        taskIdsBySession: {
-          ...state.taskIdsBySession,
-          [payload.session_id]: [...retainedIds, payload.transfer_id],
-        },
-        startErrorsBySession,
-        error: null,
-      };
-    }
-
-    case "TASK_PROGRESS": {
-      const payload = action.payload;
-      let current = state.tasksById[payload.transfer_id];
-      let tasksById = state.tasksById;
-      let taskIdsBySession = state.taskIdsBySession;
-
-      if (!current) {
-        current = createTask(
-          payload.session_id,
-          payload.transfer_id,
-          payload.protocol,
-          payload.direction,
-        );
-        tasksById = {
-          ...tasksById,
-          [payload.transfer_id]: current,
-        };
-        taskIdsBySession = addTaskToSessionIndex(
-          taskIdsBySession,
-          payload.session_id,
-          payload.transfer_id,
-        );
-      }
-      if (
-        current.sessionId !== payload.session_id
-        || current.protocol !== payload.protocol
-      ) {
-        return state;
-      }
-
-      const isFileStart = payload.kind === "file_start";
-      const isFileComplete = payload.kind === "file_complete";
-      const isBatchComplete = payload.kind === "batch_complete";
-      const knownTotal = payload.bytes_total > 0;
-      const isLastFile =
-        payload.total_files <= 1 || payload.file_index + 1 >= payload.total_files;
-      const percent = knownTotal
-        ? payload.bytes_done >= payload.bytes_total
-          ? 100
-          : Math.min(
-              99,
-              Math.max(0, Math.floor((payload.bytes_done / payload.bytes_total) * 100)),
-            )
-        : current.percent;
-
-      let phase: ManagedTransferPhase;
-      if (current.phase === "cancelling") {
-        phase = "cancelling";
-      } else if (isBatchComplete) {
-        phase = "finalizing";
-      } else if (isFileComplete) {
-        phase = isLastFile ? "finalizing" : "transferring";
-      } else {
-        phase = "transferring";
-      }
-
-      const measuredSpeed =
-        typeof payload.bytes_per_second === "number"
-        && Number.isFinite(payload.bytes_per_second)
-        && payload.bytes_per_second > 0
-          ? payload.bytes_per_second
-          : null;
-      const nextSpeed = isFileStart ? null : measuredSpeed ?? current.speed;
-      const preserveFailedProgress =
-        isFileComplete && payload.file_success === false && !knownTotal;
-
-      const nextTask: ManagedTransferTask = {
-        ...current,
-        direction: payload.direction,
-        phase,
-        fileName: isBatchComplete ? current.fileName : payload.file_name,
-        bytesDone:
-          isBatchComplete || preserveFailedProgress
-            ? current.bytesDone
-            : payload.bytes_done,
-        bytesTotal:
-          isBatchComplete || preserveFailedProgress
-            ? current.bytesTotal
-            : payload.bytes_total,
-        percent:
-          isBatchComplete || preserveFailedProgress
-            ? current.percent
-            : percent,
-        speed: nextSpeed,
-        error: payload.file_success === false
-          ? (payload.file_error || current.error)
-          : current.error,
-        fileIndex: isBatchComplete ? current.fileIndex : payload.file_index,
-        totalFiles: isBatchComplete
-          ? current.totalFiles
-          : Math.max(payload.total_files || 0, current.totalFiles),
-        aggregateBytes: isBatchComplete
-          ? current.aggregateBytes
-          : payload.aggregate_bytes,
-        aggregateTotal: isBatchComplete
-          ? current.aggregateTotal
-          : (payload.aggregate_total || current.aggregateTotal),
-        files: updateFileProjection(current, payload),
-      };
-
-      return {
-        ...state,
-        tasksById: {
-          ...tasksById,
-          [payload.transfer_id]: nextTask,
-        },
-        taskIdsBySession,
-      };
-    }
-
-    case "TASK_FINISHED": {
-      const payload = action.payload;
-      const current = state.tasksById[payload.transfer_id];
-      if (!current || current.sessionId !== payload.session_id) return state;
-      if (current.protocol !== payload.protocol) return state;
-      if (isManagedTransferTerminalPhase(current.phase)) return state;
-
-      const phase: ManagedTransferPhase = payload.success
-        ? "completed"
-        : payload.cancelled
-          ? "cancelled"
-          : "failed";
-      const error = payload.success ? null : (payload.error || current.error);
-      const exactResults = resultProjection(payload, current.files);
-      const files = exactResults ?? current.files.map((entry) => {
-        if (
-          phase !== "completed"
-          && (entry.status === "pending" || entry.status === "transferring")
-        ) {
-          return {
-            ...entry,
-            status: "skipped" as const,
-            error: entry.error ?? error ?? undefined,
-          };
-        }
-        return entry;
-      });
-      const nextTask: ManagedTransferTask = {
-        ...current,
-        phase,
-        percent: payload.success ? 100 : current.percent,
-        speed: payload.success ? current.speed : null,
-        completedAt: payload.success ? Date.now() : null,
-        error,
-        files,
-      };
-      const status: TransferStatus = payload.success
-        ? "completed"
-        : payload.cancelled
-          ? "cancelled"
-          : "failed";
-      const historyItem: TransferHistoryItem = {
-        id: current.transferId,
-        file_name: files.length === 1 ? files[0].fileName : "batch",
-        direction: current.direction,
-        size: current.aggregateBytes,
-        status,
-        timestamp: Date.now(),
-        error: error ?? undefined,
-        protocol: knownHistoryProtocol(current.protocol),
-      };
-
-      return {
-        ...state,
-        tasksById: {
-          ...state.tasksById,
-          [payload.transfer_id]: nextTask,
-        },
-        error,
-        history: [historyItem, ...state.history].slice(0, 100),
-      };
-    }
-
-    case "TASK_CANCELLING": {
-      const current = state.tasksById[action.transferId];
-      if (!current || current.sessionId !== action.sessionId) return state;
-      if (isManagedTransferTerminalPhase(current.phase)) return state;
-      return {
-        ...state,
-        tasksById: {
-          ...state.tasksById,
-          [action.transferId]: {
-            ...current,
-            phase: "cancelling",
-            speed: null,
-            error: null,
-          },
-        },
-      };
-    }
-
-    case "TASK_CANCEL_REJECTED": {
-      const current = state.tasksById[action.transferId];
-      if (
-        !current
-        || current.sessionId !== action.sessionId
-        || current.phase !== "cancelling"
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        tasksById: {
-          ...state.tasksById,
-          [action.transferId]: {
-            ...current,
-            phase: action.previousPhase,
-            error: action.error,
-          },
-        },
-        error: action.error,
-      };
-    }
-
-    case "TASK_START_FAILED":
-      return {
-        ...state,
-        startErrorsBySession: {
-          ...state.startErrorsBySession,
-          [action.sessionId]: action.error,
-        },
-        error: action.error,
-      };
-
-    case "TASK_CLEAR_ERROR": {
-      if (!action.sessionId) {
-        const tasksById = Object.fromEntries(
-          Object.entries(state.tasksById).map(([id, task]) => [id, { ...task, error: null }]),
-        );
-        return {
-          ...state,
-          tasksById,
-          startErrorsBySession: {},
-          error: null,
-        };
-      }
-      const startErrorsBySession = { ...state.startErrorsBySession };
-      delete startErrorsBySession[action.sessionId];
-      const latest = latestTaskForSession(state, action.sessionId);
-      if (!latest || !latest.error) {
-        return { ...state, startErrorsBySession, error: null };
-      }
-      return {
-        ...state,
-        startErrorsBySession,
-        tasksById: {
-          ...state.tasksById,
-          [latest.transferId]: { ...latest, error: null },
-        },
-        error: null,
-      };
-    }
-
-    case "TASK_DISCARD": {
-      const current = state.tasksById[action.transferId];
-      if (!current || current.sessionId !== action.sessionId) return state;
-      const tasksById = { ...state.tasksById };
-      delete tasksById[action.transferId];
-      const remaining = (state.taskIdsBySession[action.sessionId] ?? [])
-        .filter((id) => id !== action.transferId);
-      const taskIdsBySession = { ...state.taskIdsBySession };
-      if (remaining.length > 0) taskIdsBySession[action.sessionId] = remaining;
-      else delete taskIdsBySession[action.sessionId];
-      return { ...state, tasksById, taskIdsBySession };
-    }
-
-    case "TASK_DISCARD_SESSION": {
-      const ids = state.taskIdsBySession[action.sessionId] ?? [];
-      if (ids.length === 0 && !state.startErrorsBySession[action.sessionId]) return state;
-      const tasksById = { ...state.tasksById };
-      for (const id of ids) delete tasksById[id];
-      const taskIdsBySession = { ...state.taskIdsBySession };
-      delete taskIdsBySession[action.sessionId];
-      const startErrorsBySession = { ...state.startErrorsBySession };
-      delete startErrorsBySession[action.sessionId];
-      return { ...state, tasksById, taskIdsBySession, startErrorsBySession };
-    }
-
-    case "CLEAR_HISTORY":
-      return { ...state, history: [] };
-
-    default:
-      return state;
-  }
-}
+import { initialTransferState, transferReducer, selectedFileEntries, latestTaskForSession, latestActiveTaskForSession, isManagedTransferTerminalPhase, type TransferState, type ManagedTransferTask } from "../core/transfer-state";
+export { isManagedTransferTerminalPhase } from "../core/transfer-state";
+export type { ManagedTransferPhase, ManagedTransferTask, TransferState } from "../core/transfer-state";
 
 function sendProtocolOptions(config: TransferConfig): SendProtocolOptions {
   switch (config.protocol) {
@@ -670,7 +80,9 @@ interface TransferContextValue {
 const TransferContext = createContext<TransferContextValue | null>(null);
 
 export function TransferProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(transferReducer, initialState);
+  const { isSessionRuntimeCurrent, getSessionRuntimeId } = useSession();
+  const [state, dispatch] = useReducer(transferReducer, initialTransferState);
+  const listenerReady = useRef<Promise<void> | null>(null);
 
   const startTransfer = useCallback(
     async (
@@ -681,12 +93,17 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       downloadDir?: string,
     ): Promise<TransferStartAck> => {
       dispatch({ type: "TASK_CLEAR_ERROR", sessionId });
+      const requestedRuntimeId = getSessionRuntimeId(sessionId);
 
       try {
+        if (!listenerReady.current) throw new Error("Transfer listeners are not ready");
+        await listenerReady.current;
+        if (!requestedRuntimeId || !isSessionRuntimeCurrent(sessionId, requestedRuntimeId)) throw new Error("Session runtime is no longer connected");
         let ack: TransferStartAck;
         if (direction === "send") {
           const request: FileTransferSendRequest = {
             sessionId,
+            runtimeId: requestedRuntimeId,
             protocolOptions: sendProtocolOptions(config),
             filePaths: filePaths ?? [],
           };
@@ -695,6 +112,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         } else {
           const request: FileTransferReceiveRequest = {
             sessionId,
+            runtimeId: requestedRuntimeId,
             protocolOptions: receiveProtocolOptions(config),
             downloadDir: downloadDir ?? "",
             remotePaths: [],
@@ -702,10 +120,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           ack = await startFileTransfer("receive", request);
         }
 
+        if (!isSessionRuntimeCurrent(sessionId, ack.runtime_id)) return ack;
         dispatch({
-          type: "TASK_STARTED",
+          type: "TASK_ACKNOWLEDGED",
           payload: {
             session_id: sessionId,
+            runtime_id: ack.runtime_id,
             transfer_id: ack.transfer_id,
             protocol: config.protocol,
             direction,
@@ -715,11 +135,13 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return ack;
       } catch (error) {
         const message = String(error);
-        dispatch({ type: "TASK_START_FAILED", sessionId, error: message });
+        if (requestedRuntimeId && isSessionRuntimeCurrent(sessionId, requestedRuntimeId)) {
+          dispatch({ type: "TASK_START_FAILED", sessionId, error: message });
+        }
         throw error;
       }
     },
-    [],
+    [getSessionRuntimeId, isSessionRuntimeCurrent],
   );
 
   const sendFiles = useCallback(
@@ -795,19 +217,22 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     [state],
   );
   const getActiveTaskForSession = useCallback(
-    (sessionId: string) => latestActiveTaskForSession(state, sessionId),
-    [state],
+    (sessionId: string) => {
+      const task = latestActiveTaskForSession(state, sessionId);
+      return task && isSessionRuntimeCurrent(sessionId, task.runtimeId) ? task : undefined;
+    },
+    [state, isSessionRuntimeCurrent],
   );
 
   useEffect(() => {
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
 
-    (async () => {
-      const disconnected = await listen<{ session_id: string }>(
+    listenerReady.current = (async () => {
+      const disconnected = await listen<{ session_id: string; runtime_id: string }>(
         "session-disconnected",
         (event) => {
-          dispatch({ type: "TASK_DISCARD_SESSION", sessionId: event.payload.session_id });
+          dispatch({ type: "TASK_DISCARD_SESSION", sessionId: event.payload.session_id, runtimeId: event.payload.runtime_id });
         },
       );
       if (cancelled) {
@@ -818,7 +243,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
       const started = await listen<TransferStartedPayload>(
         "file-transfer:started",
-        (event) => dispatch({ type: "TASK_STARTED", payload: event.payload }),
+        (event) => {
+          if (isSessionRuntimeCurrent(event.payload.session_id, event.payload.runtime_id)) dispatch({ type: "TASK_STARTED", payload: event.payload });
+        },
       );
       if (cancelled) {
         started();
@@ -828,7 +255,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
       const progress = await listen<UnifiedTransferProgressPayload>(
         "file-transfer:progress",
-        (event) => dispatch({ type: "TASK_PROGRESS", payload: event.payload }),
+        (event) => {
+          if (isSessionRuntimeCurrent(event.payload.session_id, event.payload.runtime_id)) dispatch({ type: "TASK_PROGRESS", payload: event.payload });
+        },
       );
       if (cancelled) {
         progress();
@@ -845,15 +274,17 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
       unlisteners.push(finished);
-    })().catch((error) => {
+    })();
+    void listenerReady.current.catch((error) => {
       console.error("TransferContext: Failed to register event listeners:", error);
     });
 
     return () => {
       cancelled = true;
+      listenerReady.current = null;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, []);
+  }, [isSessionRuntimeCurrent]);
 
   return (
     <TransferContext.Provider

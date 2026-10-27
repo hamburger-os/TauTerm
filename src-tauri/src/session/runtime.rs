@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-use crate::session::DisconnectInfo;
+use crate::session::{DisconnectInfo, RuntimeIdentity};
 use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
 
 /// Owns one live DataPlane actor plus the session-facing receive pump.
@@ -9,6 +9,7 @@ use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, Transp
 /// The store keeps this owner instead of separate write channels, cancellation senders and
 /// sync/async task variants. All consumers clone `DataPlaneHandle` or create subscriptions.
 pub struct SessionDataPlane {
+    identity: RuntimeIdentity,
     runtime: Option<DataPlaneRuntime>,
     handle: DataPlaneHandle,
     event_thread: Option<std::thread::JoinHandle<()>>,
@@ -23,34 +24,41 @@ impl SessionDataPlane {
     /// barrier. Callers can therefore publish SessionStore state before callbacks observe it.
     pub fn attach_paused(
         runtime: DataPlaneRuntime,
-        session_id: String,
-        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
-        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
+        identity: RuntimeIdentity,
+        on_data: Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send + 'static>,
+        on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
         let handle = runtime.handle.clone();
-        let subscription = handle.subscribe(format!("session:{session_id}:presentation"))?;
+        let subscription =
+            handle.subscribe(format!("session:{}:presentation", identity.session_id))?;
+        let event_identity = identity.clone();
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let event_shutdown_requested = shutdown_requested.clone();
         let (activation_tx, activation_rx) = mpsc::channel::<()>();
         let activated = Arc::new(AtomicBool::new(false));
         let event_thread = std::thread::Builder::new()
-            .name(format!("session-data-{session_id}"))
+            .name(format!("session-data-{}", identity.session_id))
             .spawn(move || {
                 if activation_rx.recv().is_err() || event_shutdown_requested.load(Ordering::Acquire)
                 {
                     return;
                 }
                 loop {
+                    if event_shutdown_requested.load(Ordering::Acquire) {
+                        break;
+                    }
                     match subscription.recv() {
-                        Ok(DataPlaneEvent::Data(data)) => on_data(session_id.clone(), data),
+                        Ok(DataPlaneEvent::Data(data)) => on_data(event_identity.clone(), data),
                         Ok(DataPlaneEvent::Closed(info)) => {
-                            on_disconnect(session_id.clone(), info.into());
+                            if !event_shutdown_requested.load(Ordering::Acquire) {
+                                on_disconnect(event_identity.clone(), info.into());
+                            }
                             break;
                         }
                         Err(_) => {
                             if !event_shutdown_requested.load(Ordering::Acquire) {
                                 on_disconnect(
-                                    session_id.clone(),
+                                    event_identity.clone(),
                                     DisconnectInfo::io_error(
                                         "transport runtime stopped unexpectedly",
                                     ),
@@ -63,6 +71,7 @@ impl SessionDataPlane {
             })
             .map_err(|error| TransportError::io("session_data_pump", error))?;
         Ok(Self {
+            identity,
             runtime: Some(runtime),
             handle,
             event_thread: Some(event_thread),
@@ -75,11 +84,11 @@ impl SessionDataPlane {
     /// Convenience path for owners that do not need a registration barrier.
     pub fn attach(
         runtime: DataPlaneRuntime,
-        session_id: String,
-        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
-        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
+        identity: RuntimeIdentity,
+        on_data: Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send + 'static>,
+        on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
-        let owner = Self::attach_paused(runtime, session_id, on_data, on_disconnect)?;
+        let owner = Self::attach_paused(runtime, identity, on_data, on_disconnect)?;
         owner.activate();
         Ok(owner)
     }
@@ -95,6 +104,10 @@ impl SessionDataPlane {
 
     pub fn handle(&self) -> &DataPlaneHandle {
         &self.handle
+    }
+
+    pub fn identity(&self) -> &RuntimeIdentity {
+        &self.identity
     }
 
     /// Request resource shutdown without joining the receive callback thread. The request is
@@ -185,7 +198,10 @@ mod tests {
         let (disconnect_tx, disconnect_rx) = mpsc::channel();
         let mut owner = SessionDataPlane::attach_paused(
             runtime,
-            "paused-session".into(),
+            RuntimeIdentity {
+                session_id: "paused-session".into(),
+                runtime_id: crate::session::RuntimeId(1),
+            },
             Box::new(|_, _| {}),
             Box::new(move |_, info| {
                 let _ = disconnect_tx.send(info);
@@ -214,7 +230,10 @@ mod tests {
         let (disconnect_tx, disconnect_rx) = mpsc::channel();
         let mut owner = SessionDataPlane::attach(
             runtime,
-            "test-session".into(),
+            RuntimeIdentity {
+                session_id: "test-session".into(),
+                runtime_id: crate::session::RuntimeId(1),
+            },
             Box::new(|_, _| {}),
             Box::new(move |_, info| {
                 let _ = disconnect_tx.send(info);

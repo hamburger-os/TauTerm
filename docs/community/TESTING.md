@@ -38,9 +38,17 @@ The permanent smoke contract covers:
 - no root document overflow at the default window size;
 - command palette opens and closes;
 - new-session workflow opens and closes;
+- the Modbus connection form exposes its default RTU client configuration;
+- TCP client receives bytes sent immediately on accept, sends confirmed data, observes remote EOF, and reconnects the same saved Session;
+- UDP client exchanges loopback datagrams before and after disconnect/reconnect;
+- TCP server registers an incoming peer before displaying its early data, sends a reply, and closes the active child when its parent disconnects;
 - no unhandled frontend runtime errors occur during those interactions.
 
 Stable `data-testid` attributes are test contracts only; they do not carry product state.
+
+Build the test application with `npm run test:e2e:build`, then run `npm run test:e2e`. The build uses `tests/e2e/tauri.conf.json` to select the separate `com.tauterm.e2e` application identifier and stages the executable under `.cache/e2e/app/`. The suite checks that identifier through the regular read-only Tauri app API before changing any Session, so pointing it at a normal TauTerm binary fails before the tests write user data. It creates uniquely named test Sessions and removes only those Sessions through the normal UI.
+
+Install the locked test dependencies with `npm ci --prefix tests/e2e --no-audit --no-fund`. The external driver defaults to the Cargo bin directory; `TAUTERM_E2E_DRIVER` and `TAUTERM_E2E_NATIVE_DRIVER` can select explicit existing driver executables. `TAUTERM_E2E_BINARY` overrides the staged application path and still requires the E2E identifier. The driver waits for readiness before creating a WebView session; test failures preserve screenshots locally under `.cache/e2e/artifacts/`. All network fixtures bind only `127.0.0.1`, choose ephemeral ports, and release sockets even when an assertion fails. They require no hardware, driver changes, remote account, or authentication secrets.
 
 Windows and Linux are the automated real-WebView targets for this direct external-driver path. Linux is a hard real-WebView gate. On GitHub-hosted Windows runners, WebView2 Runtime 150+ currently blocks the remote-debugging port when the host is elevated. The workflow therefore records one of three explicit Windows outcomes:
 

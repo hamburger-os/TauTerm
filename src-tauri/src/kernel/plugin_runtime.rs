@@ -211,9 +211,14 @@ impl<T> SessionRuntimeRegistry<T> {
         }
     }
 
-    pub fn detach(&self, session_id: &str) {
+    pub fn detach(&self, session_id: &str, runtime: &Arc<T>) {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.remove(session_id);
+            if entries
+                .get(session_id)
+                .is_some_and(|entry| entry.ptr_eq(&Arc::downgrade(runtime)))
+            {
+                entries.remove(session_id);
+            }
         }
     }
 }
@@ -251,6 +256,22 @@ mod tests {
     use super::*;
     use crate::kernel::plugin_adapter::ProtocolConnection;
     use crate::session::SessionError;
+
+    #[test]
+    fn old_runtime_cleanup_cannot_detach_a_reconnected_instance() {
+        let registry = SessionRuntimeRegistry::new();
+        let old = Arc::new(1);
+        let current = Arc::new(2);
+        registry.attach("session", &old);
+        registry.attach("session", &current);
+        registry.detach("session", &old);
+        assert!(Arc::ptr_eq(
+            &registry.get("session").expect("current runtime"),
+            &current
+        ));
+        registry.detach("session", &current);
+        assert!(registry.get("session").is_none());
+    }
 
     struct DummyAdapter;
 

@@ -8,14 +8,15 @@ use crate::kernel::persistence::atomic_write;
 use crate::kernel::plugin_adapter::{
     ProtocolConnection, SessionAttach, SessionChannelFactory, SessionService,
 };
-use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
-use crate::session::{AutomationIo, DisconnectInfo, SessionDataPlane, SessionIo};
+use crate::kernel::script_engine::{ScriptCleanup, ScriptRuntime};
+use crate::session::{
+    AutomationIo, DisconnectInfo, RuntimeId, RuntimeIdentity, SessionDataPlane, SessionIo,
+};
 use crate::transfer::scheduler::TransferScheduler;
-use crate::transport::DataPlaneRuntime;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
@@ -27,7 +28,6 @@ pub enum SessionState {
     Disconnected,
     Connecting,
     Connected,
-    Transferring,
 }
 
 /// Deferred child cleanup. The DataPlane owner is moved out while SessionStore is locked and
@@ -35,7 +35,7 @@ pub enum SessionState {
 pub struct SubConnectionCleanup {
     channel_id: String,
     data_plane: Option<SessionDataPlane>,
-    script_thread: Option<std::thread::JoinHandle<()>>,
+    script: Option<ScriptCleanup>,
 }
 
 impl SubConnectionCleanup {
@@ -44,15 +44,82 @@ impl SubConnectionCleanup {
             data_plane.shutdown();
             log::debug!("子连接 DataPlane 已清理: {}", self.channel_id);
         }
-        if let Some(thread) = self.script_thread.take() {
-            let _ = thread.join();
+        if let Some(script) = self.script.take() {
+            script.join();
         }
+    }
+}
+
+/// Runtime resources detached atomically from the SessionStore. Shutdown and joins must run
+/// after releasing its lock; protocol-owned resources remain opaque capabilities here.
+#[must_use = "Session cleanup must be awaited or scheduled outside the SessionStore lock"]
+pub struct SessionCleanup {
+    identity: RuntimeIdentity,
+    children: Vec<SubConnectionCleanup>,
+    data_plane: Option<SessionDataPlane>,
+    script: Option<ScriptCleanup>,
+    transfers: Vec<tokio::task::JoinHandle<()>>,
+    service: Option<Arc<dyn SessionService>>,
+    attachment: Option<Arc<dyn SessionAttach>>,
+    teardown_delay: Duration,
+}
+
+impl SessionCleanup {
+    pub fn identity(&self) -> &RuntimeIdentity {
+        &self.identity
+    }
+    fn join_resources(mut self) {
+        for child in self.children.drain(..) {
+            child.join();
+        }
+        if let Some(mut data_plane) = self.data_plane.take() {
+            data_plane.shutdown();
+        }
+        if let Some(script) = self.script.take() {
+            script.join();
+        }
+        if !self.teardown_delay.is_zero() {
+            std::thread::sleep(self.teardown_delay);
+        }
+        if let Some(service) = self.service.take() {
+            service.shutdown();
+        }
+        if let Some(attachment) = self.attachment.take() {
+            attachment.on_detached(&self.identity.session_id);
+        }
+    }
+
+    pub async fn finish(mut self) -> Result<(), String> {
+        let transfers = std::mem::take(&mut self.transfers);
+        let session_id = self.identity.session_id.clone();
+        tauri::async_runtime::spawn_blocking(move || self.join_resources())
+            .await
+            .map_err(|error| format!("等待会话资源清理失败: {error}"))?;
+        for task in transfers {
+            if tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .is_err()
+            {
+                log::warn!("传输 task join 超时 (session: {session_id})");
+            }
+        }
+        Ok(())
+    }
+
+    /// For synchronous lifecycle callbacks; the scheduled task owns all detached resources.
+    pub fn schedule(self) {
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = self.finish().await {
+                log::error!("{error}");
+            }
+        });
     }
 }
 
 /// I/O 统计快照
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionStats {
+    pub runtime_id: RuntimeId,
     pub tab_id: String,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
@@ -64,6 +131,8 @@ pub struct SessionStats {
 /// 每个子连接有独立的 DataPlane、SessionIo 和统计信息。协议可以决定它是否作为
 /// Workspace 中的独立可见项，但协议地址、peer 元数据等领域信息由插件运行时自行持有。
 pub struct SubConnection {
+    published: bool,
+    pub runtime_id: RuntimeId,
     pub id: TabId,
     pub name: String,
     pub data_plane: Option<SessionDataPlane>,
@@ -74,13 +143,13 @@ pub struct SubConnection {
     pub channel_index: u32,
     pub elevated: bool,
     pub retain_terminal: bool,
-    pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
-    pub script_thread: Option<std::thread::JoinHandle<()>>,
-    pub script_shutdown: Option<Arc<AtomicBool>>,
+    pub script: Option<ScriptRuntime>,
     pub visible_in_workspace: bool,
 }
 
 pub struct ActiveSessionHandle {
+    published: bool,
+    pub runtime_id: RuntimeId,
     pub id: TabId,
     pub name: String,
     pub data_plane: Option<SessionDataPlane>,
@@ -97,9 +166,7 @@ pub struct ActiveSessionHandle {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
-    pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
-    pub script_thread: Option<std::thread::JoinHandle<()>>,
-    pub script_shutdown: Option<Arc<AtomicBool>>,
+    pub script: Option<ScriptRuntime>,
     pub service: Option<Arc<dyn SessionService>>,
     pub file_transfer: Option<Arc<dyn FileTransfer>>,
     pub attachment: Option<Arc<dyn SessionAttach>>,
@@ -121,6 +188,8 @@ impl SubConnection {
         elevated: bool,
     ) -> Self {
         Self {
+            runtime_id: data_plane.identity().runtime_id,
+            published: false,
             id,
             name,
             data_plane: Some(data_plane),
@@ -131,9 +200,7 @@ impl SubConnection {
             channel_index,
             elevated,
             retain_terminal: false,
-            script_tx: None,
-            script_thread: None,
-            script_shutdown: None,
+            script: None,
             visible_in_workspace: true,
         }
     }
@@ -166,11 +233,8 @@ impl Drop for ActiveSessionHandle {
         if let Some(flag) = &self.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
         }
-        if let Some(flag) = &self.script_shutdown {
-            flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(tx) = self.script_tx.take() {
-            let _ = tx.send(ScriptCmd::Shutdown);
+        if let Some(script) = &self.script {
+            script.cancel();
         }
         if let Some(data_plane) = &self.data_plane {
             data_plane.request_shutdown();
@@ -182,11 +246,8 @@ impl Drop for ActiveSessionHandle {
             if let Some(data_plane) = &sub.data_plane {
                 data_plane.request_shutdown();
             }
-            if let Some(flag) = &sub.script_shutdown {
-                flag.store(true, Ordering::SeqCst);
-            }
-            if let Some(tx) = sub.script_tx.take() {
-                let _ = tx.send(ScriptCmd::Shutdown);
+            if let Some(script) = &sub.script {
+                script.cancel();
             }
         }
     }
@@ -194,6 +255,7 @@ impl Drop for ActiveSessionHandle {
 
 /// 会话存储
 pub struct SessionStore {
+    next_runtime_id: u64,
     sessions: HashMap<TabId, ActiveSessionHandle>,
     active_id: Option<TabId>,
     tab_order: Vec<TabId>,
@@ -275,6 +337,7 @@ impl SessionStore {
 
     pub fn new() -> Self {
         Self {
+            next_runtime_id: 1,
             sessions: HashMap::new(),
             active_id: None,
             tab_order: Vec::new(),
@@ -289,10 +352,10 @@ impl SessionStore {
         &mut self,
         options: SessionCreateOptions,
         mut conn: ProtocolConnection,
-        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
-        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
+        on_data: Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send + 'static>,
+        on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send + 'static>,
         app_handle: tauri::AppHandle,
-    ) -> Result<TabId, String> {
+    ) -> Result<RuntimeIdentity, String> {
         let SessionCreateOptions {
             name,
             plugin_id,
@@ -344,13 +407,14 @@ impl SessionStore {
             .and_then(|v| v.as_str())
             .unwrap_or("utf-8");
         let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
+        let identity = self.allocate_runtime_identity(id.clone())?;
         let data_plane =
-            SessionDataPlane::attach_paused(runtime, id.clone(), on_data, on_disconnect)
+            SessionDataPlane::attach_paused(runtime, identity.clone(), on_data, on_disconnect)
                 .map_err(|e| e.to_string())?;
         let stats_cancel_flag = Arc::new(AtomicBool::new(false));
         Self::start_stats_collector(
             app_handle,
-            id.clone(),
+            identity.clone(),
             io.clone(),
             connected_at,
             stats_cancel_flag.clone(),
@@ -359,6 +423,8 @@ impl SessionStore {
             attach.on_attached(&id);
         }
         let handle = ActiveSessionHandle {
+            published: false,
+            runtime_id: identity.runtime_id,
             id: id.clone(),
             name: tab_name.clone(),
             data_plane: Some(data_plane),
@@ -373,9 +439,7 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            script_tx: None,
-            script_thread: None,
-            script_shutdown: None,
+            script: None,
             service: conn.service,
             file_transfer: conn.file_transfer,
             attachment: conn.on_attached,
@@ -392,7 +456,7 @@ impl SessionStore {
         self.tab_order.push(id.clone());
         self.session_names.insert(id.clone(), tab_name);
         self.active_id = Some(id.clone());
-        Ok(id)
+        Ok(identity)
     }
 
     /// 清理所有 Disconnected 状态的僵尸会话，以免占用 max_sessions 名额。
@@ -419,7 +483,7 @@ impl SessionStore {
         &mut self,
         options: ContainerSessionCreateOptions,
         runtime: ContainerSessionRuntime,
-    ) -> Result<TabId, String> {
+    ) -> Result<RuntimeIdentity, String> {
         let ContainerSessionRuntime {
             service,
             file_transfer,
@@ -480,7 +544,10 @@ impl SessionStore {
         } else {
             name
         };
+        let identity = self.allocate_runtime_identity(id.clone())?;
         let handle = ActiveSessionHandle {
+            published: false,
+            runtime_id: identity.runtime_id,
             id: id.clone(),
             name: session_name.clone(),
             data_plane: None,
@@ -495,9 +562,7 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            script_tx: None,
-            script_thread: None,
-            script_shutdown: None,
+            script: None,
             service,
             file_transfer,
             attachment: attachment.clone(),
@@ -516,27 +581,24 @@ impl SessionStore {
         self.tab_order.push(id.clone());
         self.session_names.insert(id.clone(), session_name);
         self.active_id = Some(id.clone());
-        Ok(id)
+        Ok(identity)
     }
 
-    pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
+    pub fn close_session(&mut self, session_id: &str) -> Result<SessionCleanup, String> {
         let mut handle = self
             .sessions
             .remove(session_id)
             .ok_or_else(|| self.session_not_found(session_id))?;
+        let mut children = Vec::new();
         for mut sub in std::mem::take(&mut handle.sub_connections) {
             if let Some(flag) = &sub.stats_cancel_flag {
                 flag.store(true, Ordering::SeqCst);
             }
-            if let Some(flag) = &sub.script_shutdown {
-                flag.store(true, Ordering::SeqCst);
-            }
-            if let Some(tx) = sub.script_tx.take() {
-                let _ = tx.send(ScriptCmd::Shutdown);
-            }
-            if let Some(data_plane) = &sub.data_plane {
-                data_plane.request_shutdown();
-            }
+            children.push(SubConnectionCleanup {
+                channel_id: sub.id,
+                data_plane: sub.data_plane.take(),
+                script: sub.script.take().map(ScriptRuntime::into_cleanup),
+            });
         }
         self.session_names
             .insert(session_id.to_string(), handle.name.clone());
@@ -547,56 +609,33 @@ impl SessionStore {
             }
         }
         handle.transfer_scheduler.cancel_for_shutdown();
-        if let Some(flag) = &handle.script_shutdown {
-            flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(tx) = handle.script_tx.take() {
-            let _ = tx.send(ScriptCmd::Shutdown);
-        }
-        if let Some(thread) = handle.script_thread.take() {
-            let _ = thread.join();
-        }
         if let Some(flag) = &handle.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
         }
-        if let Some(data_plane) = &handle.data_plane {
-            data_plane.request_shutdown();
-        }
-        handle.data_plane = None;
-        for task in handle.transfer_tasks.drain(..) {
-            let sid = session_id.to_string();
-            if tokio::runtime::Handle::try_current().is_ok() {
-                tokio::spawn(async move {
-                    if tokio::time::timeout(Duration::from_secs(5), task)
-                        .await
-                        .is_err()
-                    {
-                        log::warn!("传输 task join 超时 (session: {})", sid);
-                    }
-                });
-            }
-        }
-        if !handle.teardown_delay.is_zero() {
-            std::thread::sleep(handle.teardown_delay);
-        }
+        let cleanup = SessionCleanup {
+            identity: RuntimeIdentity {
+                session_id: session_id.to_string(),
+                runtime_id: handle.runtime_id,
+            },
+            children,
+            data_plane: handle.data_plane.take(),
+            script: handle.script.take().map(ScriptRuntime::into_cleanup),
+            transfers: std::mem::take(&mut handle.transfer_tasks),
+            service: handle.service.take(),
+            attachment: handle.attachment.take(),
+            teardown_delay: handle.teardown_delay,
+        };
         self.tab_order.retain(|id| id != session_id);
         if self.active_id.as_deref() == Some(session_id) {
             self.active_id = self.tab_order.first().cloned();
         }
-        if let Some(service) = &handle.service {
-            service.shutdown();
-        }
-        if let Some(attachment) = &handle.attachment {
-            attachment.on_detached(session_id);
-        }
-        handle.service = None;
         handle.file_transfer = None;
-        handle.attachment = None;
         handle.channel_factory = None;
         handle.io = None;
+        handle.automation_io = None;
         handle.state = SessionState::Disconnected;
         self.sessions.insert(session_id.to_string(), handle);
-        Ok(())
+        Ok(cleanup)
     }
 
     /// 格式化"会话不存在"错误消息，优先使用已保存的会话名称
@@ -667,7 +706,7 @@ impl SessionStore {
             .sessions
             .get_mut(parent_id)
             .ok_or_else(|| not_found.clone())?;
-        if handle.state != SessionState::Connected {
+        if handle.state != SessionState::Connected || handle.runtime_id != sub.runtime_id {
             return Err(not_found);
         }
         handle.sub_connections.push(sub);
@@ -700,32 +739,48 @@ impl SessionStore {
         })
     }
 
+    /// Capture I/O only for the connected instance named by the caller.
+    pub fn io_for_runtime(&self, identity: &RuntimeIdentity) -> Result<Arc<SessionIo>, String> {
+        if !self.runtime_is_connected(identity) {
+            return Err("会话运行时已变化或断开".into());
+        }
+        self.get_io_for(&identity.session_id)
+            .ok_or_else(|| "当前会话没有 I/O 能力".into())
+    }
+
     /// Activate a previously registered root or child DataPlane.
     ///
     /// Registration-sensitive connectors publish SessionStore state and their connected event
     /// before releasing this barrier, so data/disconnect callbacks cannot race ahead of them.
-    pub fn activate_data_plane(&self, session_id: &str) -> Result<(), String> {
-        if let Some(handle) = self.sessions.get(session_id) {
-            let data_plane = handle
-                .data_plane
-                .as_ref()
-                .ok_or_else(|| format!("会话 {} 不包含 DataPlane", session_id))?;
-            data_plane.activate();
+    pub fn activate_data_plane(&mut self, identity: &RuntimeIdentity) -> Result<(), String> {
+        if !self.matches_runtime(identity) {
+            return Err("会话运行时已变化，拒绝激活旧连接".into());
+        }
+        if let Some(root) = self.sessions.get_mut(&identity.session_id) {
+            root.published = true;
+            if let Some(owner) = &root.data_plane {
+                owner.activate();
+            }
+            for child in &root.sub_connections {
+                if child.published {
+                    if let Some(owner) = &child.data_plane {
+                        owner.activate();
+                    }
+                }
+            }
             return Ok(());
         }
         let (parent_id, index) = self
-            .find_sub_connection_index(session_id)
-            .ok_or_else(|| self.session_not_found(session_id))?;
-        let sub = self
-            .sessions
-            .get(&parent_id)
-            .and_then(|handle| handle.sub_connections.get(index))
-            .ok_or_else(|| self.session_not_found(session_id))?;
-        let data_plane = sub
-            .data_plane
-            .as_ref()
-            .ok_or_else(|| format!("子连接 {} 不包含 DataPlane", session_id))?;
-        data_plane.activate();
+            .find_sub_connection_index(&identity.session_id)
+            .ok_or("子会话不存在")?;
+        let root = self.sessions.get_mut(&parent_id).ok_or("父会话不存在")?;
+        let child = &mut root.sub_connections[index];
+        child.published = true;
+        if root.published {
+            if let Some(owner) = &child.data_plane {
+                owner.activate();
+            }
+        }
         Ok(())
     }
 
@@ -747,18 +802,9 @@ impl SessionStore {
             .position(|s| s.id == channel_id)
             .ok_or_else(|| format!("子连接 {} 在会话 {} 中不存在", channel_id, parent_id))?;
         let mut sub = handle.sub_connections.remove(idx);
-        if let Some(flag) = sub.script_shutdown.take() {
-            flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(tx) = sub.script_tx.take() {
-            let _ = tx.send(ScriptCmd::Shutdown);
-        }
-        let script_thread = sub.script_thread.take();
+        let script = sub.script.take().map(ScriptRuntime::into_cleanup);
         if let Some(flag) = &sub.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(data_plane) = &sub.data_plane {
-            data_plane.request_shutdown();
         }
         let data_plane = sub.data_plane.take();
         let is_last = handle
@@ -770,7 +816,7 @@ impl SessionStore {
             SubConnectionCleanup {
                 channel_id: channel_id.to_string(),
                 data_plane,
-                script_thread,
+                script,
             },
         ))
     }
@@ -814,106 +860,44 @@ impl SessionStore {
         code: &str,
         app_handle: tauri::AppHandle,
     ) -> Result<(), String> {
-        if let Some(handle) = self.sessions.get_mut(session_id) {
+        let not_found = self.session_not_found(session_id);
+        let (script, automation) = if let Some(handle) = self.sessions.get_mut(session_id) {
             let automation = handle
                 .automation_io
                 .clone()
                 .ok_or("当前会话不提供自动化 I/O 能力")?;
-            if let Some(tx) = &handle.script_tx {
-                return tx
-                    .send(ScriptCmd::LoadScript(code.to_string()))
-                    .map_err(|e| format!("发送脚本失败: {}", e));
-            }
-            let consumer = format!("script:{session_id}");
-            let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
-            let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
-            let shutdown = Arc::new(AtomicBool::new(false));
-            let thread = spawn_script_thread(
-                automation,
-                subscription,
-                app_handle,
-                rx,
-                session_id.to_string(),
-                shutdown.clone(),
-            );
-            tx.send(ScriptCmd::LoadScript(code.to_string()))
-                .map_err(|e| format!("发送脚本失败: {}", e))?;
-            handle.script_tx = Some(tx);
-            handle.script_thread = Some(thread);
-            handle.script_shutdown = Some(shutdown);
-            return Ok(());
+            (&mut handle.script, automation)
+        } else {
+            let (parent_id, sub_idx) = self
+                .find_sub_connection_index(session_id)
+                .ok_or(not_found)?;
+            let handle = self.sessions.get_mut(&parent_id).ok_or("父会话不存在")?;
+            let sub = &mut handle.sub_connections[sub_idx];
+            let automation: Arc<dyn AutomationIo> = sub.io.clone();
+            (&mut sub.script, automation)
+        };
+        if let Some(runtime) = script {
+            return runtime.load(code);
         }
-
-        let not_found = self.session_not_found(session_id);
-        let (parent_id, sub_idx) = self
-            .find_sub_connection_index(session_id)
-            .ok_or(not_found)?;
-        let handle = self.sessions.get_mut(&parent_id).ok_or("父会话不存在")?;
-        let sub = &mut handle.sub_connections[sub_idx];
-        if let Some(tx) = &sub.script_tx {
-            return tx
-                .send(ScriptCmd::LoadScript(code.to_string()))
-                .map_err(|e| format!("发送脚本失败: {}", e));
-        }
-        let automation: Arc<dyn AutomationIo> = sub.io.clone();
-        let consumer = format!("script:{session_id}");
-        let subscription = Some(automation.subscribe(&consumer).map_err(|e| e.to_string())?);
-        let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let thread = spawn_script_thread(
-            automation,
-            subscription,
-            app_handle,
-            rx,
-            session_id.to_string(),
-            shutdown.clone(),
-        );
-        tx.send(ScriptCmd::LoadScript(code.to_string()))
-            .map_err(|e| format!("发送脚本失败: {}", e))?;
-        sub.script_tx = Some(tx);
-        sub.script_thread = Some(thread);
-        sub.script_shutdown = Some(shutdown);
+        *script = Some(ScriptRuntime::start(
+            automation, app_handle, session_id, code,
+        )?);
         Ok(())
     }
 
-    /// 停止脚本引擎
-    pub fn stop_script(&mut self, session_id: &str) -> Result<(), String> {
-        if let Some(handle) = self.sessions.get_mut(session_id) {
-            Self::stop_script_fields(
-                &mut handle.script_shutdown,
-                &mut handle.script_tx,
-                &mut handle.script_thread,
-            );
-            return Ok(());
-        }
+    /// Cancel under the store lock; the caller joins the returned owner outside it.
+    pub fn stop_script(&mut self, session_id: &str) -> Result<Option<ScriptCleanup>, String> {
         let not_found = self.session_not_found(session_id);
-        let (parent_id, sub_idx) = self
-            .find_sub_connection_index(session_id)
-            .ok_or(not_found)?;
-        let handle = self.sessions.get_mut(&parent_id).ok_or("父会话不存在")?;
-        let sub = &mut handle.sub_connections[sub_idx];
-        Self::stop_script_fields(
-            &mut sub.script_shutdown,
-            &mut sub.script_tx,
-            &mut sub.script_thread,
-        );
-        Ok(())
-    }
-
-    fn stop_script_fields(
-        shutdown: &mut Option<Arc<AtomicBool>>,
-        tx: &mut Option<mpsc::SyncSender<ScriptCmd>>,
-        thread: &mut Option<std::thread::JoinHandle<()>>,
-    ) {
-        if let Some(flag) = shutdown.take() {
-            flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(tx) = tx.take() {
-            let _ = tx.send(ScriptCmd::Shutdown);
-        }
-        if let Some(thread) = thread.take() {
-            let _ = thread.join();
-        }
+        let script = if let Some(handle) = self.sessions.get_mut(session_id) {
+            &mut handle.script
+        } else {
+            let (parent_id, sub_idx) = self
+                .find_sub_connection_index(session_id)
+                .ok_or(not_found)?;
+            let handle = self.sessions.get_mut(&parent_id).ok_or("父会话不存在")?;
+            &mut handle.sub_connections[sub_idx].script
+        };
+        Ok(script.take().map(ScriptRuntime::into_cleanup))
     }
 
     /// 获取活跃会话 ID
@@ -940,69 +924,6 @@ impl SessionStore {
         if let Some(handle) = self.sessions.get_mut(parent_id) {
             handle.next_child_index = 0;
         }
-    }
-
-    /// 重连指定会话。
-    pub fn reconnect_session(
-        &mut self,
-        session_id: &str,
-        runtime: DataPlaneRuntime,
-        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
-        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
-        app_handle: tauri::AppHandle,
-    ) -> Result<serde_json::Value, String> {
-        let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if let Some(flag) = &handle.stats_cancel_flag {
-            flag.store(true, Ordering::SeqCst);
-        }
-        if let Some(old) = &handle.data_plane {
-            old.request_shutdown();
-        }
-        let connected_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        );
-        let encoding = handle
-            .params
-            .get("encoding")
-            .and_then(|v| v.as_str())
-            .unwrap_or("utf-8");
-        let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
-        let data_plane =
-            SessionDataPlane::attach(runtime, session_id.to_string(), on_data, on_disconnect)
-                .map_err(|e| e.to_string())?;
-        let stats_flag = Arc::new(AtomicBool::new(false));
-        Self::start_stats_collector(
-            app_handle.clone(),
-            session_id.to_string(),
-            io.clone(),
-            connected_at,
-            stats_flag.clone(),
-        );
-        if handle.script_shutdown.is_some() {
-            let _ = app_handle.emit(
-                "script-log",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "message": "[Engine] 会话已重连 — 请重新启动脚本引擎",
-                }),
-            );
-            Self::stop_script_fields(
-                &mut handle.script_shutdown,
-                &mut handle.script_tx,
-                &mut handle.script_thread,
-            );
-        }
-        handle.data_plane = Some(data_plane);
-        handle.io = Some(io.clone());
-        handle.automation_io = Some(io as Arc<dyn AutomationIo>);
-        handle.state = SessionState::Connected;
-        handle.connected_at = connected_at;
-        handle.stats_cancel_flag = Some(stats_flag);
-        Ok(handle.params.clone())
     }
 
     /// 为 Inline 传输预留当前 Session 的唯一活动槽。
@@ -1039,7 +960,11 @@ impl SessionStore {
     }
 
     /// 清理当前传输占用。Auxiliary PanicGuard 与 Inline 归还端口共用此入口。
-    pub fn transfer_done(&mut self, session_id: &str, transfer_id: Option<&str>) {
+    pub fn transfer_done(&mut self, identity: &RuntimeIdentity, transfer_id: Option<&str>) {
+        if !self.matches_runtime(identity) {
+            return;
+        }
+        let session_id = identity.session_id.as_str();
         if let Some(handle) = self.sessions.get_mut(session_id) {
             let _ = handle.transfer_scheduler.finish(transfer_id);
         }
@@ -1048,9 +973,13 @@ impl SessionStore {
     /// 注册传输 task 的 JoinHandle，供 close_session 等待完成。
     pub fn register_transfer_task(
         &mut self,
-        session_id: &str,
+        identity: &RuntimeIdentity,
         handle: tokio::task::JoinHandle<()>,
     ) -> Result<(), String> {
+        if !self.runtime_is_connected(identity) {
+            return Err("传输所属连接已关闭或变化".into());
+        }
+        let session_id = identity.session_id.as_str();
         let not_found = self.session_not_found(session_id);
         let h = self.sessions.get_mut(session_id).ok_or(not_found)?;
         h.transfer_tasks.retain(|h| !h.is_finished());
@@ -1063,71 +992,117 @@ impl SessionStore {
         self.sessions.get(session_id).map(|h| h.state.clone())
     }
 
-    /// 标记会话为已断开（由 on_disconnect 回调调用）。
-    pub fn mark_disconnected(&mut self, session_id: &str) {
-        if let Some(handle) = self.sessions.get_mut(session_id) {
-            handle.state = SessionState::Disconnected;
-            for sub in &mut handle.sub_connections {
-                sub.state = SessionState::Disconnected;
-                if let Some(flag) = &sub.stats_cancel_flag {
-                    flag.store(true, Ordering::SeqCst);
-                }
-                if let Some(data_plane) = &sub.data_plane {
-                    data_plane.request_shutdown();
-                }
-            }
-            handle.transfer_scheduler.cancel_for_shutdown();
-            if let Some(flag) = &handle.script_shutdown {
-                flag.store(true, Ordering::SeqCst);
-            }
-            if let Some(tx) = handle.script_tx.take() {
-                let _ = tx.send(ScriptCmd::Shutdown);
-            }
-            if let Some(flag) = &handle.stats_cancel_flag {
-                flag.store(true, Ordering::SeqCst);
-            }
-            if let Some(service) = &handle.service {
-                service.shutdown();
-            }
+    /// Commit only to the originating connection and reuse the canonical cleanup owner.
+    pub fn mark_disconnected(&mut self, identity: &RuntimeIdentity) -> Option<SessionCleanup> {
+        let handle = self.sessions.get(&identity.session_id)?;
+        if handle.runtime_id != identity.runtime_id || handle.state != SessionState::Connected {
+            return None;
         }
+        self.close_session(&identity.session_id).ok()
     }
 
-    /// 标记子连接为已断开（由子通道 I/O 回调调用）。
     pub fn mark_sub_disconnected(
         &mut self,
-        parent_id: &str,
+        parent: &RuntimeIdentity,
         channel_id: &str,
         retain_terminal: bool,
-    ) {
-        if let Some(handle) = self.sessions.get_mut(parent_id) {
-            if let Some(sub) = handle
-                .sub_connections
-                .iter_mut()
-                .find(|sub| sub.id == channel_id)
-            {
-                sub.state = SessionState::Disconnected;
-                sub.retain_terminal = retain_terminal;
-                if let Some(flag) = &sub.stats_cancel_flag {
-                    flag.store(true, Ordering::SeqCst);
-                }
-            }
+    ) -> bool {
+        let Some(handle) = self.sessions.get_mut(&parent.session_id) else {
+            return false;
+        };
+        if handle.runtime_id != parent.runtime_id || handle.state != SessionState::Connected {
+            return false;
         }
+        let Some(sub) = handle
+            .sub_connections
+            .iter_mut()
+            .find(|sub| sub.id == channel_id)
+        else {
+            return false;
+        };
+        if sub.state != SessionState::Connected {
+            return false;
+        }
+        sub.state = SessionState::Disconnected;
+        sub.retain_terminal = retain_terminal;
+        if let Some(script) = &sub.script {
+            script.cancel();
+        }
+        if let Some(flag) = &sub.stats_cancel_flag {
+            flag.store(true, Ordering::Release);
+        }
+        true
+    }
+
+    fn allocate_runtime_identity(&mut self, session_id: String) -> Result<RuntimeIdentity, String> {
+        let id = self.next_runtime_id;
+        self.next_runtime_id = id
+            .checked_add(1)
+            .ok_or("Session runtime identity exhausted")?;
+        Ok(RuntimeIdentity {
+            session_id,
+            runtime_id: RuntimeId(id),
+        })
+    }
+
+    pub fn runtime_identity(&self, session_id: &str) -> Option<RuntimeIdentity> {
+        if let Some(root) = self.sessions.get(session_id) {
+            return Some(RuntimeIdentity {
+                session_id: root.id.clone(),
+                runtime_id: root.runtime_id,
+            });
+        }
+        let (parent_id, index) = self.find_sub_connection_index(session_id)?;
+        let child = self.sessions.get(&parent_id)?.sub_connections.get(index)?;
+        Some(RuntimeIdentity {
+            session_id: child.id.clone(),
+            runtime_id: child.runtime_id,
+        })
+    }
+
+    pub fn matches_runtime(&self, identity: &RuntimeIdentity) -> bool {
+        self.runtime_identity(&identity.session_id).as_ref() == Some(identity)
+    }
+
+    pub fn runtime_is_connected(&self, identity: &RuntimeIdentity) -> bool {
+        if let Some(root) = self.sessions.get(&identity.session_id) {
+            return root.runtime_id == identity.runtime_id && root.state == SessionState::Connected;
+        }
+        let Some((parent_id, index)) = self.find_sub_connection_index(&identity.session_id) else {
+            return false;
+        };
+        let Some(root) = self.sessions.get(&parent_id) else {
+            return false;
+        };
+        root.runtime_id == identity.runtime_id
+            && root.state == SessionState::Connected
+            && root.sub_connections[index].state == SessionState::Connected
+    }
+
+    pub fn close_if_current(
+        &mut self,
+        identity: &RuntimeIdentity,
+    ) -> Result<SessionCleanup, String> {
+        if !self.matches_runtime(identity) {
+            return Err("会话运行时已变化，拒绝关闭旧连接".into());
+        }
+        self.close_session(&identity.session_id)
     }
 
     /// 启动 I/O 统计采集器（使用 std::thread + AtomicBool 取消，无需 tokio runtime）。
     fn start_stats_collector(
         app_handle: tauri::AppHandle,
-        tab_id: String,
+        identity: RuntimeIdentity,
         io: Arc<SessionIo>,
         connected_at: Option<u64>,
         cancel_flag: Arc<AtomicBool>,
     ) {
-        Self::spawn_stats_collector(app_handle, tab_id, io, connected_at, cancel_flag);
+        Self::spawn_stats_collector(app_handle, identity, io, connected_at, cancel_flag);
     }
 
     pub fn spawn_stats_collector(
         app_handle: tauri::AppHandle,
-        tab_id: String,
+        identity: RuntimeIdentity,
         io: Arc<SessionIo>,
         connected_at: Option<u64>,
         cancel_flag: Arc<AtomicBool>,
@@ -1148,7 +1123,8 @@ impl SessionStore {
                     let _ = app_handle.emit(
                         "session-stats",
                         SessionStats {
-                            tab_id: tab_id.clone(),
+                            tab_id: identity.session_id.clone(),
+                            runtime_id: identity.runtime_id,
                             tx_bytes: tx,
                             rx_bytes: rx,
                             connected_at,
@@ -1402,7 +1378,7 @@ impl Drop for SessionStore {
     fn drop(&mut self) {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         for id in ids {
-            let _ = self.close_session(&id);
+            let _ = self.close_session(&id).map(SessionCleanup::schedule);
         }
     }
 }
@@ -1410,6 +1386,223 @@ impl Drop for SessionStore {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+
+    fn create_test_container(store: &mut SessionStore, id: &str) -> RuntimeIdentity {
+        store
+            .create_container_session(
+                ContainerSessionCreateOptions {
+                    name: "test".into(),
+                    plugin_id: "dummy".into(),
+                    endpoint: "local".into(),
+                    params: serde_json::json!({}),
+                    transfer_enabled: false,
+                    transfer_protocol: None,
+                    send_bar_enabled: false,
+                    id_override: Some(id.into()),
+                },
+                ContainerSessionRuntime {
+                    service: None,
+                    file_transfer: None,
+                    channel_factory: None,
+                    io: None,
+                    automation_io: None,
+                    attachment: None,
+                    teardown_delay: Duration::ZERO,
+                },
+            )
+            .unwrap()
+    }
+
+    struct TestStream(std::sync::mpsc::Receiver<Vec<u8>>);
+
+    impl crate::transport::BlockingByteStream for TestStream {
+        fn read(
+            &mut self,
+            buf: &mut [u8],
+        ) -> Result<crate::transport::ReadStatus, crate::transport::TransportError> {
+            match self.0.recv_timeout(Duration::from_millis(1)) {
+                Ok(bytes) => {
+                    buf[..bytes.len()].copy_from_slice(&bytes);
+                    Ok(crate::transport::ReadStatus::Data(bytes.len()))
+                }
+                Err(_) => Ok(crate::transport::ReadStatus::Idle),
+            }
+        }
+        fn write_all(&mut self, _: &[u8]) -> Result<(), crate::transport::TransportError> {
+            Ok(())
+        }
+        fn flush(&mut self) -> Result<(), crate::transport::TransportError> {
+            Ok(())
+        }
+        fn shutdown(&mut self) -> Result<(), crate::transport::TransportError> {
+            Ok(())
+        }
+    }
+
+    fn test_child(
+        identity: &RuntimeIdentity,
+    ) -> (
+        SubConnection,
+        std::sync::mpsc::Sender<Vec<u8>>,
+        std::sync::mpsc::Receiver<RuntimeIdentity>,
+    ) {
+        let (input, rx) = std::sync::mpsc::channel();
+        let runtime = crate::transport::DataPlaneRuntime::spawn(Box::new(TestStream(rx)));
+        let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, "utf-8"));
+        let (delivered, delivery) = std::sync::mpsc::channel();
+        let plane = SessionDataPlane::attach_paused(
+            runtime,
+            identity.clone(),
+            Box::new(move |identity, _| {
+                let _ = delivered.send(identity);
+            }),
+            Box::new(|_, _| {}),
+        )
+        .unwrap();
+        (
+            SubConnection::new(
+                identity.session_id.clone(),
+                "child".into(),
+                plane,
+                io,
+                0,
+                false,
+            ),
+            input,
+            delivery,
+        )
+    }
+
+    #[test]
+    fn stale_runtime_cannot_close_replace_or_register_children_of_a_new_connection() {
+        let mut store = SessionStore::new();
+        let id = uuid::Uuid::new_v4().to_string();
+        let old = create_test_container(&mut store, &id);
+        store.close_if_current(&old).unwrap().join_resources();
+        let current = create_test_container(&mut store, &id);
+        assert!(current.runtime_id.0 > old.runtime_id.0);
+        assert!(store.close_if_current(&old).is_err());
+        assert!(store.mark_disconnected(&old).is_none());
+        assert!(store.activate_data_plane(&old).is_err());
+        let (child, _, _) = test_child(&old.for_session("old-child".into()));
+        assert!(store.add_sub_connection(&id, child).is_err());
+        assert!(store.runtime_is_connected(&current));
+        assert!(store.sessions[&id].sub_connections.is_empty());
+        let child_id = "io-child".to_string();
+        let (child, _, _) = test_child(&current.for_session(child_id.clone()));
+        store.add_sub_connection(&id, child).unwrap();
+        assert!(store
+            .io_for_runtime(&old.for_session(child_id.clone()))
+            .is_err());
+        assert!(store
+            .io_for_runtime(&current.for_session(child_id.clone()))
+            .is_ok());
+        store.close_if_current(&current).unwrap().join_resources();
+        assert!(store
+            .io_for_runtime(&current.for_session(child_id))
+            .is_err());
+        store.sessions.clear();
+    }
+
+    #[test]
+    fn child_data_waits_for_both_parent_and_child_publication_in_either_order() {
+        for parent_first in [false, true] {
+            let mut store = SessionStore::new();
+            let parent = create_test_container(&mut store, &uuid::Uuid::new_v4().to_string());
+            let identity = parent.for_session("child".into());
+            let (child, input, delivery) = test_child(&identity);
+            store.add_sub_connection(&parent.session_id, child).unwrap();
+            input.send(vec![42]).unwrap();
+            let (first, second) = if parent_first {
+                (&parent, &identity)
+            } else {
+                (&identity, &parent)
+            };
+            store.activate_data_plane(first).unwrap();
+            assert!(delivery.recv_timeout(Duration::from_millis(30)).is_err());
+            store.activate_data_plane(second).unwrap();
+            assert_eq!(
+                delivery.recv_timeout(Duration::from_secs(2)).unwrap(),
+                identity
+            );
+            store.close_if_current(&parent).unwrap().join_resources();
+            store.sessions.clear();
+        }
+    }
+
+    #[test]
+    fn closing_a_slow_service_releases_the_store_before_shutdown() {
+        use std::sync::{mpsc, Mutex};
+        struct SlowService {
+            started: mpsc::Sender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl SessionService for SlowService {
+            fn shutdown(&self) {
+                self.started.send(()).expect("started");
+                self.release
+                    .lock()
+                    .expect("release lock")
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("release cleanup");
+            }
+        }
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut store = SessionStore::new();
+        let id = store
+            .create_container_session(
+                ContainerSessionCreateOptions {
+                    name: "slow".into(),
+                    plugin_id: "dummy".into(),
+                    endpoint: "local".into(),
+                    params: serde_json::json!({}),
+                    transfer_enabled: false,
+                    transfer_protocol: None,
+                    send_bar_enabled: false,
+                    id_override: None,
+                },
+                ContainerSessionRuntime {
+                    service: Some(Arc::new(SlowService {
+                        started: started_tx,
+                        release: Mutex::new(release_rx),
+                    })),
+                    file_transfer: None,
+                    channel_factory: None,
+                    io: None,
+                    automation_io: None,
+                    attachment: None,
+                    teardown_delay: Duration::ZERO,
+                },
+            )
+            .expect("session");
+        let store = Arc::new(Mutex::new(store));
+        let cleanup = store
+            .lock()
+            .expect("store")
+            .close_if_current(&id)
+            .expect("detach resources");
+        assert!(
+            started_rx.try_recv().is_err(),
+            "close_session must not call plugin shutdown under the lock"
+        );
+        let worker = std::thread::spawn(move || cleanup.join_resources());
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("shutdown started");
+        {
+            let mut unlocked = store
+                .try_lock()
+                .expect("sibling Session operations remain available");
+            assert_eq!(
+                unlocked.session_state(&id.session_id),
+                Some(SessionState::Disconnected)
+            );
+            unlocked.sessions.clear();
+        }
+        release_tx.send(()).expect("finish service");
+        worker.join().expect("cleanup worker");
+    }
 
     fn sample_saved_session(id: &str, timestamp: u64) -> SavedSession {
         SavedSession {

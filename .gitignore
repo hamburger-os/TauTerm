@@ -7,6 +7,7 @@ build/
 
 # Native helper build output
 .cache/trdp-native-build/
+.cache/e2e/
 tools/trdp-test-peer/bin/
 
 # Rust

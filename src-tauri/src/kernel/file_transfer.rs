@@ -43,6 +43,7 @@ pub enum TransferProgressKind {
 /// 统一进度事件。
 #[derive(Debug, Clone, Serialize)]
 pub struct UnifiedProgress {
+    pub runtime_id: crate::session::RuntimeId,
     /// 所属会话 ID（由 broadcaster 填充，用于前端跨会话过滤）
     #[serde(default)]
     pub session_id: String,
@@ -169,6 +170,7 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            runtime_id: crate::session::RuntimeId(0),
             transfer_id: String::new(),
             kind: TransferProgressKind::FileStart,
             protocol: protocol.to_string(),
@@ -202,6 +204,7 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            runtime_id: crate::session::RuntimeId(0),
             transfer_id: String::new(),
             kind: TransferProgressKind::Progress,
             protocol: protocol.to_string(),
@@ -287,6 +290,7 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            runtime_id: crate::session::RuntimeId(0),
             transfer_id: String::new(),
             kind: TransferProgressKind::FileComplete,
             protocol: protocol.to_string(),
@@ -318,6 +322,7 @@ impl UnifiedProgress {
     ) -> Self {
         Self {
             session_id: String::new(),
+            runtime_id: crate::session::RuntimeId(0),
             transfer_id: String::new(),
             kind: TransferProgressKind::BatchComplete,
             protocol: protocol.to_string(),

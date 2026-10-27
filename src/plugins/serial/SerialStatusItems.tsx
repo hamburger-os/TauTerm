@@ -35,7 +35,7 @@ export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarConte
   } = useCom0comStatus();
 
   if (!activeTab) return null;
-  const connected = activeTab.state === "connected" || activeTab.state === "transferring";
+  const connected = activeTab.state === "connected";
   const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
   const endpoints = runtime.endpoints ?? [];
   const backpressuredEndpoints = endpoints.filter(endpoint => endpoint.state === "backpressured");

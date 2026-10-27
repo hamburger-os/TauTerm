@@ -102,6 +102,7 @@
     "connected": "Connected",
     "disconnected": "Disconnected",
     "connecting": "Connecting...",
+    "disconnecting": "Disconnecting...",
     "transferring": "Transferring",
     "connectToViewContent": "Connect to display session content",
     "noSessions": "No active sessions",
@@ -115,6 +116,7 @@
     "status": "Status",
     "deletePersistFailed": "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
     "loadPersistFailed": "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
+    "workspaceLoadFailed": "Failed to load the workspace layout: {{error}}. Automatic layout saving is paused to preserve the on-disk layout. Restart the app to retry.",
     "renamePersistFailed": "Failed to rename the saved session: {{error}}. The previous name was restored.",
     "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
@@ -958,6 +960,7 @@
     "disconnected": "Disconnected",
     "connected": "Connected",
     "connecting": "Connecting...",
+    "disconnecting": "Disconnecting...",
     "typeSerial": "Serial",
     "typeSsh": "SSH",
     "authPassword": "PWD",

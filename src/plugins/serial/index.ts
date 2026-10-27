@@ -46,7 +46,7 @@ function serialSubtitle(params: Record<string, unknown>, endpoint: string): stri
 }
 
 const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
-  activeTab?.state === "connected" || activeTab?.state === "transferring";
+  activeTab?.state === "connected";
 
 export const serialPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,

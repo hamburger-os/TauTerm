@@ -20,6 +20,8 @@
 | `npm run tauri dev` | **最常用开发入口。** 构建 TRDP native helper 后启动完整桌面应用 |
 | `npm run dev` | 只需要 Vite 前端时使用；不代表完整 TauTerm |
 | `npm run build` | TypeScript 检查并生成前端生产资源 |
+| `npm run test:e2e:build` | 构建独立测试标识的桌面应用；流程与外部驱动准备见 [测试文档](../community/TESTING.md#runtime-e2e) |
+| `npm run test:e2e` | 执行真实 WebView 的会话创建、回环收发、异常断开与重连回归 |
 | `npm run check:agents` | 校验根 `AGENTS.md`、`.agents/skills/*/SKILL.md` frontmatter、命名、行数与按需参考资料引用 |
 | `npm run preview` | 本地预览已经生成的前端生产资源 |
 | `npm run docs:check` | 检查文档层级、链接、资产引用、README 对齐等 |
@@ -46,6 +48,7 @@
 | `npm run check:product-integrity` | 检查插件单一来源、工程资产持久化、日志可观测性、SSH 主机信任与 Pane UI 结构合同 |
 | `npm run check:split-layout` | Workspace/Split View 几何、持久化与 1/2/2×2 Pane 不变量回归 |
 | `npm run check:session-buffer` | 会话启动数据缓冲回归 |
+| `npm run check:session-lifecycle` | 会话代次、子连接归属、传输终态及 RTT/Network 真实 store 的异步竞态与首包行为回归 |
 | `npm run check:icons -- --strict` | 图标资产严格检查 |
 | `npm run prompt:icon -- <key>` | 按图标语义规范生成提示词 |
 | `npm run preview:icons` | 生成图标小尺寸/主题预览 |

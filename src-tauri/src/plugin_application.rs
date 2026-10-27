@@ -18,7 +18,7 @@ use crate::kernel::session_store::{
     SavedSession, SessionCreateOptions, SessionState, SessionStore,
 };
 use crate::security::credential_store::CredentialStore;
-use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
+use crate::session::{DisconnectInfo, RuntimeIdentity, SessionDataPlane, SessionIo};
 use crate::transport::DataPlaneRuntime;
 use crate::AppState;
 
@@ -104,7 +104,51 @@ pub(crate) type SessionConnectFuture =
 pub(crate) type SessionConnectHandler =
     fn(AppHandle, ConnectSessionRequest) -> SessionConnectFuture;
 
-pub(crate) type SessionDisconnectedHook = fn(&AppHandle, &str);
+/// One publication boundary for plugin-produced connected metadata and Session-owned identity.
+/// Publish before releasing the root/child data gate; both operations share the store lock.
+pub(crate) fn publish_session_connected(
+    app: &AppHandle,
+    identity: &RuntimeIdentity,
+    mut payload: Value,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut store = state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if !store.runtime_is_connected(identity) {
+        return Err("会话运行时已变化，拒绝发布旧连接".into());
+    }
+    let object = payload.as_object_mut().ok_or("连接事件必须是对象")?;
+    object.insert(
+        "session_id".into(),
+        serde_json::to_value(&identity.session_id).map_err(|error| error.to_string())?,
+    );
+    object.insert(
+        "runtime_id".into(),
+        serde_json::to_value(identity.runtime_id).map_err(|error| error.to_string())?,
+    );
+    app.emit("session-connected", payload)
+        .map_err(|error| error.to_string())?;
+    store.activate_data_plane(identity)
+}
+
+/// Match and clone a plugin-owned runtime atomically with the SessionStore identity check.
+/// Resolve never performs I/O; work after this boundary uses only the captured instance.
+pub(crate) fn capture_session_runtime<T>(
+    state: &AppState,
+    identity: &RuntimeIdentity,
+    resolve: impl FnOnce() -> Option<Arc<T>>,
+) -> Result<Arc<T>, String> {
+    let store = state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if !store.runtime_is_connected(identity) {
+        return Err("会话运行时已变化，拒绝操作旧连接".into());
+    }
+    resolve().ok_or_else(|| "插件运行时未注册".into())
+}
 
 /// 创建共享 on_data 回调（DataBatcher + 日志记录）。
 ///
@@ -116,27 +160,29 @@ pub(crate) fn create_on_data_callback(
     log_tx: std::sync::mpsc::SyncSender<LogEntry>,
     data_mode: String,
     encoding: String,
-) -> Box<dyn Fn(String, Vec<u8>) + Send> {
+) -> Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send> {
     let app_clone = app.clone();
     let overflow_app = app.clone();
     let batcher = crate::kernel::data_batcher::DataBatcher::new(move |batched| {
         let _ = app_clone.emit(
             "session-data",
             serde_json::json!({
-                "session_id": batched.session_id,
+                "session_id": batched.identity.session_id,
+                "runtime_id": batched.identity.runtime_id,
                 "data_b64": batched.data_b64,
             }),
         );
     });
 
-    Box::new(move |session_id, data| {
+    Box::new(move |identity, data| {
         let data_for_log = data.clone();
-        if let Some(total_dropped) = batcher.push(session_id.clone(), data) {
+        if let Some(total_dropped) = batcher.push(identity.clone(), data) {
             if total_dropped == 1 || total_dropped.is_power_of_two() {
                 let _ = overflow_app.emit(
                     "session-display-overflow",
                     serde_json::json!({
-                        "session_id": session_id,
+                        "session_id": identity.session_id,
+                        "runtime_id": identity.runtime_id,
                         "dropped_chunks": total_dropped,
                     }),
                 );
@@ -145,7 +191,7 @@ pub(crate) fn create_on_data_callback(
         try_send_session_log(
             &log_tx,
             DataLogEntry {
-                session_id,
+                session_id: identity.session_id,
                 direction: DataDirection::RX,
                 stream: None,
                 data_mode: data_mode.clone(),
@@ -193,16 +239,23 @@ pub(crate) fn connect_simple_terminal_session(
     let on_data = create_on_data_callback(&app, log_tx, data_mode, encoding);
 
     let app_disconnect = app.clone();
-    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
-        Box::new(move |session_id, info| {
+    let on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send> =
+        Box::new(move |identity, info| {
             let app_state: State<'_, AppState> = app_disconnect.state();
-            if let Ok(mut store) = app_state.session_store.lock() {
-                store.mark_disconnected(&session_id);
-            }
+            let cleanup = app_state
+                .session_store
+                .lock()
+                .ok()
+                .and_then(|mut store| store.mark_disconnected(&identity));
+            let Some(cleanup) = cleanup else {
+                return;
+            };
+            cleanup.schedule();
             let _ = app_disconnect.emit(
                 "session-disconnected",
                 serde_json::json!({
-                    "session_id": session_id,
+                    "session_id": identity.session_id,
+                    "runtime_id": identity.runtime_id,
                     "reason": info.reason,
                     "disconnect_info": info,
                 }),
@@ -210,7 +263,7 @@ pub(crate) fn connect_simple_terminal_session(
         });
 
     let send_bar_enabled = send_bar_enabled.unwrap_or(default_send_bar_enabled);
-    let session_id = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_session(
             SessionCreateOptions {
@@ -229,6 +282,7 @@ pub(crate) fn connect_simple_terminal_session(
             app.clone(),
         )?
     };
+    let session_id = runtime_identity.session_id.clone();
 
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -244,10 +298,10 @@ pub(crate) fn connect_simple_terminal_session(
             .unwrap_or((session_name, Value::Null, None))
     };
     log::info!("{display_name} session connected: {actual_name} @ {endpoint}");
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": session_id,
             "endpoint": endpoint,
             "connection_type": plugin_id,
             "plugin_id": plugin_id,
@@ -257,12 +311,7 @@ pub(crate) fn connect_simple_terminal_session(
             "transfer_enabled": false,
             "send_bar_enabled": send_bar_enabled,
         }),
-    );
-    state
-        .session_store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .activate_data_plane(&session_id)?;
+    )?;
     Ok(session_id)
 }
 
@@ -274,16 +323,19 @@ pub(crate) fn connect_simple_terminal_session(
 pub(crate) async fn create_terminal_sub_channel(
     app: &tauri::AppHandle,
     app_state: &AppState,
-    parent_id: &str,
+    parent_identity: &RuntimeIdentity,
     runtime: DataPlaneRuntime,
     elevated: bool,
     announce_connected: bool,
 ) -> Result<String, String> {
+    let parent_id = parent_identity.session_id.as_str();
     let (endpoint, plugin_id, params, data_mode, encoding, send_bar_enabled_val) = {
         let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(parent_id);
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
-        if handle.state != SessionState::Connected {
+        if handle.state != SessionState::Connected
+            || handle.runtime_id != parent_identity.runtime_id
+        {
             return Err("父会话已断开，无法创建子连接".to_string());
         }
         let active_children = handle
@@ -315,6 +367,7 @@ pub(crate) async fn create_terminal_sub_channel(
     };
 
     let channel_id = uuid::Uuid::new_v4().to_string();
+    let child_identity = parent_identity.for_session(channel_id.clone());
     let log_tx = app_state
         .log_engine
         .lock()
@@ -324,11 +377,19 @@ pub(crate) async fn create_terminal_sub_channel(
 
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();
-    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
-        Box::new(move |channel_id, info| {
+    let parent_for_disconnect = parent_identity.clone();
+    let on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send> =
+        Box::new(move |identity, info| {
+            let channel_id = identity.session_id;
             let (parent_disconnected, retain_history) = {
                 if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
-                    store.mark_sub_disconnected(&pid, &channel_id, info.retain_terminal);
+                    if !store.mark_sub_disconnected(
+                        &parent_for_disconnect,
+                        &channel_id,
+                        info.retain_terminal,
+                    ) {
+                        return;
+                    }
                     let (no_live_children, has_other_history) = store
                         .get_session(&pid)
                         .map(|handle| {
@@ -347,7 +408,9 @@ pub(crate) async fn create_terminal_sub_channel(
                         .unwrap_or((false, false));
                     let retain = info.retain_terminal || has_other_history;
                     if no_live_children {
-                        let _ = store.close_session(&pid);
+                        let _ = store
+                            .close_if_current(&parent_for_disconnect)
+                            .map(|cleanup| cleanup.schedule());
                         if !retain {
                             store.reset_child_counter(&pid);
                         }
@@ -361,6 +424,7 @@ pub(crate) async fn create_terminal_sub_channel(
                 "channel-closed",
                 serde_json::json!({
                     "channel_id": channel_id,
+                    "runtime_id": identity.runtime_id,
                     "parent_id": pid,
                     "disconnect_info": &info,
                 }),
@@ -375,6 +439,7 @@ pub(crate) async fn create_terminal_sub_channel(
                     "session-disconnected",
                     serde_json::json!({
                         "session_id": pid,
+                        "runtime_id": parent_for_disconnect.runtime_id,
                         "reason": &parent_info.reason,
                         "disconnect_info": &parent_info,
                     }),
@@ -384,7 +449,7 @@ pub(crate) async fn create_terminal_sub_channel(
 
     let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
     let data_plane =
-        SessionDataPlane::attach_paused(runtime, channel_id.clone(), on_data, on_disconnect)
+        SessionDataPlane::attach_paused(runtime, child_identity.clone(), on_data, on_disconnect)
             .map_err(|e| e.to_string())?;
     let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
@@ -395,7 +460,7 @@ pub(crate) async fn create_terminal_sub_channel(
     );
     SessionStore::spawn_stats_collector(
         app.clone(),
-        channel_id.clone(),
+        child_identity.clone(),
         io.clone(),
         connected_at,
         stats_cancel_flag.clone(),
@@ -405,7 +470,9 @@ pub(crate) async fn create_terminal_sub_channel(
         let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(parent_id);
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
-        if handle.state != SessionState::Connected {
+        if handle.state != SessionState::Connected
+            || handle.runtime_id != parent_identity.runtime_id
+        {
             stats_cancel_flag.store(true, Ordering::SeqCst);
             data_plane.request_shutdown();
             return Err("父会话已断开，无法创建子连接".to_string());
@@ -443,10 +510,10 @@ pub(crate) async fn create_terminal_sub_channel(
     };
 
     if announce_connected {
-        let _ = app.emit(
-            "session-connected",
+        crate::plugin_application::publish_session_connected(
+            app,
+            &child_identity,
             serde_json::json!({
-                "session_id": channel_id,
                 "endpoint": endpoint,
                 "connection_type": plugin_id,
                 "plugin_id": plugin_id,
@@ -459,14 +526,7 @@ pub(crate) async fn create_terminal_sub_channel(
                 "channel_index": actual_index,
                 "elevated": elevated,
             }),
-        );
-    }
-    if announce_connected {
-        app_state
-            .session_store
-            .lock()
-            .map_err(|e| e.to_string())?
-            .activate_data_plane(&channel_id)?;
+        )?;
     }
     Ok(channel_id)
 }
@@ -485,6 +545,7 @@ pub(crate) fn terminal_sub_channel_connected_payload(
         connected_at,
         channel_index,
         elevated,
+        runtime_id,
     ) = {
         let store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let parent = store
@@ -507,11 +568,13 @@ pub(crate) fn terminal_sub_channel_connected_payload(
             child.connected_at,
             child.channel_index,
             child.elevated,
+            child.runtime_id,
         )
     };
 
     Ok(serde_json::json!({
         "session_id": channel_id,
+        "runtime_id": runtime_id,
         "endpoint": endpoint,
         "connection_type": plugin_id,
         "plugin_id": plugin_id,

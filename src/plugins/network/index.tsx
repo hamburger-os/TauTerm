@@ -29,6 +29,7 @@ import {
   disconnectNetworkPeer,
   getNetworkRuntime,
   networkRuntimeStore,
+  prepareNetworkRuntime,
   selectNetworkPeer,
   sendNetworkData,
   type NetworkRuntimeSnapshot,
@@ -40,7 +41,7 @@ const PRI = {
 } as const;
 
 function isConnectedState(state?: string): boolean {
-  return state === "connected" || state === "transferring";
+  return state === "connected";
 }
 
 function isNetwork(ctx: StatusBarContext, transport?: string, role?: string): boolean {
@@ -168,6 +169,10 @@ export const networkPlugin = definePlugin({
     subtitle: networkSubtitle,
   },
   runtimeStore: networkRuntimeStore,
+  reconnectGuard: async ({ sessionId }) => {
+    try { await prepareNetworkRuntime(sessionId); return { ok: true }; }
+    catch (error) { return { ok: false, message: String(error) }; }
+  },
   sendData: sendNetworkData,
   sendTarget: NetworkSendTarget,
   sendTargetVisible: ({ params }) => isNetworkSendTargetVisible(params),

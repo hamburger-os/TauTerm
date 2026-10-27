@@ -1,3 +1,4 @@
+import { AsyncRequestScope } from "../../core/session-lifecycle";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginRuntimeStore, PluginSendContext } from "../../core/plugin-registry";
@@ -77,6 +78,7 @@ const EMPTY_PRESENTATION_RECOVERY: SystemViewPresentationRecoveryState = Object.
 });
 
 const sessions = new Map<string, RttRuntimeSnapshot>();
+const snapshotQueries = new Map<string, AsyncRequestScope>();
 const loadedChannels = new Map<string, Set<number>>();
 // value=true means another presentation gap arrived while the current history read was in flight.
 const systemViewHistoryRecoveries = new Map<string, boolean>();
@@ -90,9 +92,17 @@ function current(sessionId: string): RttRuntimeSnapshot {
 }
 
 function publish(sessionId: string, next: RttRuntimeSnapshot): void {
+  if (!snapshotQueries.has(sessionId)) return;
   sessions.set(sessionId, next);
   revision += 1;
   listeners.forEach(listener => listener());
+}
+
+function captureRuntime(sessionId: string): () => boolean {
+  const scope = snapshotQueries.get(sessionId);
+  const generation = current(sessionId).snapshot?.generation;
+  return () => scope != null && snapshotQueries.get(sessionId) === scope
+    && current(sessionId).snapshot?.generation === generation;
 }
 
 function chooseViewChannel(snapshot: RttSnapshot, previous: number | null): number | null {
@@ -134,6 +144,7 @@ function metadataSyncState(snapshot: SystemViewSnapshot): SystemViewMetadataSync
 
 function applySnapshot(sessionId: string, snapshot: RttSnapshot): void {
   const prev = current(sessionId);
+  if (prev.snapshot && snapshot.generation < prev.snapshot.generation) return;
   const generationChanged = prev.snapshot == null || prev.snapshot.generation !== snapshot.generation;
   if (generationChanged) loadedChannels.delete(sessionId);
 
@@ -301,6 +312,7 @@ async function recoverSystemViewHistory(
   channelIndex: number,
   generation: number,
 ): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   const key = systemViewRecoveryKey(sessionId, channelIndex, generation);
   if (systemViewHistoryRecoveries.has(key)) {
     systemViewHistoryRecoveries.set(key, true);
@@ -313,7 +325,7 @@ async function recoverSystemViewHistory(
       channelIndex,
       limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
     });
-    if (history.generation !== generation) return;
+    if (!isCurrent() || history.generation !== generation) return;
 
     const prev = current(sessionId);
     const channel = prev.systemview[channelIndex];
@@ -344,7 +356,7 @@ async function recoverSystemViewHistory(
   } finally {
     const rerun = systemViewHistoryRecoveries.get(key) === true;
     systemViewHistoryRecoveries.delete(key);
-    if (rerun) {
+    if (rerun && isCurrent()) {
       void recoverSystemViewHistory(sessionId, channelIndex, generation);
     }
   }
@@ -410,7 +422,9 @@ function ensureListeners(): Promise<void> {
     const registered: UnlistenFn[] = [];
     registered.push(await listen<RttEvent>("rtt-event", event => {
       const payload = event.payload;
+      if (!snapshotQueries.has(payload.session_id)) return;
       if (payload.kind === "snapshot") {
+        snapshotQueries.get(payload.session_id)?.invalidate();
         applySnapshot(payload.session_id, payload.snapshot);
       } else {
         appendBatch(payload.session_id, payload.generation, payload.chunks);
@@ -420,6 +434,7 @@ function ensureListeners(): Promise<void> {
       applySystemViewEvent(event.payload);
     }));
     registered.push(await listen<{ session_id: string }>("session-disconnected", event => {
+      snapshotQueries.get(event.payload.session_id)?.invalidate();
       const prev = sessions.get(event.payload.session_id);
       if (!prev) return;
       publish(event.payload.session_id, {
@@ -449,6 +464,8 @@ export const rttRuntimeStore: PluginRuntimeStore = {
   },
   revision: () => revision,
   release(sessionId) {
+    snapshotQueries.get(sessionId)?.invalidate();
+    snapshotQueries.delete(sessionId);
     loadedChannels.delete(sessionId);
     for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:`)) systemViewHistoryRecoveries.delete(key);
@@ -461,18 +478,24 @@ export const rttRuntimeStore: PluginRuntimeStore = {
 };
 
 export async function refreshRttRuntime(sessionId: string): Promise<void> {
+  const scope = snapshotQueries.get(sessionId) ?? new AsyncRequestScope();
+  snapshotQueries.set(sessionId, scope);
+  const currentRequest = scope.begin();
+  const isCurrent = () => snapshotQueries.get(sessionId) === scope && currentRequest();
   await ensureListeners();
+  if (!isCurrent()) return;
   try {
     const snapshot = await invoke<RttSnapshot>("rtt_snapshot", { sessionId });
-    applySnapshot(sessionId, snapshot);
+    if (isCurrent()) applySnapshot(sessionId, snapshot);
   } catch (cause) {
-    const prev = current(sessionId);
-    publish(sessionId, { ...prev, error: String(cause) });
+    if (isCurrent()) publish(sessionId, { ...current(sessionId), error: String(cause) });
   }
 }
 
 export async function ensureRttHistory(sessionId: string, channelIndex: number): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   await ensureListeners();
+  if (!isCurrent()) return;
   const loaded = loadedChannels.get(sessionId) ?? new Set<number>();
   if (loaded.has(channelIndex)) return;
   loaded.add(channelIndex);
@@ -484,6 +507,7 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
       channelIndex,
       afterSequence: null,
     });
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     if (!prev.snapshot || prev.snapshot.generation !== history.generation) {
       loaded.delete(channelIndex);
@@ -496,6 +520,7 @@ export async function ensureRttHistory(sessionId: string, channelIndex: number):
       buffers: Object.freeze(trimBuffers(nextBuffers, prev.selectedChannel)),
     });
   } catch (cause) {
+    if (!isCurrent()) return;
     loaded.delete(channelIndex);
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
@@ -514,10 +539,13 @@ export async function selectRttAutomationSource(
   sessionId: string,
   channelIndex: number,
 ): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_set_automation_source_channel", { sessionId, channelIndex });
+    if (!isCurrent()) return;
     await refreshRttRuntime(sessionId);
   } catch (cause) {
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
   }
@@ -532,10 +560,13 @@ export function setRttViewMode(sessionId: string, channelIndex: number, mode: Rt
 }
 
 export async function selectRttSendChannel(sessionId: string, channelIndex: number): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_set_send_channel", { sessionId, channelIndex });
+    if (!isCurrent()) return;
     await refreshRttRuntime(sessionId);
   } catch (cause) {
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
   }
@@ -593,7 +624,9 @@ export async function ensureSystemViewHistory(
   sessionId: string,
   channelIndex: number,
 ): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   await ensureListeners();
+  if (!isCurrent()) return;
   const before = current(sessionId);
   const existing = before.systemview[channelIndex];
   if (existing?.loaded) return;
@@ -607,6 +640,7 @@ export async function ensureSystemViewHistory(
         limit: CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL,
       }),
     ]);
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     if (!prev.snapshot || prev.snapshot.generation !== snapshot.generation) return;
     const previous = prev.systemview[channelIndex];
@@ -637,6 +671,7 @@ export async function ensureSystemViewHistory(
       }),
     });
   } catch (cause) {
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, {
       ...prev,
@@ -660,12 +695,16 @@ export async function attachSystemView(
   sessionId: string,
   channelIndex: number,
 ): Promise<boolean> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_systemview_attach", { sessionId, channelIndex });
+    if (!isCurrent()) return false;
     await refreshRttRuntime(sessionId);
+    if (!isCurrent()) return false;
     await ensureSystemViewHistory(sessionId, channelIndex);
     return true;
   } catch (cause) {
+    if (!isCurrent()) return false;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
     return false;
@@ -676,9 +715,12 @@ export async function detachSystemView(
   sessionId: string,
   channelIndex: number,
 ): Promise<boolean> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_systemview_detach", { sessionId, channelIndex });
+    if (!isCurrent()) return false;
     await refreshRttRuntime(sessionId);
+    if (!isCurrent()) return false;
     for (const key of systemViewHistoryRecoveries.keys()) {
       if (key.startsWith(`${sessionId}:${channelIndex}:`)) systemViewHistoryRecoveries.delete(key);
     }
@@ -691,6 +733,7 @@ export async function detachSystemView(
     });
     return true;
   } catch (cause) {
+    if (!isCurrent()) return false;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
     return false;
@@ -702,9 +745,11 @@ export async function controlSystemView(
   channelIndex: number,
   control: "start" | "stop" | "refresh" | "refresh_tasks",
 ): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_systemview_control", { sessionId, channelIndex, control });
   } catch (cause) {
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
   }
@@ -714,8 +759,10 @@ export async function clearSystemView(
   sessionId: string,
   channelIndex: number,
 ): Promise<void> {
+  const isCurrent = captureRuntime(sessionId);
   try {
     await invoke("rtt_systemview_clear", { sessionId, channelIndex });
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, {
       ...prev,
@@ -733,6 +780,7 @@ export async function clearSystemView(
     });
     await ensureSystemViewHistory(sessionId, channelIndex);
   } catch (cause) {
+    if (!isCurrent()) return;
     const prev = current(sessionId);
     publish(sessionId, { ...prev, error: String(cause) });
   }

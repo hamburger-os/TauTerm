@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSession } from "./SessionContext";
+import i18n from "../i18n";
 import {
   MAX_WORKSPACE_PANES,
   activateSessionInLayout,
@@ -28,6 +29,7 @@ import {
 import {
   parsePersistedWorkspaceLayout,
   serializeWorkspaceLayout,
+  canPersistWorkspaceLayout,
 } from "../core/workspace-layout";
 
 interface SplitLayoutContextValue {
@@ -74,14 +76,12 @@ function makeSplitId(root: LayoutNode): string {
 }
 
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {
-  const { state: sessionState, switchTab } = useSession();
+  const { state: sessionState, switchTab, reportError } = useSession();
   const [state, setState] = useState<SplitLayoutState>(() => createInitialSplitLayout());
   const stateRef = useRef(state);
   stateRef.current = state;
   const restoringWorkspaceRef = useRef(false);
-  const expectedSavedSessionIdsRef = useRef<Set<string>>(new Set());
-  const [workspaceLayoutLoaded, setWorkspaceLayoutLoaded] = useState(false);
-  const [workspaceSessionCatalogReady, setWorkspaceSessionCatalogReady] = useState(false);
+  const [layoutLoadStatus, setLayoutLoadStatus] = useState<"loading" | "ready" | "error">("loading");
   /** Runtime child Session ID -> stable root/config Session ID. Keep old mappings until app exit. */
   const stableSessionIdsRef = useRef<Map<string, string>>(new Map());
   for (const tab of sessionState.tabs) {
@@ -93,39 +93,33 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([
-      invoke<string | null>("get_config", { key: "workspace.layout" }),
-      invoke<Array<{ id: string }>>("load_sessions"),
-    ])
-      .then(([rawLayout, saved]) => {
+    void invoke<string | null>("get_config", { key: "workspace.layout" })
+      .then(rawLayout => {
         if (cancelled) return;
-        expectedSavedSessionIdsRef.current = new Set((saved ?? []).map(session => session.id));
         const restored = parsePersistedWorkspaceLayout(rawLayout);
         if (restored) {
           restoringWorkspaceRef.current = true;
           stateRef.current = restored;
           setState(restored);
         }
-        setWorkspaceSessionCatalogReady(true);
-        setWorkspaceLayoutLoaded(true);
+        setLayoutLoadStatus("ready");
       })
-      .catch(() => {
+      .catch(error => {
         if (cancelled) return;
-        expectedSavedSessionIdsRef.current = new Set();
-        restoringWorkspaceRef.current = false;
-        setWorkspaceSessionCatalogReady(true);
-        setWorkspaceLayoutLoaded(true);
+        setLayoutLoadStatus("error");
+        console.warn("SplitLayoutContext: 读取 Workspace Layout 失败，已禁止自动保存:", error);
+        reportError(i18n.t("session.workspaceLoadFailed", { error: String(error) }));
       });
 
     return () => { cancelled = true; };
-  }, []);
+  }, [reportError]);
 
   const syncActiveSession = useCallback((sessionId: string | null) => {
     void switchTab(sessionId);
   }, [switchTab]);
 
   const persistWorkspaceNow = useCallback(() => {
-    if (!workspaceLayoutLoaded || restoringWorkspaceRef.current) return;
+    if (!canPersistWorkspaceLayout(layoutLoadStatus, sessionState.catalogStatus, restoringWorkspaceRef.current)) return;
     try {
       const serialized = serializeWorkspaceLayout(stateRef.current, stableSessionIdsRef.current);
       void invoke("set_config", { key: "workspace.layout", value: serialized })
@@ -135,32 +129,26 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.warn("SplitLayoutContext: 序列化 Workspace Layout 失败:", error);
     }
-  }, [workspaceLayoutLoaded]);
+  }, [layoutLoadStatus, sessionState.catalogStatus]);
 
   // Split Tree / assignment / ratio 变化后自动保存；拖动 divider 时短防抖。
   // Rust ConfigStore 是持久化权威源，浏览器本地存储不再承载工程 Workspace。
   useEffect(() => {
-    if (!workspaceLayoutLoaded || restoringWorkspaceRef.current) return;
+    if (!canPersistWorkspaceLayout(layoutLoadStatus, sessionState.catalogStatus, restoringWorkspaceRef.current)) return;
     const timer = window.setTimeout(persistWorkspaceNow, 160);
     return () => window.clearTimeout(timer);
-  }, [state, sessionState.tabs, workspaceLayoutLoaded, persistWorkspaceNow]);
+  }, [state, sessionState.tabs, layoutLoadStatus, sessionState.catalogStatus, persistWorkspaceNow]);
 
   // 同步 SessionContext 的 activeTabId 与 Split Layout，同时优先清理已删除的 assignment。
   // 恢复 Workspace 时先等磁盘会话配置进入 SessionContext，再让持久化的 selected Pane 成为 active context；
   // 这样 loadSavedSessions() 默认选中的第一张卡片不会覆盖昨日保存的 Pane assignment。
   useEffect(() => {
-    if (!workspaceLayoutLoaded) return;
+    if (layoutLoadStatus !== "ready" || sessionState.catalogStatus !== "ready") return;
     const current = stateRef.current;
     const valid = new Set(sessionState.tabs.map(tab => tab.id));
 
     if (restoringWorkspaceRef.current) {
-      if (!workspaceSessionCatalogReady) return;
-
-      // loadSavedSessions() 用一次 SET_TABS 写入完整磁盘目录。等目录中预期的稳定 ID 都出现后
-      // 再结束恢复；空目录也能明确结束，因此纯空 Pane Workspace 不会被首会话意外填充。
-      for (const sessionId of expectedSavedSessionIdsRef.current) {
-        if (!valid.has(sessionId)) return;
-      }
+      // SessionContext atomically publishes the catalog and ready state, including an empty library.
 
       const next = pruneAssignments(current, valid);
       restoringWorkspaceRef.current = false;
@@ -216,8 +204,8 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     sessionState.activeTabId,
     sessionState.tabs,
     syncActiveSession,
-    workspaceLayoutLoaded,
-    workspaceSessionCatalogReady,
+    layoutLoadStatus,
+    sessionState.catalogStatus,
   ]);
 
   const selectPane = useCallback((paneId: PaneId) => {

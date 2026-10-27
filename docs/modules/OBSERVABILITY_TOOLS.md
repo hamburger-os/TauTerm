@@ -15,6 +15,8 @@
 
 高频接收数据先在 Rust 侧按短时间窗口和大小阈值合并，再以 Base64 事件发送前端，降低大量小包造成的 IPC/JSON/渲染开销。关闭时必须 flush 已缓存数据。
 
+批处理键采用 [CORE.md](CORE.md) 的完整运行实例身份，同一保存会话的旧/新连接不能合并成一批。显示数据和统计事件携带原代次，由前端丢弃迟到结果；这不改变 Session Data Log 的 best-effort 属性。
+
 DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数据块以保护 UI，但每次丢弃都会累计计数，并按 1/2/4/8… 次节流发送 `session-display-overflow`；同一节流规则也用于后端 overflow warning，避免在过载时用日志本身制造新的队列压力。这个降级语义不能复制到 Recorder/Evidence Path。RTT 等多路观测数据同样必须把 acquisition/history loss、Session Log loss 与 WebView presentation loss 分开计数，不能用“界面丢帧”冒充目标或采集链路丢失。
 
 ### 日志

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import type { TabInfo } from "../context/SessionContext";
 
 export interface ContextMenuState {
@@ -49,23 +49,6 @@ export function useContextMenu() {
   const closeMenu = useCallback(() => {
     setMenu(prev => ({ ...prev, visible: false }));
   }, []);
-
-  useEffect(() => {
-    if (!menu.visible) return;
-    const handleClick = () => closeMenu();
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeMenu();
-    };
-    const timer = setTimeout(() => {
-      document.addEventListener("click", handleClick);
-      document.addEventListener("keydown", handleKey);
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("click", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [menu.visible, closeMenu]);
 
   return { menu, openMenu, openExtensionMenu, closeMenu };
 }

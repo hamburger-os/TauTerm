@@ -139,6 +139,8 @@ RTT 的 snapshot、generation、Channel buffer、当前观察 Channel、view mod
 
 同一 Saved Session 重连会创建新的 generation；新 generation 到达时清空旧 presentation cache 并重新同步 source/target，禁止旧事件污染新 runtime。
 
+snapshot 查询只允许最新请求提交，实时 snapshot 与断连事件会使更早查询失效，避免同 generation 的旧 Running 快照覆盖已到达的故障状态。历史恢复和控制命令同时校验注册存活期与捕获的 generation，成功、失败和重试分支都不能在 release 后重建缓存或写入重连实例。此处的观测 generation 属于 RTT 数据模型；公共连接身份仍遵循 [CORE.md](CORE.md)。
+
 ## 生命周期
 
 连接成功边界是 backend 已打开、RTT 已完成 attach/定位并取得初始 Channel metadata；此前公共 Session 不发布 Connected。

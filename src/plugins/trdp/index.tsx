@@ -42,7 +42,7 @@ export const trdpPlugin = definePlugin({
     {
       id: "trdp-mode",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      when: ({ activeTab }) => activeTab?.state === "connected",
       render: ({ activeTab }) => (
         <StatusBarBadge>
           TRDP · {activeTab?.params?.mode === "monitor" ? "MONITOR" : "NODE"}

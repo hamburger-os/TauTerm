@@ -671,7 +671,12 @@ impl RttRuntime {
         }
     }
 
-    pub fn start(&self, app: AppHandle, session_id: &str) -> Result<(), RttError> {
+    pub fn start(
+        &self,
+        app: AppHandle,
+        identity: &crate::session::RuntimeIdentity,
+    ) -> Result<(), RttError> {
+        let session_id = identity.session_id.as_str();
         if self.closed.load(Ordering::Acquire) {
             return Err(RttError::new(RttErrorCode::Cancelled, "RTT 会话已关闭"));
         }
@@ -691,7 +696,7 @@ impl RttRuntime {
             config: self.config.clone(),
             embedded_debug: Arc::clone(&self.embedded_debug),
             app,
-            session_id: session_id.to_string(),
+            identity: identity.clone(),
             shared: Arc::clone(&self.shared),
             shutting_down: Arc::clone(&self.shutting_down),
             worker_exited: Arc::clone(&self.worker_exited),

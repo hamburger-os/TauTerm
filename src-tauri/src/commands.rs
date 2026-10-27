@@ -16,9 +16,8 @@ use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{SessionState, SessionStore};
 use crate::plugin_application::{
     ConnectSessionRequest, SessionConfigHandler, SessionConfigServices, SessionConnectHandler,
-    SessionDisconnectedHook,
 };
-use crate::session::DisconnectInfo;
+use crate::session::{DisconnectInfo, RuntimeId, RuntimeIdentity};
 use crate::AppState;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -50,6 +49,7 @@ pub struct EndpointItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
+    pub runtime_id: crate::session::RuntimeId,
     pub id: String,
     pub name: String,
     pub connection_type: String,
@@ -97,6 +97,7 @@ pub struct SaveSessionConfigRequest {
 #[serde(rename_all = "camelCase")]
 pub struct FileTransferSendRequest {
     pub session_id: String,
+    pub runtime_id: RuntimeId,
     pub protocol_options: crate::transfer::config::SendProtocolOptions,
     pub file_paths: Vec<String>,
     pub remote_dir: Option<String>,
@@ -107,6 +108,7 @@ pub struct FileTransferSendRequest {
 #[serde(rename_all = "camelCase")]
 pub struct FileTransferReceiveRequest {
     pub session_id: String,
+    pub runtime_id: RuntimeId,
     pub protocol_options: crate::transfer::config::ReceiveProtocolOptions,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
@@ -188,37 +190,37 @@ pub async fn disconnect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
-) -> Result<(), String> {
-    let (session_name, plugin_id) = {
+    runtime_id: crate::session::RuntimeId,
+) -> Result<crate::session::RuntimeIdentity, String> {
+    let (session_name, plugin_id, identity, cleanup) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let handle = store
             .get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
         let snapshot = (handle.name.clone(), handle.plugin_id.clone());
-        store.close_session(&session_id)?;
+        let cleanup = store.close_if_current(&crate::session::RuntimeIdentity {
+            session_id: session_id.clone(),
+            runtime_id,
+        })?;
+        let identity = cleanup.identity().clone();
         store.reset_child_counter(&session_id);
-        snapshot
+        (snapshot.0, snapshot.1, identity, cleanup)
     };
+    let cleanup_result = cleanup.finish().await;
 
     log::info!("会话已断开: {} ({})", session_name, plugin_id);
-    if let Ok(plugin_id) = PluginId::parse(plugin_id) {
-        if let Some(hook) = state
-            .plugins
-            .contribution::<SessionDisconnectedHook>(&plugin_id)
-        {
-            (hook.as_ref())(&app, &session_id);
-        }
-    }
     let info = DisconnectInfo::user_requested();
     let _ = app.emit(
         "session-disconnected",
         serde_json::json!({
             "session_id": session_id,
+            "runtime_id": identity.runtime_id,
             "reason": &info.reason,
             "disconnect_info": &info,
         }),
     );
-    Ok(())
+    cleanup_result?;
+    Ok(identity)
 }
 
 /// 切换活跃标签页
@@ -282,6 +284,7 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
         .iter()
         .filter_map(|id| {
             store.get_session(id).map(|h| TabInfo {
+                runtime_id: h.runtime_id,
                 id: id.clone(),
                 name: h.name.clone(),
                 connection_type: h.plugin_id.clone(),
@@ -290,7 +293,6 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                     SessionState::Connected => "connected".into(),
                     SessionState::Connecting => "connecting".into(),
                     SessionState::Disconnected => "disconnected".into(),
-                    SessionState::Transferring => "transferring".into(),
                 },
                 plugin_id: h.plugin_id.clone(),
                 send_bar_enabled: h.send_bar_enabled,
@@ -313,6 +315,7 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                     continue; // 插件后台子连接不直接占用 Workspace 标签页
                 }
                 tabs.push(TabInfo {
+                    runtime_id: sub.runtime_id,
                     id: sub.id.clone(),
                     name: sub.name.clone(),
                     connection_type: h.plugin_id.clone(),
@@ -321,7 +324,6 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                         SessionState::Connected => "connected".into(),
                         SessionState::Connecting => "connecting".into(),
                         SessionState::Disconnected => "disconnected".into(),
-                        SessionState::Transferring => "transferring".into(),
                     },
                     plugin_id: h.plugin_id.clone(),
                     send_bar_enabled: h.send_bar_enabled,
@@ -346,6 +348,7 @@ pub async fn open_channel(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    runtime_id: crate::session::RuntimeId,
     elevated: Option<bool>,
 ) -> Result<String, String> {
     let mode = if elevated.unwrap_or(false) {
@@ -353,12 +356,12 @@ pub async fn open_channel(
     } else {
         ChannelOpenMode::Standard
     };
-    let factory = {
+    let (factory, parent_identity) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         let handle = store
             .get_session(&session_id)
             .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
-        if handle.state != SessionState::Connected {
+        if handle.state != SessionState::Connected || handle.runtime_id != runtime_id {
             return Err("父会话未连接".into());
         }
         let factory = handle
@@ -369,7 +372,13 @@ pub async fn open_channel(
         if !factory.supports_mode(mode) {
             return Err("此 Shell 不支持管理员连接".into());
         }
-        factory
+        (
+            factory,
+            crate::session::RuntimeIdentity {
+                session_id: session_id.clone(),
+                runtime_id: handle.runtime_id,
+            },
+        )
     };
 
     let channel = factory
@@ -379,7 +388,7 @@ pub async fn open_channel(
     let channel_id = crate::plugin_application::create_terminal_sub_channel(
         &app,
         &state,
-        &session_id,
+        &parent_identity,
         channel,
         mode == ChannelOpenMode::Elevated,
         true,
@@ -868,9 +877,20 @@ pub fn start_script_engine(
 
 /// 停止会话的脚本引擎
 #[tauri::command]
-pub fn stop_script_engine(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.stop_script(&session_id)
+pub async fn stop_script_engine(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let cleanup = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.stop_script(&session_id)?
+    };
+    if let Some(cleanup) = cleanup {
+        tauri::async_runtime::spawn_blocking(move || cleanup.join())
+            .await
+            .map_err(|error| format!("等待脚本停止失败: {error}"))?;
+    }
+    Ok(())
 }
 
 /// 将自动应答规则列表编译为 Lua 脚本代码
@@ -1063,6 +1083,7 @@ pub async fn file_transfer_send(
 ) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferSendRequest {
         session_id,
+        runtime_id,
         protocol_options,
         file_paths,
         remote_dir,
@@ -1073,6 +1094,12 @@ pub async fn file_transfer_send(
     // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
     let internal_id = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        if !store.runtime_is_connected(&RuntimeIdentity {
+            session_id: session_id.clone(),
+            runtime_id,
+        }) {
+            return Err("传输所属会话运行时已变化或断开".into());
+        }
         store
             .resolve_parent_id(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?
@@ -1113,6 +1140,7 @@ pub async fn file_transfer_send(
         app,
         crate::transfer::orchestrator::SendContext {
             session_id: internal_id,
+            runtime_id,
             files,
             remote_dir,
             options: crate::kernel::file_transfer::FileTransferOptions {
@@ -1140,6 +1168,7 @@ pub async fn file_transfer_receive(
 ) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferReceiveRequest {
         session_id,
+        runtime_id,
         protocol_options,
         download_dir,
         remote_paths,
@@ -1150,6 +1179,12 @@ pub async fn file_transfer_receive(
     // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
     let internal_id = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        if !store.runtime_is_connected(&RuntimeIdentity {
+            session_id: session_id.clone(),
+            runtime_id,
+        }) {
+            return Err("传输所属会话运行时已变化或断开".into());
+        }
         store
             .resolve_parent_id(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?
@@ -1175,6 +1210,7 @@ pub async fn file_transfer_receive(
         app,
         crate::transfer::orchestrator::ReceiveContext {
             session_id: internal_id,
+            runtime_id,
             download_dir,
             remote_paths,
             options: crate::kernel::file_transfer::FileTransferOptions {

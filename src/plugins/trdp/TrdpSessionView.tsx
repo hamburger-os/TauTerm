@@ -73,11 +73,11 @@ const nav: Array<[Page, string]> = [
 
 export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
-  const { state } = useSession();
+  const { state, isSessionRuntimeCurrent } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
   const mode = (params?.mode as string | undefined) ?? "node";
-  const sessionConnected = tab?.state === "connected" || tab?.state === "transferring";
+  const sessionConnected = tab?.state === "connected";
   const configuredXmlPath = (
     typeof params?.xml_path === "string" && params.xml_path.trim()
       ? params.xml_path
@@ -312,7 +312,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     };
 
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
-      if (disposed || payload.session_id !== sessionId) return;
+      if (disposed || payload.session_id !== sessionId || !isSessionRuntimeCurrent(sessionId, payload.runtime_id)) return;
       if (payload.event === "md_session" && payload.md_session_id && payload.timestamp_us !== undefined) {
         const starts = mdRequestStartedUs.current;
         starts.set(payload.md_session_id, payload.timestamp_us);
@@ -975,7 +975,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       user_status: 0,
     });
     setSelectedPacket(current => (
-      current?.md_session_id === event.md_session_id
+      current && current.md_session_id === event.md_session_id
         ? { ...current, can_confirm: false }
         : current
     ));

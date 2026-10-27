@@ -15,6 +15,14 @@ use tauri::Emitter;
 
 use crate::session::AutomationIo;
 
+fn ensure_running(shutdown: &AtomicBool) -> mlua::Result<()> {
+    if shutdown.load(Ordering::Acquire) {
+        Err(mlua::Error::RuntimeError("脚本已取消".into()))
+    } else {
+        Ok(())
+    }
+}
+
 /// 向 Lua 全局环境注入脚本 API
 ///
 /// `shutdown` 为脚本线程共享的关闭标志：`sleep()` 分片睡眠期间检查它，
@@ -34,7 +42,9 @@ pub fn inject_lua_api(
     globals.set("__timers", timers_table)?;
 
     let raw_io = io.clone();
+    let raw_shutdown = shutdown.clone();
     let send_fn = lua.create_function(move |_, data: mlua::String| {
+        ensure_running(&raw_shutdown)?;
         let bytes: Vec<u8> = data.as_bytes().to_vec();
         raw_io
             .send(&bytes)
@@ -43,7 +53,9 @@ pub fn inject_lua_api(
     globals.set("send", send_fn)?;
 
     let text_io = io.clone();
+    let text_shutdown = shutdown.clone();
     let send_text_fn = lua.create_function(move |_, data: mlua::String| {
+        ensure_running(&text_shutdown)?;
         let bytes: Vec<u8> = data.as_bytes().to_vec();
         text_io
             .send_text(&bytes)
@@ -53,8 +65,10 @@ pub fn inject_lua_api(
     globals.set("send_text", send_text_fn)?;
 
     let targeted_io = io.clone();
+    let targeted_shutdown = shutdown.clone();
     let send_to_fn =
         lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+            ensure_running(&targeted_shutdown)?;
             let target = target.to_str()?.to_string();
             let bytes: Vec<u8> = data.as_bytes().to_vec();
             targeted_io
@@ -64,8 +78,10 @@ pub fn inject_lua_api(
     globals.set("send_to", send_to_fn)?;
 
     let targeted_text_io = io;
+    let targeted_text_shutdown = shutdown.clone();
     let send_to_text_fn =
         lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+            ensure_running(&targeted_text_shutdown)?;
             let target = target.to_str()?.to_string();
             let bytes: Vec<u8> = data.as_bytes().to_vec();
             targeted_text_io
@@ -77,12 +93,11 @@ pub fn inject_lua_api(
 
     let sleep_shutdown = shutdown.clone();
     let sleep_fn = lua.create_function(move |_, ms: u64| {
+        ensure_running(&sleep_shutdown)?;
         const SLICE_MS: u64 = 50;
         let mut remaining = ms;
         while remaining > 0 {
-            if sleep_shutdown.load(Ordering::Relaxed) {
-                break;
-            }
+            ensure_running(&sleep_shutdown)?;
             let chunk = remaining.min(SLICE_MS);
             std::thread::sleep(Duration::from_millis(chunk));
             remaining -= chunk;

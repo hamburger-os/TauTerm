@@ -16,7 +16,7 @@ import {
 } from "./StatusBarPrimitives";
 
 function isConnected(tab: StatusBarTab | null | undefined): boolean {
-  return tab?.state === "connected" || tab?.state === "transferring";
+  return tab?.state === "connected";
 }
 
 export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
@@ -24,7 +24,7 @@ export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
   if (!tab) return null;
 
   const connected = isConnected(tab);
-  const connecting = tab.state === "connecting";
+  const connecting = tab.state === "connecting" || tab.state === "disconnecting";
   const tone = connected ? "success" : connecting ? "warning" : "muted";
 
   return (
@@ -37,13 +37,10 @@ export function SessionConnectionStatus({ tab }: { tab: StatusBarTab | null }) {
   );
 }
 
-/**
- * Activity 是连接健康之外的正交提示。当前 SessionStore 仍把文件传输编码在
- * transferring state 中，这里先确保视觉语义不再把“正在传输”误画成连接异常。
- */
-export function SessionActivityStatus({ tab }: { tab: StatusBarTab | null }) {
+/** Activity is projected from TransferContext and never changes connection health. */
+export function SessionActivityStatus({ active }: { active: boolean }) {
   const { t } = useTranslation();
-  if (tab?.state !== "transferring") return null;
+  if (!active) return null;
   return <StatusBarBadge tone="warning">{t("session.transferring")}</StatusBarBadge>;
 }
 

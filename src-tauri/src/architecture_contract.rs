@@ -315,15 +315,15 @@ fn session_data_plane_registration_is_two_phase() {
 
     let store = read_source("kernel/session_store.rs");
     assert!(store.contains("SessionDataPlane::attach_paused"));
-    assert!(store.contains("pub fn activate_data_plane(&self"));
+    assert!(store.contains("pub fn activate_data_plane(&mut self"));
 
     let application = read_source("plugin_application.rs");
     assert!(application.contains("SessionDataPlane::attach_paused"));
-    assert!(application.contains("activate_data_plane(&channel_id)"));
+    assert!(application.contains("store.activate_data_plane(identity)"));
 
     let network = read_source("plugins/network/mod.rs");
     assert!(network.contains("SessionDataPlane::attach_paused"));
-    assert!(network.contains("activate_data_plane(&channel_id)"));
+    assert!(network.contains("activate_data_plane(&child_identity)"));
 }
 
 #[test]
@@ -342,10 +342,10 @@ fn frontend_session_error_presentation_is_plugin_driven() {
 fn network_connector_rolls_back_failed_runtime_startup() {
     let source = read_source("plugins/network/commands.rs");
     assert!(source.contains("fn rollback_startup_session("));
-    assert!(source.contains("network_runtime.start(app.clone(), &sid)"));
+    assert!(source.contains("network_runtime.start(app.clone(), &runtime_identity)"));
     assert!(
         source
-            .matches("rollback_startup_session(&state, &sid")
+            .matches("rollback_startup_session(&state, &runtime_identity")
             .count()
             >= 2,
         "Network connector must clean up both missing-runtime and runtime-start failures"
