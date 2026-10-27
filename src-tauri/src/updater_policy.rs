@@ -92,7 +92,7 @@ impl UpdaterPolicy {
             #[cfg(target_os = "macos")]
             Some(BundleType::App)
                 if tauri::utils::platform::current_exe()
-                    .map(|path| is_app_bundle(path))
+                    .map(|path| is_app_bundle(&path))
                     .unwrap_or(false) =>
             {
                 Some("app")
