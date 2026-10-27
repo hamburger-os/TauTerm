@@ -95,17 +95,20 @@ function AppInner() {
   // ── 更新器（自定义 Hook 封装完整生命周期） ──
   const {
     updateInfo,
+    updaterPolicy,
     updateCheckFrequency,
     handleCheckUpdate,
     handleDownloadUpdate,
     handleInstallUpdate,
+    handleRestartUpdate,
+    handleRetryUpdate,
     handleCheckFrequencyChange,
     handleVersionClick,
     settingsOpen,
     setSettingsOpen,
     settingsInitialCategory,
     setSettingsInitialCategory,
-  } = useUpdater(t);
+  } = useUpdater();
 
   // Toast
   const { showToast } = useToast();
@@ -363,10 +366,7 @@ function AppInner() {
 
       {/* 状态栏 */}
       <StatusBar
-        updatePhase={updateInfo.phase}
-        latestVersion={updateInfo.latestVersion}
-        downloadedBytes={updateInfo.downloadedBytes}
-        totalBytes={updateInfo.totalBytes}
+        updateInfo={updateInfo}
         onVersionClick={handleVersionClick}
       />
 
@@ -376,10 +376,13 @@ function AppInner() {
         onClose={() => { setSettingsOpen(false); setSettingsInitialCategory(null); }}
         initialCategory={settingsInitialCategory}
         updateInfo={updateInfo}
+        updaterPolicy={updaterPolicy}
         checkFrequency={updateCheckFrequency}
         onCheckUpdate={() => handleCheckUpdate(true)}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
+        onRestartUpdate={handleRestartUpdate}
+        onRetryUpdate={handleRetryUpdate}
         onCheckFrequencyChange={handleCheckFrequencyChange}
       />
 

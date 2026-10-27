@@ -23,6 +23,7 @@
 | `npm run test:e2e:build` | 构建独立测试标识的桌面应用；流程与外部驱动准备见 [测试文档](../community/TESTING.md#runtime-e2e) |
 | `npm run test:e2e` | 执行真实 WebView 的会话创建、回环收发、异常断开与重连回归 |
 | `npm run check:agents` | 校验根 `AGENTS.md`、`.agents/skills/*/SKILL.md` frontmatter、命名、行数与按需参考资料引用 |
+| `npm run check:updater` | 验证更新器权限投影、自动/手动检查并发、分离下载安装、失败恢复与资源生命周期 |
 | `npm run preview` | 本地预览已经生成的前端生产资源 |
 | `npm run docs:check` | 检查文档层级、链接、资产引用、README 对齐等 |
 | `npm run license:check` | 检查第三方许可证、来源记录和分发 notice 契约 |

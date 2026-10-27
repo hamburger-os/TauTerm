@@ -128,6 +128,9 @@ jobs:
       - name: Validate third-party license contract
         run: npm run license:check
 
+      - name: Validate updater lifecycle
+        run: npm run check:updater
+
       - name: Validate updater release scripts
         run: |
           node --check scripts/generate-third-party-notices.js

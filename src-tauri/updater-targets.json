@@ -1,0 +1,7 @@
+[
+  { "os": "windows", "arch": "x86_64", "bundle": "nsis", "target": "windows-x86_64-nsis", "suffix": "_x64-setup.exe", "queryDefault": true },
+  { "os": "linux", "arch": "x86_64", "bundle": "deb", "target": "linux-x86_64-deb", "suffix": "_amd64.deb", "queryDefault": false },
+  { "os": "linux", "arch": "x86_64", "bundle": "rpm", "target": "linux-x86_64-rpm", "suffix": ".rpm", "queryDefault": false },
+  { "os": "linux", "arch": "x86_64", "bundle": "appimage", "target": "linux-x86_64-appimage", "suffix": "_amd64.AppImage", "queryDefault": true },
+  { "os": "macos", "arch": "aarch64", "bundle": "app", "target": "darwin-aarch64-app", "suffix": ".app.tar.gz", "queryDefault": true }
+]

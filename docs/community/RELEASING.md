@@ -79,13 +79,7 @@ For releases that change virtual serial, privileged service, installer/updater o
 
 ## 3. Artifact and updater gates
 
-The workflow currently requires these updater targets:
-
-1. `windows-x86_64-nsis`
-2. `linux-x86_64-deb`
-3. `linux-x86_64-rpm`
-4. `linux-x86_64-appimage`
-5. `darwin-aarch64-app`
+The workflow requires the exact updater targets and artifact suffixes in the [canonical target catalog](../../src-tauri/updater-targets.json). Runtime policy, manifest assembly, and public download verification all consume this catalog.
 
 Staging verifies required bundled components, non-empty assets, TauTerm's MIT/Apache license texts, the TCNOpen MPL license, the curated `THIRD_PARTY_LICENSES.md`, and the dependency notice generated from the resolved Cargo/npm graph. Windows staging additionally verifies the com0com GPL license text is present in the installer. Assembly first fetches and validates the official com0com 3.0.0.0 corresponding-source ZIP, includes it in the release asset set, then verifies updater signatures and generates `latest.json` plus `SHA256SUMS`.
 

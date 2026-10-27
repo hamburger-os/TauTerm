@@ -23,7 +23,7 @@ export const updaterErrorTranslations: Record<
     transport: "无法连接更新服务，请检查网络、代理或 TLS/证书设置。详细信息已写入日志。",
     install: "更新下载或安装失败。为避免损坏安装，TauTerm 已停止更新。详细信息已写入日志。",
     relaunch: "更新已准备完成，但 TauTerm 无法自动重新启动。请手动重新启动应用。详细信息已写入日志。",
-    unknown: "检查更新失败，请稍后重试。详细信息已写入日志。",
+    unknown: "更新操作失败，请稍后重试。详细信息已写入日志。",
   },
   "en-US": {
     timeout: "The update service timed out. Please try again later. Details were written to the log.",
@@ -36,6 +36,6 @@ export const updaterErrorTranslations: Record<
     transport: "The update service could not be reached. Check the network, proxy, or TLS/certificate settings. Details were written to the log.",
     install: "The update could not be downloaded or installed. TauTerm stopped the update to avoid damaging the installation. Details were written to the log.",
     relaunch: "The update is ready, but TauTerm could not restart automatically. Restart the application manually. Details were written to the log.",
-    unknown: "The update check failed. Please try again later. Details were written to the log.",
+    unknown: "The update operation failed. Please try again later. Details were written to the log.",
   },
 };

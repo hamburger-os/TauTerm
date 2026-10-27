@@ -47,9 +47,11 @@ TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构
 
 ### 打包与更新
 
-构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验，发布流程对此保持 fail-closed。TauTerm 只在生产 bundle 中启用 updater；Vite/Tauri 开发运行没有可靠的已安装 bundle/installer target 身份，因此自动检查、手动检查、下载与重启更新路径均不访问正式 updater endpoint。开发态不得通过给 `latest.json` 增加 `windows-x86_64` 等通用兼容键来伪造安装包身份。
+构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验，发布流程对此保持 fail-closed。Rust 更新策略是运行模式、精确查询目标和安装权限的唯一来源：开发/调试或未知安装身份的构建仅支持手动查询新版本及更新说明；平台没有对应发布目标时明确不可用。只读查询可以显式选取当前平台的默认精确目标，但不代表当前进程具有该安装包身份。
 
-正式更新清单只发布经过发布流水线验证的 exact bundle targets，例如 Windows NSIS 使用 `windows-x86_64-nsis`。CI 必须持续验证 Rust/JS updater 版本配对、exact target 清单和签名产物，不能用宽泛 fallback 掩盖运行时 target 与发布资产不一致。
+WebView 静态 updater 权限仅允许查询。只有非调试且原生 bundle 身份与受支持发布目标一致时，Rust 启动阶段才向主窗口授予独立下载与安装权限；macOS 还必须确认真实 `.app` 容器，不能仅信任上游默认的 App 类型。不授予合并下载安装权限。开发态即使绕过界面直接调用下载/安装 IPC 也必须被 ACL 拒绝。生产安装版的自动检查和用户操作流程见 [UI_FOUNDATION.md](UI_FOUNDATION.md#更新器交互与生命周期)。
+
+正式更新清单只发布经过发布流水线验证的 exact bundle targets，例如 Windows NSIS 使用 `windows-x86_64-nsis`。[目标目录](../../src-tauri/updater-targets.json)是运行时策略、发布清单组装和公网产物验证共用的唯一来源，包含平台、架构、安装包身份、资产后缀与只读查询默认项。CI 必须持续验证 Rust/JS updater 版本配对、exact target 清单和签名产物，不能增加通用兼容键或用宽泛 fallback 掩盖安装身份与发布资产不一致。
 
 Windows Authenticode 发布者签名当前尚未启用：开发阶段的 NSIS、主程序、service/TRDP helper 可能没有 publisher signature。这个限制必须在平台支持文档中明确披露；进入广泛生产分发前，需要恢复 Authenticode + RFC 3161 时间戳并在 CI 中验证 signer/timestamp。
 

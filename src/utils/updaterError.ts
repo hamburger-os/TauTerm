@@ -1,4 +1,4 @@
-export type UpdaterFailureStage = "check" | "download-install" | "relaunch";
+export type UpdaterFailureStage = "policy" | "check" | "download" | "install" | "relaunch";
 
 export type UpdaterErrorKind =
   | "timeout"
@@ -132,7 +132,7 @@ export function classifyUpdaterError(
     return { kind: "transport", detail };
   }
 
-  if (stage === "download-install") {
+  if (stage === "install") {
     return { kind: "install", detail };
   }
   if (stage === "relaunch") {

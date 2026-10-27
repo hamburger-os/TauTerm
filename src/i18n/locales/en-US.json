@@ -933,9 +933,7 @@
     "checkForUpdates": "Check for Updates",
     "downloadUpdate": "Download {{version}}",
     "downloading": "Downloading...",
-    "installAndRelaunch": "Install & Relaunch",
     "retry": "Retry",
-    "checkFailed": "Check failed: {{error}}",
     "currentVersion": "Current Version",
     "alreadyLatest": "You are up to date",
     "releaseNotes": "Release Notes",
@@ -943,7 +941,17 @@
     "frequencyAlways": "Every Launch",
     "frequencyDaily": "Once a Day",
     "frequencyWeekly": "Once a Week",
-    "frequencyNever": "Never"
+    "frequencyNever": "Never",
+    "restarting": "Restarting TauTerm…",
+    "initializing": "Initializing update service…",
+    "queryOnly": "This build supports manual version checks and release notes only. Use an installed release to download and install updates.",
+    "unavailable": "No supported update package is available for this platform.",
+    "downloadedBytes": "Downloaded {{bytes}}",
+    "downloadComplete": "The update was downloaded and its signature verified. Installation is waiting for your confirmation.",
+    "installUpdate": "Install update",
+    "installing": "Installing update…",
+    "restartNow": "Restart TauTerm",
+    "installConfirmation": "Installing or restarting an update may close and restart TauTerm, interrupting current connections and running tasks. Save your work and confirm that it is safe to interrupt before continuing."
   },
   "statusBar": {
     "baudRate": "Baud",

@@ -80,18 +80,9 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
-// Tauri updater first resolves {os}-{arch}-{installer}. v0.5.0 is
-// the first updater baseline, so publish exact bundle targets only and fail
-// closed if the installed bundle marker is unknown or damaged.
-const updaterTargets = [
-  ["windows-x86_64-nsis", "_x64-setup.exe"],
-  ["linux-x86_64-deb", "_amd64.deb"],
-  ["linux-x86_64-rpm", ".rpm"],
-  ["linux-x86_64-appimage", "_amd64.AppImage"],
-  // Tauri 2.11 names the macOS updater archive after the .app bundle and
-  // does not include an architecture marker in the archive filename.
-  ["darwin-aarch64-app", ".app.tar.gz"],
-];
+// Publish only catalogued exact bundle targets; never add generic fallback keys.
+const updaterTargets = JSON.parse(readFileSync(resolve(root, "src-tauri/updater-targets.json"), "utf8"))
+  .map(({ target, suffix }) => [target, suffix]);
 
 const platforms = {};
 const verifyDir = mkdtempSync(join(tmpdir(), "tauterm-signature-verify-"));

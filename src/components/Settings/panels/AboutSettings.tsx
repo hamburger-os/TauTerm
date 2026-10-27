@@ -4,34 +4,43 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../common/Icon";
 import OptionButton from "../../common/OptionButton";
-import type { UpdateInfo, CheckFrequency } from "../../../types/updater";
+import ConfirmDialog from "../../common/ConfirmDialog";
+import { formatBytes } from "../../../utils/format";
+import type { UpdateInfo, CheckFrequency, UpdaterPolicy } from "../../../types/updater";
 import styles from "../SettingsPage.module.css";
 
 interface AboutSettingsProps {
   /** 更新器状态 */
   updateInfo: UpdateInfo;
+  updaterPolicy: UpdaterPolicy | null;
   /** 当前检查频率 */
   checkFrequency: CheckFrequency;
   /** 手动检查更新 */
   onCheckUpdate: () => void;
   /** 下载更新 */
   onDownloadUpdate: () => void;
-  /** 安装并重启 */
+  /** 安装已下载的更新 */
   onInstallUpdate: () => void;
+  onRestartUpdate: () => void;
+  onRetryUpdate: () => void;
   /** 修改检查频率 */
   onCheckFrequencyChange: (freq: CheckFrequency) => void;
 }
 
 export default function AboutSettings({
   updateInfo,
+  updaterPolicy,
   checkFrequency,
   onCheckUpdate,
   onDownloadUpdate,
   onInstallUpdate,
+  onRestartUpdate,
+  onRetryUpdate,
   onCheckFrequencyChange,
 }: AboutSettingsProps) {
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState("");
+  const [confirmation, setConfirmation] = useState<"install" | "restart" | null>(null);
   const [diagnosticsMessage, setDiagnosticsMessage] = useState("");
 
   // 从 Tauri 动态读取版本号
@@ -51,146 +60,121 @@ export default function AboutSettings({
     }
   };
 
-  const downloadPct =
-    updateInfo.phase === "downloading" &&
-    updateInfo.totalBytes &&
-    updateInfo.totalBytes > 0
-      ? Math.min(
-          Math.round(
-            ((updateInfo.downloadedBytes ?? 0) / updateInfo.totalBytes) * 100
-          ),
-          100
-        )
-      : 0;
+  const release = "release" in updateInfo ? updateInfo.release : undefined;
+  const progress = updateInfo.phase === "downloading" ? updateInfo : null;
+  const downloadPct = progress?.totalBytes
+    ? Math.min(Math.round(progress.downloadedBytes / progress.totalBytes * 100), 99)
+    : null;
+  const canInstall = updaterPolicy?.mode === "installed";
+  const queryOnly = updaterPolicy?.mode === "queryOnly";
+  const canCheck = updateInfo.phase === "idle" || updateInfo.phase === "latest"
+    || (updateInfo.phase === "available" && queryOnly);
+
+  const retry = () => {
+    if (updateInfo.phase === "error" && (updateInfo.recovery === "install" || updateInfo.recovery === "relaunch")) {
+      setConfirmation(updateInfo.recovery === "install" ? "install" : "restart");
+    } else onRetryUpdate();
+  };
 
   return (
     <div className={styles.aboutSection}>
       <h3 className={styles.panelTitle}>TauTerm</h3>
-
-      {/* 版本 + 更新操作区 */}
-      <div className={styles.updateSection}>
+      <div className={styles.updateSection} data-testid="updater-state">
         {appVersion && <p className={styles.aboutVersion}>{appVersion}</p>}
-
-        {/* 版本对比 */}
-        {updateInfo.phase === "available" && updateInfo.latestVersion && (
+        {queryOnly && <p data-testid="updater-query-only" className={styles.updateResultMsg}>{t("updater.queryOnly")}</p>}
+        {release && (
           <div className={`${styles.updateVersionCompare} liquid-glass-status-card`}>
-            <span className={styles.updateCurrentLabel}>
-              {t("updater.currentVersion")}
-            </span>
+            <span className={styles.updateCurrentLabel}>{t("updater.currentVersion")}</span>
             <span className={styles.updateCurrentVersion}>{appVersion}</span>
-            <span className={styles.updateArrow}>
-              <Icon name="arrow-right" size="sm" />
-            </span>
-            <span className={styles.updateLatestVersion}>
-              {updateInfo.latestVersion}
-            </span>
+            <span className={styles.updateArrow}><Icon name="arrow-right" size="sm" /></span>
+            <span className={styles.updateLatestVersion}>{release.version}</span>
           </div>
         )}
-
-        {/* 更新按钮 */}
-        {updateInfo.phase === "idle" && (
-          <>
-            <button className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
-              {t("updater.checkForUpdates")}
-            </button>
-            {updateInfo.resultMessage && (
-              <p className={styles.updateResultMsg}>
-                {updateInfo.resultMessage}
-              </p>
-            )}
-          </>
+        {canCheck && (
+          <button data-testid="updater-check" className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
+            {t("updater.checkForUpdates")}
+          </button>
         )}
-        {updateInfo.phase === "checking" && (
-          <button
-            className={`${styles.actionBtn} liquid-glass-button`}
-            disabled
-          >
+        {updateInfo.phase === "latest" && <p role="status" className={styles.updateResultMsg}>{t("updater.alreadyLatest")}</p>}
+        {updateInfo.phase === "unavailable" && <p role="status" className={styles.updateResultMsg}>{t("updater.unavailable")}</p>}
+        {(updateInfo.phase === "initializing" || updateInfo.phase === "checking" || updateInfo.phase === "installing" || updateInfo.phase === "restarting") && (
+          <button className={`${styles.actionBtn} liquid-glass-button`} disabled aria-busy="true">
             <span className={styles.updateSpinner} />
-            {t("updater.checking")}
+            {t(`updater.${updateInfo.phase}`)}
           </button>
         )}
-        {updateInfo.phase === "available" && (
-          <button
-            className={`${styles.actionBtn} liquid-primary-button`}
-            onClick={onDownloadUpdate}
-          >
-            {t("updater.downloadUpdate", {
-              version: updateInfo.latestVersion ?? "",
-            })}
+        {updateInfo.phase === "available" && canInstall && (
+          <button className={`${styles.actionBtn} liquid-primary-button`} onClick={onDownloadUpdate}>
+            {t("updater.downloadUpdate", { version: updateInfo.release.version })}
           </button>
         )}
-        {updateInfo.phase === "downloading" && (
+        {progress && (
           <div className={styles.updateProgressWrap}>
-            <button
-              className={`${styles.actionBtn} liquid-glass-button`}
-              disabled
-            >
+            <button className={`${styles.actionBtn} liquid-glass-button`} disabled aria-busy="true">
               {t("updater.downloading")}
             </button>
-            <div className={styles.updateProgressBar}>
-              <div
-                className={styles.updateProgressFill}
-                style={{ width: `${downloadPct}%` }}
-              />
+            <div role="progressbar" aria-label={t("updater.downloading")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloadPct ?? undefined}>
+              {downloadPct !== null && <div className={styles.updateProgressBar}><div className={styles.updateProgressFill} style={{ width: `${downloadPct}%` }} /></div>}
+              <span className={styles.updateProgressText}>
+                {downloadPct !== null ? `${downloadPct}%` : t("updater.downloadedBytes", { bytes: formatBytes(progress.downloadedBytes) })}
+              </span>
             </div>
-            <span className={styles.updateProgressText}>{downloadPct}%</span>
           </div>
         )}
-        {updateInfo.phase === "ready" && (
-          <button
-            className={`${styles.actionBtn} liquid-primary-button`}
-            onClick={onInstallUpdate}
-          >
-            {t("updater.installAndRelaunch")}
+        {updateInfo.phase === "downloaded" && (
+          <>
+            <p role="status" className={styles.updateResultMsg}>{t("updater.downloadComplete")}</p>
+            <button className={`${styles.actionBtn} liquid-primary-button`} onClick={() => setConfirmation("install")}>
+              {t("updater.installUpdate")}
+            </button>
+          </>
+        )}
+        {updateInfo.phase === "restartRequired" && (
+          <button className={`${styles.actionBtn} liquid-primary-button`} onClick={() => setConfirmation("restart")}>
+            {t("updater.restartNow")}
           </button>
         )}
         {updateInfo.phase === "error" && (
           <div className={styles.updateError}>
-            <p className={styles.updateErrorText}>
-              {updateInfo.error ?? t("updaterError.unknown")}
+            <p role="alert" className={styles.updateErrorText}>
+              {t(`updaterError.${updateInfo.kind}`, { defaultValue: t("updaterError.unknown") })}
             </p>
-            <button className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
-              {t("updater.retry")}
-            </button>
+            <button className={`${styles.actionBtn} liquid-glass-button`} onClick={retry}>{t("updater.retry")}</button>
           </div>
         )}
-
-        {/* Release Notes */}
-        {updateInfo.releaseNotes &&
-          (updateInfo.phase === "available" ||
-            updateInfo.phase === "downloading" ||
-            updateInfo.phase === "ready") && (
-            <details className={styles.updateReleaseNotes}>
-              <summary className={styles.updateReleaseNotesSummary}>
-                {t("updater.releaseNotes")}
-              </summary>
-              <pre className={styles.updateReleaseNotesBody}>
-                {updateInfo.releaseNotes}
-              </pre>
-            </details>
-          )}
+        {release?.notes && (
+          <details className={styles.updateReleaseNotes}>
+            <summary className={styles.updateReleaseNotesSummary}>{t("updater.releaseNotes")}</summary>
+            <pre className={styles.updateReleaseNotesBody}>{release.notes}</pre>
+          </details>
+        )}
       </div>
 
-      {/* 检查频率设置 */}
-      <h4 className={styles.categoryTitle}>{t("updater.checkFrequency")}</h4>
-      <div className={styles.optionList}>
-          {(
-            [
-              ["always", t("updater.frequencyAlways")],
-              ["daily", t("updater.frequencyDaily")],
-              ["weekly", t("updater.frequencyWeekly")],
-              ["never", t("updater.frequencyNever")],
-            ] as const
-          ).map(([val, label]) => (
-            <OptionButton
-              key={val}
-              selected={checkFrequency === val}
-              onClick={() => onCheckFrequencyChange(val)}
-            >
-              {label}
-            </OptionButton>
+      {canInstall && <>
+        <h4 className={styles.categoryTitle}>{t("updater.checkFrequency")}</h4>
+        <div className={styles.optionList}>
+          {([
+            ["always", t("updater.frequencyAlways")],
+            ["daily", t("updater.frequencyDaily")],
+            ["weekly", t("updater.frequencyWeekly")],
+            ["never", t("updater.frequencyNever")],
+          ] as const).map(([val, label]) => (
+            <OptionButton key={val} selected={checkFrequency === val} onClick={() => onCheckFrequencyChange(val)}>{label}</OptionButton>
           ))}
         </div>
+      </>}
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={t(confirmation === "restart" ? "updater.restartNow" : "updater.installUpdate")}
+        message={t("updater.installConfirmation")}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => {
+          const action = confirmation;
+          setConfirmation(null);
+          if (action === "install") onInstallUpdate();
+          if (action === "restart") onRestartUpdate();
+        }}
+      />
 
       <h4 className={styles.categoryTitle}>{t("diagnostics.title")}</h4>
       <div className={styles.updateSection}>

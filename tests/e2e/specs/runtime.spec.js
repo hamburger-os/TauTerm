@@ -185,6 +185,30 @@ describe("TauTerm runtime smoke", () => {
     expect(geometry.bodyHeight).toBeLessThanOrEqual(geometry.viewportHeight + 1);
   });
 
+  it("exposes manual development checks while native ACL rejects download and installation", async () => {
+    const result = await browser.executeAsync(async done => {
+      const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args);
+      try {
+        const policy = await invoke("get_updater_policy");
+        const denied = [];
+        for (const command of ["download", "install", "download_and_install"]) {
+          try { await invoke(`plugin:updater|${command}`, {}); denied.push({ command, error: "unexpected success" }); }
+          catch (error) { denied.push({ command, error: String(error) }); }
+        }
+        done({ policy, denied });
+      } catch (error) { done({ error: String(error) }); }
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.policy.mode).toBe("queryOnly");
+    expect(result.policy.target).toBeTruthy();
+    for (const denial of result.denied) expect(denial.error).toMatch(/not allowed|denied|forbidden/i);
+    await testId("app-version").click();
+    await testId("updater-query-only").waitForDisplayed();
+    await expect(testId("updater-check")).toBeEnabled();
+    await testId("settings-close").click();
+    await testId("settings-overlay").waitForExist({ reverse: true });
+  });
+
   it("opens and closes the command palette", async () => {
     await $('[data-testid="command-palette-trigger"]').click();
     const palette = await $('[data-testid="command-palette-overlay"]');

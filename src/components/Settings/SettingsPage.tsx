@@ -8,7 +8,7 @@ import LoggingSettings from "./panels/LoggingSettings";
 import ShortcutSettings from "./panels/ShortcutSettings";
 import SecuritySettings from "./panels/SecuritySettings";
 import AboutSettings from "./panels/AboutSettings";
-import type { UpdateInfo, CheckFrequency } from "../../types/updater";
+import type { UpdateInfo, CheckFrequency, UpdaterPolicy } from "../../types/updater";
 import styles from "./SettingsPage.module.css";
 
 interface SettingsPageProps {
@@ -18,14 +18,17 @@ interface SettingsPageProps {
   initialCategory?: string | null;
   /** 更新器状态 */
   updateInfo: UpdateInfo;
+  updaterPolicy: UpdaterPolicy | null;
   /** 当前检查频率 */
   checkFrequency: CheckFrequency;
   /** 手动检查更新 */
   onCheckUpdate: () => void;
   /** 下载更新 */
   onDownloadUpdate: () => void;
-  /** 安装并重启 */
+  /** 安装已下载的更新 */
   onInstallUpdate: () => void;
+  onRestartUpdate: () => void;
+  onRetryUpdate: () => void;
   /** 修改检查频率 */
   onCheckFrequencyChange: (freq: CheckFrequency) => void;
 }
@@ -52,10 +55,13 @@ export default function SettingsPage({
   onClose,
   initialCategory,
   updateInfo,
+  updaterPolicy,
   checkFrequency,
   onCheckUpdate,
   onDownloadUpdate,
   onInstallUpdate,
+  onRestartUpdate,
+  onRetryUpdate,
   onCheckFrequencyChange,
 }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -95,15 +101,18 @@ export default function SettingsPage({
       case "about": return (
         <AboutSettings
           updateInfo={updateInfo}
+          updaterPolicy={updaterPolicy}
           checkFrequency={checkFrequency}
           onCheckUpdate={onCheckUpdate}
           onDownloadUpdate={onDownloadUpdate}
           onInstallUpdate={onInstallUpdate}
+          onRestartUpdate={onRestartUpdate}
+          onRetryUpdate={onRetryUpdate}
           onCheckFrequencyChange={onCheckFrequencyChange}
         />
       );
     }
-  }, [activeCategory, updateInfo, checkFrequency, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onCheckFrequencyChange, t]);
+  }, [activeCategory, updateInfo, updaterPolicy, checkFrequency, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onRestartUpdate, onRetryUpdate, onCheckFrequencyChange, t]);
 
   return (
     <AnimatePresence>
