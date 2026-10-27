@@ -7,7 +7,7 @@ import {
   type StatusBarItem,
   type StatusBarOverflow,
 } from "../../core/plugin-registry";
-import type { UpdatePhase } from "../../types/updater";
+import type { UpdateInfo } from "../../types/updater";
 import {
   AppVersionStatus,
   LoggingStatus,
@@ -39,10 +39,7 @@ interface StatusSegment {
 }
 
 interface StatusBarProps {
-  updatePhase: UpdatePhase;
-  latestVersion?: string;
-  downloadedBytes?: number;
-  totalBytes?: number;
+  updateInfo: UpdateInfo;
   onVersionClick: () => void;
 }
 
@@ -83,10 +80,7 @@ function segmentClass(segment: StatusSegment): string {
 }
 
 export default function StatusBar({
-  updatePhase,
-  latestVersion,
-  downloadedBytes,
-  totalBytes,
+  updateInfo,
   onVersionClick,
 }: StatusBarProps) {
   const { state, loggingSessions, logStatuses } = useSession();
@@ -194,10 +188,7 @@ export default function StatusBar({
 
       <div className={styles.right}>
         <AppVersionStatus
-          updatePhase={updatePhase}
-          latestVersion={latestVersion}
-          downloadedBytes={downloadedBytes}
-          totalBytes={totalBytes}
+          updateInfo={updateInfo}
           onVersionClick={onVersionClick}
         />
       </div>

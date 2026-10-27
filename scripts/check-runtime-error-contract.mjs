@@ -22,34 +22,26 @@ for (const required of ["window.error", "unhandledrejection", 'invoke("log_event
 }
 
 const updaterHook = fs.readFileSync("src/hooks/useUpdater.ts", "utf8");
-for (const required of [
-  "classifyUpdaterError",
-  "isRetryableUpdaterError",
-  "reportFrontendError",
-  "MANUAL_CHECK_TIMEOUT_MS = 30_000",
-  'import.meta.env.PROD && import.meta.env.TAURI_ENV_DEBUG === "false"',
-  "if (!UPDATER_RUNTIME_ENABLED)",
-  "if (!UPDATER_RUNTIME_ENABLED || !shouldAutoCheck()) return",
-  'recordFailure("download-install"',
-  'recordFailure("relaunch"',
-]) {
-  if (!updaterHook.includes(required)) fail("useUpdater missing " + required);
+if (!updaterHook.includes("UpdaterController") || !updaterHook.includes("reportFrontendError")) {
+  fail("useUpdater must adapt the shared controller and diagnostic bridge.");
 }
-if (/error:\s*String\s*\(/.test(updaterHook)) {
-  fail("useUpdater must not expose raw updater errors directly in the UI.");
+if (updaterHook.includes("TAURI_ENV_DEBUG")) {
+  fail("Updater installation identity must come from native policy, not a frontend build flag.");
 }
-
-const viteConfig = fs.readFileSync("vite.config.ts", "utf8");
-if (!viteConfig.includes('envPrefix: ["VITE_", "TAURI_ENV_"]')) {
-  fail("Vite must expose TAURI_ENV_* so release/debug updater policy reaches the frontend bundle.");
+const updaterCapabilities = JSON.parse(fs.readFileSync("src-tauri/capabilities/default.json", "utf8"));
+if (!updaterCapabilities.permissions.includes("updater:allow-check") || updaterCapabilities.permissions.some(
+  permission => permission.startsWith("updater:") && permission !== "updater:allow-check",
+)) {
+  fail("Static updater permissions must allow only checks; native policy grants install permissions.");
 }
-
-const releaseAssembler = fs.readFileSync("scripts/assemble-release.js", "utf8");
-if (!releaseAssembler.includes('["windows-x86_64-nsis", "_x64-setup.exe"]')) {
-  fail("release manifest must publish the exact Windows NSIS updater target.");
+const updaterTargets = JSON.parse(fs.readFileSync("src-tauri/updater-targets.json", "utf8"));
+if (!updaterTargets.some(entry => entry.target === "windows-x86_64-nsis")) {
+  fail("release target catalog must contain the exact Windows NSIS updater target.");
 }
-if (releaseAssembler.includes('["windows-x86_64",')) {
-  fail("release manifest must not publish a generic Windows compatibility target.");
+for (const file of ["scripts/assemble-release.js", "scripts/verify-published-updater.js", "src-tauri/src/updater_policy.rs"]) {
+  if (!fs.readFileSync(file, "utf8").includes("updater-targets.json")) {
+    fail(file + " must consume the canonical updater target catalog.");
+  }
 }
 
 const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");

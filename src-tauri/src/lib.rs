@@ -31,6 +31,7 @@ mod security;
 mod session;
 mod transfer;
 mod transport;
+mod updater_policy;
 pub mod virtual_port;
 
 #[cfg(windows)]
@@ -102,6 +103,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            updater_policy::UpdaterPolicy::configure(app)?;
             let window = app
                 .get_webview_window("main")
                 .expect("main window not found");
@@ -482,6 +484,7 @@ pub fn run() {
             commands::test_match,
             ipc_transport::resize_pty,
             diagnostics::export_diagnostics,
+            updater_policy::get_updater_policy,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")

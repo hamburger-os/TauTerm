@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useTranslation } from "react-i18next";
 import type { StatusBarTab } from "../../core/plugin-registry";
 import { useSessionTrafficRate } from "../../hooks/useSessionTrafficRate";
-import type { UpdatePhase } from "../../types/updater";
+import type { UpdateInfo } from "../../types/updater";
 import { charsetLabel } from "../../utils/charsets";
 import { formatBytes, formatRate, formatUptime } from "../../utils/format";
 import Icon from "../common/Icon";
@@ -145,18 +145,12 @@ export function LoggingStatus({
 }
 
 interface AppVersionStatusProps {
-  updatePhase: UpdatePhase;
-  latestVersion?: string;
-  downloadedBytes?: number;
-  totalBytes?: number;
+  updateInfo: UpdateInfo;
   onVersionClick: () => void;
 }
 
 export function AppVersionStatus({
-  updatePhase,
-  latestVersion,
-  downloadedBytes,
-  totalBytes,
+  updateInfo,
   onVersionClick,
 }: AppVersionStatusProps) {
   const { t } = useTranslation();
@@ -167,21 +161,24 @@ export function AppVersionStatus({
   }, []);
 
   const downloadPercent = useMemo(() => {
-    if (updatePhase !== "downloading" || !totalBytes) return null;
-    return Math.min(Math.round(((downloadedBytes ?? 0) / totalBytes) * 100), 99);
-  }, [updatePhase, downloadedBytes, totalBytes]);
+    if (updateInfo.phase !== "downloading" || !updateInfo.totalBytes) return null;
+    return Math.min(Math.round(updateInfo.downloadedBytes / updateInfo.totalBytes * 100), 99);
+  }, [updateInfo]);
 
   if (!appVersion) return null;
 
-  const actionable = updatePhase === "available" || updatePhase === "ready";
-  const tone = actionable ? "success" : updatePhase === "checking" ? "muted" : "neutral";
-  const title = updatePhase === "available"
-    ? t("statusBar.updateAvailable", { version: latestVersion ?? "" })
-    : updatePhase === "ready"
-      ? t("updater.installAndRelaunch")
-      : updatePhase === "downloading"
-        ? t("updater.downloading")
-        : t("settings.about");
+  const updatePhase = updateInfo.phase;
+  const actionable = updatePhase === "available" || updatePhase === "downloaded" || updatePhase === "restartRequired";
+  const busy = updatePhase === "checking" || updatePhase === "initializing" || updatePhase === "installing" || updatePhase === "restarting";
+  const tone = actionable ? "success" : updatePhase === "error" ? "danger" : busy ? "muted" : "neutral";
+  const title = updateInfo.phase === "available"
+    ? t("statusBar.updateAvailable", { version: updateInfo.release.version })
+    : updatePhase === "downloaded" ? t("updater.installUpdate")
+    : updatePhase === "restartRequired" ? t("updater.restartNow")
+    : updatePhase === "downloading" ? t("updater.downloading")
+    : busy ? t(`updater.${updatePhase}`)
+    : updateInfo.phase === "error" ? t(`updaterError.${updateInfo.kind}`)
+    : t("settings.about");
 
   return (
     <StatusBarGroup>
@@ -191,6 +188,7 @@ export function AppVersionStatus({
         </StatusBarText>
       ) : null}
       <StatusBarAction
+        data-testid="app-version"
         tone={tone}
         onClick={onVersionClick}
         title={title}

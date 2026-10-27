@@ -18,15 +18,8 @@ if (tag !== `v${version}`) {
   throw new Error(`Tag/version mismatch: ${tag} vs ${version}`);
 }
 
-const expectedTargets = new Map([
-  ["windows-x86_64-nsis", "_x64-setup.exe"],
-  ["linux-x86_64-deb", "_amd64.deb"],
-  ["linux-x86_64-rpm", ".rpm"],
-  ["linux-x86_64-appimage", "_amd64.AppImage"],
-  // Tauri 2.11 names the macOS updater archive after the .app bundle and
-  // does not include an architecture marker in the archive filename.
-  ["darwin-aarch64-app", ".app.tar.gz"],
-]);
+const expectedTargets = new Map(JSON.parse(readFileSync(resolve(root, "src-tauri/updater-targets.json"), "utf8"))
+  .map(({ target, suffix }) => [target, suffix]));
 
 const config = JSON.parse(readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8"));
 const decodedKey = Buffer.from(config.plugins?.updater?.pubkey ?? "", "base64").toString("utf8");

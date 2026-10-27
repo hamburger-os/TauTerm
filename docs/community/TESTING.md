@@ -37,6 +37,7 @@ The permanent smoke contract covers:
 - application shell starts and renders;
 - no root document overflow at the default window size;
 - command palette opens and closes;
+- development builds expose manual update checks while native ACL rejects downloading, installation, and combined download/install;
 - new-session workflow opens and closes;
 - the Modbus connection form exposes its default RTU client configuration;
 - TCP client receives bytes sent immediately on accept, sends confirmed data, observes remote EOF, and reconnects the same saved Session;

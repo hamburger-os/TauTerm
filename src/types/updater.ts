@@ -1,28 +1,30 @@
-/** 更新检查频率 */
+import type { UpdaterErrorKind, UpdaterFailureStage } from "../utils/updaterError";
+
 export type CheckFrequency = "always" | "daily" | "weekly" | "never";
 
-/** 更新阶段 */
-export type UpdatePhase =
-  | "idle"
-  | "checking"
-  | "available"
-  | "downloading"
-  | "ready"
-  | "error";
+/** Rust owns this decision; the UI never infers installation identity. */
+export interface UpdaterPolicy {
+  mode: "installed" | "queryOnly" | "unavailable";
+  target: string | null;
+}
 
-/** 更新状态信息 */
-export interface UpdateInfo {
-  phase: UpdatePhase;
-  /** 最新版本号 */
-  latestVersion?: string;
-  /** 更新日志 / Release Notes */
-  releaseNotes?: string;
-  /** 已下载字节数 */
-  downloadedBytes?: number;
-  /** 总字节数 */
-  totalBytes?: number;
-  /** 错误消息 */
-  error?: string;
-  /** 上次手动检查的结果提示（如"已是最新版本"） */
-  resultMessage?: string;
+export interface UpdateRelease {
+  version: string;
+  notes: string;
+}
+
+export type UpdateRecovery = "initialize" | "check" | "download" | "install" | "relaunch";
+
+export type UpdateInfo =
+  | { phase: "initializing" | "idle" | "latest" | "unavailable" | "checking" }
+  | { phase: "available" | "downloaded" | "installing" | "restartRequired" | "restarting"; release: UpdateRelease }
+  | { phase: "downloading"; release: UpdateRelease; downloadedBytes: number; totalBytes: number | null }
+  | { phase: "error"; stage: UpdaterFailureStage; kind: UpdaterErrorKind; recovery: UpdateRecovery; release?: UpdateRelease };
+
+export type UpdatePhase = UpdateInfo["phase"];
+
+export interface UpdaterSnapshot {
+  policy: UpdaterPolicy | null;
+  info: UpdateInfo;
+  frequency: CheckFrequency;
 }
