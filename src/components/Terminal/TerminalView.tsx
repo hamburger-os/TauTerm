@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
+import { useTransfer } from "../../context/TransferContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useKeyboard } from "../../hooks/useKeyboard";
 import { ACTION_IDS } from "../../shortcuts/actionIds";
@@ -154,6 +155,11 @@ export default function TerminalView({
 }: TerminalViewProps = {}) {
   const { t } = useTranslation();
   const { state, sendData, disconnect, closeChannel, onSessionData, onDataSent } = useSession();
+  const { getActiveTaskForSession } = useTransfer();
+  const hasActiveTransfer = (tab: (typeof state.tabs)[number] | undefined) => {
+    if (tab?.state !== "connected" || !tab.runtimeId) return false;
+    return getActiveTaskForSession(tab.id)?.runtimeId === tab.runtimeId;
+  };
   const { fontSize, bufferLines } = useTheme();
   const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
@@ -196,13 +202,13 @@ export default function TerminalView({
   tabsRef.current = state.tabs;
 
   const terminalTabs = state.tabs.filter(
-    t => t.state === "connected" || t.state === "transferring" || t.disconnectInfo?.retain_terminal
+    t => t.state === "connected" || t.disconnectInfo?.retain_terminal
   );
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
 
   const connectedTabIds = useMemo(
     () => state.tabs
-      .filter(t => t.state === "connected" || t.state === "transferring")
+      .filter(t => t.state === "connected")
       .concat(state.tabs.filter(t => t.state === "disconnected" && t.disconnectInfo?.retain_terminal))
       .map(t => t.id)
       .sort()
@@ -572,8 +578,9 @@ export default function TerminalView({
     ) : (
       <TerminalInstance
         sessionId={tab.id}
+        runtimeId={tab.runtimeId}
         onData={(data) => handleData(tab.id, data)}
-        isConnected={tab.state === "connected" || tab.state === "transferring"}
+        isConnected={tab.state === "connected"}
         isActive={isActive}
         onTermReady={(writeFn) => handleTermReady(tab.id, writeFn)}
         onCleanup={handleTermCleanup}
@@ -632,7 +639,7 @@ export default function TerminalView({
                 if (visible && event.button === 0) onActivateSession?.(tab.id);
               }}
             >
-              {tab.state === "transferring" && (
+              {hasActiveTransfer(tab) && (
                 <div className={styles.transferBanner}>
                   <Icon name="transfer-active" size="sm" className={styles.transferBannerIcon} />
                   <span>{t("transfer.transferringBanner", "File transfer in progress...")}</span>
@@ -669,7 +676,7 @@ export default function TerminalView({
     );
   }
 
-  const isActiveTransferring = activeTab?.state === "transferring";
+  const isActiveTransferring = hasActiveTransfer(activeTab);
   const retainedDisconnect = activeTab?.state === "disconnected" && activeTab.disconnectInfo?.retain_terminal
     ? activeTab.disconnectInfo
     : null;

@@ -229,7 +229,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     }
 
     // ── 根会话菜单 ──
-    if (sessionState === "connected" || sessionState === "transferring") {
+    if (sessionState === "connected") {
       const isLogging = loggingSessions.has(menu.session.id);
       const supportsLogging = capabilities.includes("session_logging");
       const items: ContextMenuItem[] = [];
@@ -280,7 +280,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         const supportsMultiple = tab
           ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("multi_session")
           : false;
-        if (supportsMultiple && (tab?.state === "connected" || tab?.state === "transferring")) {
+        if (supportsMultiple && (tab?.state === "connected")) {
           // 右键父卡片会按原交互导航到最近活动 Channel；真正新建前恢复右键前 Pane，
           // 让 session-connected 带来的新 Channel 被 SplitLayout 分配到用户原先选中的位置。
           selectPane(contextMenuOriginPaneRef.current);
@@ -301,7 +301,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           && (registration.canCreateElevatedSession?.(tab.params ?? {}) ?? true),
         );
         if (!tab || !supportsElevation) break;
-        if (tab.state === "connected" || tab.state === "transferring") {
+        if (tab.state === "connected") {
           // 与普通“新建终端”一致：保留右键前 Pane 作为新管理员终端落点。
           selectPane(contextMenuOriginPaneRef.current);
           await openChannel(sessionId, true);
@@ -387,6 +387,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
               <div key={node.tab.id}>
                 {/* 父节点 */}
                 <motion.div
+                  data-testid="session-entry"
                   className={`${styles.item} ${state.activeTabId === node.tab.id ? styles.active : ""}`}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -408,8 +409,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                     <Icon
                       name={
                         node.tab.state === "connected" ? "status-connected" :
-                        node.tab.state === "transferring" ? "status-transferring" :
-                        node.tab.state === "connecting" ? "status-connecting" :
+                        node.tab.state === "connecting" || node.tab.state === "disconnecting" ? "status-connecting" :
                         "status-idle"
                       }
                       size={10}

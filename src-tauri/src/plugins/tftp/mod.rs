@@ -193,7 +193,7 @@ impl SessionAttach for RuntimeAttach {
         self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 

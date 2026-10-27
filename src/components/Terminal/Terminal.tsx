@@ -146,6 +146,7 @@ const LIGHT_TERMINAL_THEME = {
 interface TerminalInstanceProps {
   /** 会话 ID，用于关联数据和命令 */
   sessionId: string;
+  runtimeId: string | null;
   /** 当用户在终端输入时回调 */
   onData?: (data: string) => void;
   /** 是否已连接 */
@@ -175,7 +176,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession, allowProtocolInspect = true },
+  { sessionId, runtimeId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession, allowProtocolInspect = true },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -289,11 +290,11 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }
     resizeTimerRef.current = setTimeout(() => {
       const term = xtermRef.current;
-      if (term && sessionId) {
-        invoke("resize_pty", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
+      if (term && runtimeId) {
+        invoke("resize_pty", { sessionId, runtimeId, cols: term.cols, rows: term.rows }).catch(() => {});
       }
     }, RESIZE_DEBOUNCE_MS);
-  }, [sessionId]);
+  }, [sessionId, runtimeId]);
 
   /** 所有 xterm fit 都由共享 host lifecycle 合并并做 dispose 保护。 */
   const scheduleFit = useCallback(() => {

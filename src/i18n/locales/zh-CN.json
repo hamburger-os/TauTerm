@@ -102,6 +102,7 @@
     "connected": "已连接",
     "disconnected": "未连接",
     "connecting": "连接中...",
+    "disconnecting": "断开中...",
     "transferring": "传输中",
     "connectToViewContent": "连接后显示会话内容",
     "noSessions": "暂无活跃会话",
@@ -115,6 +116,7 @@
     "status": "状态",
     "deletePersistFailed": "删除会话配置失败：{{error}}。会话仍保留在列表中，可重试删除。",
     "loadPersistFailed": "加载已保存会话失败：{{error}}。磁盘上的会话库未被修改。",
+    "workspaceLoadFailed": "读取工作区布局失败：{{error}}。自动保存布局已暂停，磁盘布局保持不变。请重启应用后重试。",
     "renamePersistFailed": "重命名已保存会话失败：{{error}}。已恢复原名称。",
     "displayOverflow": "{{session}} 的显示队列已过载，Presentation Path 已丢弃 {{count}} 个数据块。线路数据不因此判定丢失，但当前屏幕内容可能不完整。"
   },
@@ -958,6 +960,7 @@
     "disconnected": "未连接",
     "connected": "已连接",
     "connecting": "连接中...",
+    "disconnecting": "断开中...",
     "typeSerial": "串口",
     "typeSsh": "SSH",
     "authPassword": "密码",

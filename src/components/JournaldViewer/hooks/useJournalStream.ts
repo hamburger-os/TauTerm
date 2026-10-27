@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "../../../context/SessionContext";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { JournalEntry, JournaldErrorPayload, JournaldFilter } from "../types";
 import { MAX_ENTRIES } from "../types";
@@ -10,17 +11,20 @@ import {
 
 interface JournalBatchEvent {
   session_id: string;
+  runtime_id: string;
   entries: JournalEntry[];
   dropped: number;
 }
 
 interface JournalErrorEvent {
   session_id: string;
+  runtime_id: string;
   error: JournaldErrorPayload;
 }
 
 interface JournalEndedEvent {
   session_id: string;
+  runtime_id: string;
   reason: string;
 }
 
@@ -50,10 +54,12 @@ function filterKey(filter: JournaldFilter): string {
 
 export function useJournalStream(
   sessionId: string,
+  runtimeId: string | null,
   isConnected: boolean,
   active: boolean,
   filter: JournaldFilter,
 ): UseJournalStreamReturn {
+  const { isSessionRuntimeCurrent } = useSession();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<JournaldErrorPayload | null>(null);
@@ -97,7 +103,7 @@ export function useJournalStream(
       try {
         collected.push(
           await listen<JournalBatchEvent>("journald:batch", (event) => {
-            if (isStale() || event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId || event.payload.runtime_id !== runtimeId || !isSessionRuntimeCurrent(sessionId, event.payload.runtime_id)) return;
             const batch = event.payload.entries;
             if (batch.length > 0) {
               setEntries((previous) => {
@@ -113,7 +119,7 @@ export function useJournalStream(
         );
         collected.push(
           await listen<JournalErrorEvent>("journald:error", (event) => {
-            if (isStale() || event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId || event.payload.runtime_id !== runtimeId || !isSessionRuntimeCurrent(sessionId, event.payload.runtime_id)) return;
             // Error reporting and stream lifetime are separate signals. Fatal
             // remote exits are followed by stream-ended; non-fatal record
             // problems may report an error while the stream keeps running.
@@ -122,7 +128,7 @@ export function useJournalStream(
         );
         collected.push(
           await listen<JournalEndedEvent>("journald:stream-ended", (event) => {
-            if (isStale() || event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId || event.payload.runtime_id !== runtimeId || !isSessionRuntimeCurrent(sessionId, event.payload.runtime_id)) return;
             ++generationRef.current;
             setIsStreaming(false);
             streamingRef.current = false;
@@ -149,11 +155,12 @@ export function useJournalStream(
       }
       throw listenerError;
     }
-  }, [sessionId]);
+  }, [sessionId, runtimeId, isSessionRuntimeCurrent]);
 
   const start = useCallback(
     async (nextFilter: JournaldFilter) => {
       if (
+        !runtimeId || !isSessionRuntimeCurrent(sessionId, runtimeId) ||
         !isConnected ||
         !activeRef.current ||
         disposedRef.current ||
@@ -177,14 +184,14 @@ export function useJournalStream(
           return;
         }
 
-        await startJournalStream(sessionId, nextFilter);
+        await startJournalStream(sessionId, runtimeId, nextFilter);
         if (
           generation !== generationRef.current ||
           disposedRef.current ||
           !activeRef.current ||
           !connectedRef.current
         ) {
-          await stopJournalStream(sessionId).catch(() => undefined);
+          await stopJournalStream(sessionId, runtimeId).catch(() => undefined);
           return;
         }
 
@@ -204,10 +211,11 @@ export function useJournalStream(
         busyRef.current = false;
       }
     },
-    [ensureListeners, isConnected, sessionId],
+    [ensureListeners, isConnected, sessionId, runtimeId, isSessionRuntimeCurrent],
   );
 
   const stop = useCallback(async () => {
+    if (!runtimeId) return;
     if (busyRef.current) return;
     if (!streamingRef.current) {
       setIsStreaming(false);
@@ -217,7 +225,7 @@ export function useJournalStream(
     ++generationRef.current;
     setLoading(true);
     try {
-      await stopJournalStream(sessionId);
+      await stopJournalStream(sessionId, runtimeId);
     } catch (stopError) {
       if (!disposedRef.current) {
         setError(normalizeJournaldError(stopError));
@@ -231,7 +239,7 @@ export function useJournalStream(
       }
       busyRef.current = false;
     }
-  }, [sessionId]);
+  }, [sessionId, runtimeId]);
 
   const toggle = useCallback(
     async (nextFilter: JournaldFilter) => {
@@ -301,13 +309,13 @@ export function useJournalStream(
       unlistenersRef.current.forEach((unlisten) => unlisten());
       unlistenersRef.current = [];
       listenersReadyRef.current = null;
-      if (streamingRef.current || busyRef.current) {
-        void stopJournalStream(sessionId).catch(() => undefined);
+      if (runtimeId && (streamingRef.current || busyRef.current)) {
+        void stopJournalStream(sessionId, runtimeId).catch(() => undefined);
       }
       streamingRef.current = false;
       runningFilterKeyRef.current = "";
     };
-  }, [ensureListeners, sessionId]);
+  }, [ensureListeners, sessionId, runtimeId]);
 
   return {
     entries,

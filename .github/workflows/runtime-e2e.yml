@@ -64,7 +64,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Build debug application through Tauri CLI
-        run: npm run tauri build -- --debug --no-bundle
+        run: npm run test:e2e:build
 
       - name: Install pinned tauri-driver
         run: cargo install tauri-driver --locked --version 2.0.6
@@ -78,13 +78,11 @@ jobs:
 
       - name: Install pinned E2E tooling
         working-directory: tests/e2e
-        run: npm install --no-audit --no-fund --no-package-lock
+        run: npm ci --no-audit --no-fund
 
       - name: Run Linux runtime smoke
         shell: bash
-        env:
-          TAUTERM_E2E_BINARY: ${{ github.workspace }}/src-tauri/target/debug/tauterm
-        run: xvfb-run -a npm --prefix tests/e2e test
+        run: xvfb-run -a npm run test:e2e
 
   windows:
     name: Tauri runtime smoke (windows-2025)
@@ -114,7 +112,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Build debug application through Tauri CLI
-        run: npm run tauri build -- --debug --no-bundle
+        run: npm run test:e2e:build
 
       - name: Install pinned tauri-driver
         run: cargo install tauri-driver --locked --version 2.0.6
@@ -131,13 +129,11 @@ jobs:
 
       - name: Install pinned E2E tooling
         working-directory: tests/e2e
-        run: npm install --no-audit --no-fund --no-package-lock
+        run: npm ci --no-audit --no-fund
 
       - name: Run Windows runtime smoke
         id: windows-smoke
         shell: pwsh
-        env:
-          TAUTERM_E2E_BINARY: ${{ github.workspace }}\src-tauri\target\debug\tauterm.exe
         run: |
           $driverVersion = (& msedgedriver.exe --version) -join ""
           if ($driverVersion -notmatch '(\d+)\.') {
@@ -145,7 +141,7 @@ jobs:
           }
           $runtimeMajor = [int]$Matches[1]
 
-          npm --prefix tests/e2e test 2>&1 | Tee-Object -FilePath windows-e2e.log
+          npm run test:e2e 2>&1 | Tee-Object -FilePath windows-e2e.log
           $status = $LASTEXITCODE
           if ($status -eq 0) {
             "runtime_status=passed" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append

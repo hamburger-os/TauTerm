@@ -59,6 +59,7 @@ impl FileTransfer for SerialFileTransfer {
         let port = self.port.clone();
         let protocol = self.protocol.clone();
         let progress_clone = progress.clone();
+        let cancel_status = cancel.clone();
 
         let aggregate_total: u64 = files.iter().map(|f| f.size).sum();
         let aggregate_completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -179,6 +180,9 @@ impl FileTransfer for SerialFileTransfer {
         })
         .await;
 
+        if cancel_status.load(Ordering::Acquire) {
+            return Err(FileTransferError::Cancelled);
+        }
         let proto_str = self.protocol_type.to_string();
         match result {
             Ok(Ok(batch_results)) => {
@@ -250,6 +254,7 @@ impl FileTransfer for SerialFileTransfer {
         let port = self.port.clone();
         let protocol = self.protocol.clone();
         let progress_clone = progress.clone();
+        let cancel_status = cancel.clone();
 
         let aggregate_completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
@@ -378,6 +383,9 @@ impl FileTransfer for SerialFileTransfer {
         })
         .await;
 
+        if cancel_status.load(Ordering::Acquire) {
+            return Err(FileTransferError::Cancelled);
+        }
         let proto_str = self.protocol_type.to_string();
         match result {
             Ok(Ok(batch_results)) => {
@@ -432,6 +440,66 @@ impl FileTransfer for SerialFileTransfer {
                     "spawn_blocking join 失败: {}",
                     join_err
                 )))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transfer::protocol::TransferIo;
+
+    struct FailingProtocol;
+
+    impl SerialTransferProtocol for FailingProtocol {
+        fn send_files(
+            &self,
+            _: &mut Box<dyn TransferIo>,
+            _: &[FileInfo],
+            _: &dyn Fn(TransferProgress),
+            _: &dyn Fn(FileTransferEvent),
+            _: &mut dyn FnMut() -> bool,
+        ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
+            Err(std::io::Error::other("wire failure").into())
+        }
+        fn receive_files(
+            &self,
+            _: &mut Box<dyn TransferIo>,
+            _: &str,
+            _: &dyn Fn(TransferProgress),
+            _: &dyn Fn(FileTransferEvent),
+            _: &mut dyn FnMut() -> bool,
+        ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
+            Err(std::io::Error::other("wire failure").into())
+        }
+    }
+
+    #[tokio::test]
+    async fn serial_send_and_receive_classify_scheduler_cancellation_without_parsing_errors() {
+        let transfer = SerialFileTransfer::new(
+            TransferProtocolType::new("xmodem"),
+            Box::new(FailingProtocol),
+            Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        );
+        for cancelled in [false, true] {
+            let cancel = Arc::new(AtomicBool::new(cancelled));
+            let (progress, _) = tokio::sync::mpsc::unbounded_channel();
+            let options = FileTransferOptions::default();
+            let sent = transfer
+                .send(&[], None, &options, progress.clone(), cancel.clone())
+                .await;
+            let received = transfer
+                .receive("unused", &[], &options, progress, cancel)
+                .await;
+            for result in [sent, received] {
+                if cancelled {
+                    assert!(matches!(result, Err(FileTransferError::Cancelled)));
+                } else {
+                    assert!(
+                        matches!(result, Err(FileTransferError::Other(message)) if message == "wire failure")
+                    );
+                }
             }
         }
     }

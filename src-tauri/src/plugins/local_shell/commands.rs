@@ -1,6 +1,6 @@
 //! Local Shell application-layer Session connector.
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::kernel::plugin_adapter::ChannelOpenMode;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, ContainerSessionRuntime};
@@ -56,7 +56,7 @@ async fn connect_session(
         .take()
         .ok_or("Local Shell 连接缺少子终端工厂")?;
     let session_name = request.name.clone().unwrap_or_else(|| "Shell".into());
-    let parent_id = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
@@ -80,11 +80,12 @@ async fn connect_session(
             },
         )?
     };
+    let parent_id = runtime_identity.session_id.clone();
 
     let channel_id = create_terminal_sub_channel(
         &app,
         &state,
-        &parent_id,
+        &runtime_identity,
         first_channel,
         initial_mode == ChannelOpenMode::Elevated,
         false,
@@ -93,7 +94,10 @@ async fn connect_session(
     .inspect_err(|error| {
         log::error!("Local Shell 首个子会话创建失败: {error}");
         if let Ok(mut store) = state.session_store.lock() {
-            if let Err(cleanup_error) = store.close_session(&parent_id) {
+            if let Err(cleanup_error) = store
+                .close_if_current(&runtime_identity)
+                .map(|cleanup| cleanup.schedule())
+            {
                 log::warn!(
                     "Local Shell 首个子会话失败后的父会话清理也失败: {}",
                     cleanup_error
@@ -106,7 +110,9 @@ async fn connect_session(
         .inspect_err(|error| {
         log::error!("Local Shell 首个子会话发布前校验失败: {error}");
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.close_session(&parent_id);
+            let _ = store
+                .close_if_current(&runtime_identity)
+                .map(|cleanup| cleanup.schedule());
         }
     })?;
 
@@ -116,10 +122,10 @@ async fn connect_session(
             .unwrap_or_default()
             .as_millis() as u64,
     );
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": parent_id,
             "endpoint": request.endpoint,
             "connection_type": "local-shell",
             "plugin_id": "local-shell",
@@ -130,13 +136,12 @@ async fn connect_session(
             "send_bar_enabled": false,
             "is_container": true,
         }),
-    );
-    let _ = app.emit("session-connected", child_connected);
-    state
-        .session_store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .activate_data_plane(&channel_id)?;
+    )?;
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity.for_session(channel_id.clone()),
+        child_connected,
+    )?;
     log::info!(
         "Local Shell 父会话已连接: {} (child: {})",
         parent_id,

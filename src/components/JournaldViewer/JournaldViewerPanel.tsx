@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useSession } from "../../context/SessionContext";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
 import Icon from "../common/Icon";
 import { useJournaldViewer } from "./hooks/useJournaldViewer";
@@ -32,12 +33,19 @@ function entryDomKey(entry: JournalEntry, index: number): string {
   return `fallback-${encodeURIComponent(entry.realtimeTimestamp ?? "0")}-${index}`;
 }
 
-export default function JournaldViewerPanel({
+export default function JournaldViewerPanel(props: JournaldViewerPanelProps) {
+  const { state } = useSession();
+  const runtimeId = state.tabs.find(tab => tab.id === props.sessionId)?.runtimeId ?? null;
+  return <JournaldViewerContent key={`${props.sessionId}:${runtimeId}`} {...props} runtimeId={runtimeId} />;
+}
+
+function JournaldViewerContent({
   sessionId,
   isConnected,
-}: JournaldViewerPanelProps) {
+  runtimeId,
+}: JournaldViewerPanelProps & { runtimeId: string | null }) {
   const { t } = useTranslation();
-  const jvd = useJournaldViewer(sessionId, isConnected);
+  const jvd = useJournaldViewer(sessionId, runtimeId, isConnected);
   const logListRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const expandKeyRef = useRef<string | null>(null);

@@ -21,7 +21,7 @@ function formatHostPort(host: string, port: number): string {
 }
 
 const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
-  activeTab?.state === "connected" || activeTab?.state === "transferring";
+  activeTab?.state === "connected";
 
 export const sshPlugin = definePlugin({
   manifest: manifestJson as PluginManifest,

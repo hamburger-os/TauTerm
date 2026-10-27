@@ -13,3 +13,5 @@ pub use error::SessionError;
 pub use io::{AutomationIo, AutomationRx, AutomationRxEvent, SessionIo, SessionIoError};
 pub use runtime::SessionDataPlane;
 pub use state::DisconnectInfo;
+mod identity;
+pub use identity::{RuntimeId, RuntimeIdentity};

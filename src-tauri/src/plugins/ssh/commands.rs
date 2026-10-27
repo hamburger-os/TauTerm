@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::kernel::session_store::{
     ContainerSessionCreateOptions, ContainerSessionRuntime, SessionState,
@@ -94,7 +94,7 @@ async fn connect_session(
         .ok_or_else(|| "SSH 连接缺少 DataPlane".to_string())?;
 
     // 1. 创建容器父 session（无 I/O loop）
-    let parent_id = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
 
         store.create_container_session(
@@ -119,21 +119,31 @@ async fn connect_session(
             },
         )?
     };
+    let parent_id = runtime_identity.session_id.clone();
 
     // 2. 建立首个 PTY、验证运行态并激活 DataPlane。父 Session 创建后到凭据提交前，
     // 任意失败都统一回滚父 Session，避免分散的半连接清理分支。
     let setup_result: Result<_, String> = async {
-        let host_key_fingerprint = state
-            .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
-            .runtime(&parent_id)
-            .and_then(|runtime| runtime.host_key_fingerprint.clone());
+        let ssh_runtime =
+            crate::plugin_application::capture_session_runtime(&state, &runtime_identity, || {
+                state
+                    .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
+                    .runtime(&parent_id)
+            })?;
+        let host_key_fingerprint = ssh_runtime.host_key_fingerprint.clone();
         if let Some(ref fp) = host_key_fingerprint {
             log::info!("SSH 主机密钥指纹: {}", fp);
         }
 
-        let channel0_id =
-            create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
-                .await?;
+        let channel0_id = create_terminal_sub_channel(
+            &app,
+            &state,
+            &runtime_identity,
+            channel_for_ch0,
+            false,
+            false,
+        )
+        .await?;
 
         let (actual_name, actual_params) = {
             let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -148,12 +158,6 @@ async fn connect_session(
 
         let channel0_connected =
             terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
-
-        state
-            .session_store
-            .lock()
-            .map_err(|e| e.to_string())?
-            .activate_data_plane(&channel0_id)?;
 
         // 凭据提交是连接事务的最后一个可失败步骤。失败时外层统一关闭父 Session。
         if let Some(pending) = pending_ssh_credential {
@@ -176,7 +180,10 @@ async fn connect_session(
             Err(error) => {
                 log::error!("SSH 连接事务失败，回滚父会话 {}: {}", parent_id, error);
                 if let Ok(mut store) = state.session_store.lock() {
-                    if let Err(cleanup_error) = store.close_session(&parent_id) {
+                    if let Err(cleanup_error) = store
+                        .close_if_current(&runtime_identity)
+                        .map(|cleanup| cleanup.schedule())
+                    {
                         log::warn!(
                             "SSH 连接事务回滚父会话失败 {}: {}",
                             parent_id,
@@ -203,10 +210,10 @@ async fn connect_session(
         channel0_id
     );
 
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": parent_id,
             "endpoint": endpoint,
             "connection_type": "ssh",
             "plugin_id": "ssh",
@@ -222,8 +229,12 @@ async fn connect_session(
             "host_key_fingerprint": host_key_fingerprint,
             "is_container": true,
         }),
-    );
-    let _ = app.emit("session-connected", channel0_connected);
+    )?;
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity.for_session(channel0_id.clone()),
+        channel0_connected,
+    )?;
 
     Ok(parent_id)
 }
@@ -333,8 +344,20 @@ pub fn reset_ssh_known_hosts(state: tauri::State<'_, AppState>) -> Result<(), St
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JournaldStreamRequest {
+    pub session_id: String,
+    pub runtime_id: crate::session::RuntimeId,
+    pub level: Option<String>,
+    pub keyword: Option<String>,
+    pub unit: Option<String>,
+    pub kernel_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JournaldQueryRequest {
     pub session_id: String,
+    pub runtime_id: crate::session::RuntimeId,
     pub level: Option<String>,
     pub keyword: Option<String>,
     pub unit: Option<String>,
@@ -349,6 +372,7 @@ pub struct JournaldQueryRequest {
 #[serde(rename_all = "camelCase")]
 pub struct JournaldExportRequest {
     pub session_id: String,
+    pub runtime_id: crate::session::RuntimeId,
     pub file_path: String,
     pub level: Option<String>,
     pub keyword: Option<String>,
@@ -371,19 +395,32 @@ fn get_ssh_runtime(
     state: &State<'_, AppState>,
     session_id: &str,
 ) -> Result<std::sync::Arc<SshRuntime>, String> {
-    let parent_id = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let parent_id = store
-            .resolve_parent_id(session_id)
-            .ok_or_else(|| store.session_not_found(session_id))?;
-        if store
-            .get_session(&parent_id)
-            .is_some_and(|h| h.state == SessionState::Disconnected)
-        {
-            return Err("会话已断开".to_string());
-        }
-        parent_id
-    };
+    capture_ssh_runtime(state, session_id, None)
+}
+
+fn capture_ssh_runtime(
+    state: &State<'_, AppState>,
+    session_id: &str,
+    expected: Option<crate::session::RuntimeId>,
+) -> Result<std::sync::Arc<SshRuntime>, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let identity = store
+        .runtime_identity(session_id)
+        .ok_or_else(|| store.session_not_found(session_id))?;
+    if expected.is_some_and(|id| id != identity.runtime_id)
+        || !store.runtime_is_connected(&identity)
+    {
+        return Err("SSH 会话运行时已变化或断开".into());
+    }
+    let parent_id = store
+        .resolve_parent_id(session_id)
+        .ok_or_else(|| store.session_not_found(session_id))?;
+    if store
+        .get_session(&parent_id)
+        .is_some_and(|h| h.state == SessionState::Disconnected)
+    {
+        return Err("会话已断开".to_string());
+    }
     state
         .plugin::<crate::plugins::ssh::SshAdapter>(crate::plugins::ssh::PLUGIN_ID)
         .runtime(&parent_id)
@@ -517,18 +554,22 @@ pub async fn get_ssh_home_dir(
 /// 启动 journald 实时流式追踪
 ///
 /// 在远程 SSH 会话上打开 exec 通道，执行 `journalctl -o json -f`，
-/// spawn tokio task 循环读取并为每条日志 emit `journald:entry` 事件。
+/// spawn tokio task 读取并批量发布 `journald:batch` 事件。
 #[tauri::command]
 pub async fn start_journald_stream(
     app: AppHandle,
     state: State<'_, AppState>,
-    session_id: String,
-    level: Option<String>,
-    keyword: Option<String>,
-    unit: Option<String>,
-    kernel_only: Option<bool>,
+    request: JournaldStreamRequest,
 ) -> Result<(), String> {
-    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    let JournaldStreamRequest {
+        session_id,
+        runtime_id,
+        level,
+        keyword,
+        unit,
+        kernel_only,
+    } = request;
+    let ssh_runtime = capture_ssh_runtime(&state, &session_id, Some(runtime_id))?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -538,9 +579,13 @@ pub async fn start_journald_stream(
         until: None,
     };
     crate::plugins::ssh::journald::start_journald_stream(
+        &ssh_runtime.journald,
         &ssh_runtime.session,
         app,
-        session_id,
+        crate::session::RuntimeIdentity {
+            session_id,
+            runtime_id,
+        },
         &filters,
     )
     .await
@@ -550,10 +595,16 @@ pub async fn start_journald_stream(
 ///
 /// 设置对应 session 的 cancel 标志，使 tokio 流式循环优雅退出。
 #[tauri::command]
-pub async fn stop_journald_stream(session_id: String) -> Result<(), String> {
+pub async fn stop_journald_stream(
+    state: State<'_, AppState>,
+    session_id: String,
+    runtime_id: crate::session::RuntimeId,
+) -> Result<(), String> {
     // 确认式停止：等待后端任务真正退出并释放注册表，
     // 保证返回后前端可立即重新开始（消除"已在运行中"窗口期）
-    crate::plugins::ssh::journald::stop_journald_stream_confirm(&session_id).await;
+    let runtime = capture_ssh_runtime(&state, &session_id, Some(runtime_id))?;
+    crate::plugins::ssh::journald::stop_journald_stream_confirm(&runtime.journald, &session_id)
+        .await;
     Ok(())
 }
 
@@ -565,6 +616,7 @@ pub async fn journald_query_cmd(
 ) -> Result<crate::plugins::ssh::journald::JournaldQueryResponse, String> {
     let JournaldQueryRequest {
         session_id,
+        runtime_id,
         level,
         keyword,
         unit,
@@ -574,7 +626,7 @@ pub async fn journald_query_cmd(
         cursor,
         limit,
     } = request;
-    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    let ssh_runtime = capture_ssh_runtime(&state, &session_id, Some(runtime_id))?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -613,6 +665,7 @@ pub async fn start_journald_export(
 ) -> Result<(), String> {
     let JournaldExportRequest {
         session_id,
+        runtime_id,
         file_path,
         level,
         keyword,
@@ -621,7 +674,7 @@ pub async fn start_journald_export(
         since,
         until,
     } = request;
-    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    let ssh_runtime = capture_ssh_runtime(&state, &session_id, Some(runtime_id))?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -631,9 +684,13 @@ pub async fn start_journald_export(
         until,
     };
     crate::plugins::ssh::journald::start_journald_export(
+        &ssh_runtime.journald,
         &ssh_runtime.session,
         app,
-        session_id,
+        crate::session::RuntimeIdentity {
+            session_id,
+            runtime_id,
+        },
         &filters,
         file_path,
     )
@@ -644,7 +701,12 @@ pub async fn start_journald_export(
 ///
 /// 设置对应 session 的 cancel 标志，使导出循循环优雅退出。
 #[tauri::command]
-pub fn stop_journald_export(session_id: String) -> Result<(), String> {
-    crate::plugins::ssh::journald::stop_journald_export(&session_id);
+pub fn stop_journald_export(
+    state: State<'_, AppState>,
+    session_id: String,
+    runtime_id: crate::session::RuntimeId,
+) -> Result<(), String> {
+    let runtime = capture_ssh_runtime(&state, &session_id, Some(runtime_id))?;
+    crate::plugins::ssh::journald::stop_journald_export(&runtime.journald, &session_id);
     Ok(())
 }

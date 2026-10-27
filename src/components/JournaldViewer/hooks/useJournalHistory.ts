@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "../../../context/SessionContext";
 import type { JournalEntry, JournaldErrorPayload, JournaldFilter } from "../types";
 import { normalizeJournaldError, queryJournalHistory } from "./journaldClient";
 
@@ -17,8 +18,10 @@ export interface UseJournalHistoryReturn {
 
 export function useJournalHistory(
   sessionId: string,
+  runtimeId: string | null,
   isConnected: boolean,
 ): UseJournalHistoryReturn {
+  const { isSessionRuntimeCurrent } = useSession();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<JournaldErrorPayload | null>(null);
@@ -51,7 +54,7 @@ export function useJournalHistory(
 
   const query = useCallback(
     async (filter: JournaldFilter, append = false) => {
-      if (!isConnected) return;
+      if (!isConnected || !runtimeId || !isSessionRuntimeCurrent(sessionId, runtimeId)) return;
       const cursor = append ? nextCursorRef.current : null;
       if (append && !cursor) return;
 
@@ -59,8 +62,8 @@ export function useJournalHistory(
       setError(null);
       const generation = ++generationRef.current;
       try {
-        const response = await queryJournalHistory(sessionId, filter, cursor);
-        if (generation !== generationRef.current) return;
+        const response = await queryJournalHistory(sessionId, runtimeId, filter, cursor);
+        if (generation !== generationRef.current || !isSessionRuntimeCurrent(sessionId, runtimeId)) return;
 
         if (append) {
           setEntries((previous) => previous.concat(response.entries));
@@ -73,17 +76,21 @@ export function useJournalHistory(
         setNextCursor(response.next_cursor);
         setHasMore(response.has_more);
       } catch (queryError) {
-        if (generation === generationRef.current) {
+        if (generation === generationRef.current && isSessionRuntimeCurrent(sessionId, runtimeId)) {
           setError(normalizeJournaldError(queryError));
         }
       } finally {
-        if (generation === generationRef.current) {
+        if (generation === generationRef.current && isSessionRuntimeCurrent(sessionId, runtimeId)) {
           setLoading(false);
         }
       }
     },
-    [isConnected, sessionId],
+    [isConnected, sessionId, runtimeId, isSessionRuntimeCurrent],
   );
+
+  useEffect(() => {
+    return () => { ++generationRef.current; };
+  }, []);
 
   useEffect(() => {
     if (!isConnected) {

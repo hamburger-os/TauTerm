@@ -189,6 +189,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
                 key={item.id}
                 type="button"
                 role="menuitem"
+                data-testid={`context-action-${item.id}`}
                 tabIndex={-1}
                 className={`${styles.menuItem} ${item.danger ? styles.danger : ""} ${item.disabled ? styles.disabled : ""}`}
                 onClick={() => {

@@ -87,7 +87,7 @@ export interface StatusBarContext {
   activeTab: StatusBarTab | null;
 }
 
-export type StatusBarSessionState = "disconnected" | "connecting" | "connected" | "transferring";
+export type StatusBarSessionState = import("./session-lifecycle").ConnectionStatus;
 
 export interface StatusBarTab {
   id: string;
@@ -128,7 +128,8 @@ export interface PluginSendContext {
   sessionId: string;
   params: Record<string, unknown>;
   data: string | Uint8Array;
-  sendDefault: (sessionId: string, data: string | Uint8Array) => Promise<void>;
+  runtimeId: string;
+  sendDefault: (sessionId: string, data: string | Uint8Array) => Promise<Uint8Array>;
 }
 
 export interface PluginRuntimePresentationContext {

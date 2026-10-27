@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useSession } from '../../../context/SessionContext';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import {
   isManagedTransferTerminalPhase,
@@ -94,6 +95,12 @@ export function useFileManager(
   isConnected: boolean,
 ): UseFileManagerReturn {
   const { getTaskForSession } = useTransfer();
+  const { state: sessions } = useSession();
+  const runtimeId = sessions.tabs.find(tab => tab.id === sessionId)?.runtimeId;
+  const requireRuntimeId = useCallback(() => {
+    if (!runtimeId) throw new Error('Session runtime is not connected');
+    return runtimeId;
+  }, [runtimeId]);
   const transferTask = getTaskForSession(sessionId);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -216,13 +223,14 @@ export function useFileManager(
     ): Promise<TransferStartAck> => {
       return startFileTransfer('send', {
         sessionId,
+        runtimeId: requireRuntimeId(),
         protocolOptions: { protocol: 'sftp' },
         filePaths: localPaths,
         remoteDir,
         overwritePolicy,
       });
     },
-    [sessionId],
+    [sessionId, requireRuntimeId],
   );
 
   const uploadFile = useCallback(
@@ -265,6 +273,7 @@ export function useFileManager(
           'receive',
           {
             sessionId,
+            runtimeId: requireRuntimeId(),
             protocolOptions: { protocol: 'sftp' },
             downloadDir,
             remotePaths,
@@ -278,7 +287,7 @@ export function useFileManager(
         setError(`Download failed: ${downloadError}`);
       }
     },
-    [sessionId],
+    [sessionId, requireRuntimeId],
   );
 
   const downloadDirectory = useCallback(
@@ -288,6 +297,7 @@ export function useFileManager(
           'receive',
           {
             sessionId,
+            runtimeId: requireRuntimeId(),
             protocolOptions: { protocol: 'sftp' },
             downloadDir: localDir,
             remotePaths: [remoteDir],
@@ -301,7 +311,7 @@ export function useFileManager(
         throw downloadError;
       }
     },
-    [sessionId],
+    [sessionId, requireRuntimeId],
   );
 
   // 默认策略仍为每 Session 单活动任务，因此目录批量下载按目录顺序执行。
@@ -316,6 +326,7 @@ export function useFileManager(
             'receive',
             {
               sessionId,
+              runtimeId: requireRuntimeId(),
               protocolOptions: { protocol: 'sftp' },
               downloadDir: localRootDir,
               remotePaths: [entry.path],
@@ -334,7 +345,7 @@ export function useFileManager(
 
       return failed;
     },
-    [sessionId],
+    [sessionId, requireRuntimeId],
   );
 
   // 传输终态来自统一 TransferContext。文件管理器不再单独监听 backend finished 事件；

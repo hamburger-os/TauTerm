@@ -9,6 +9,7 @@ pub const PLUGIN_ID: &str = "network";
 
 pub(crate) mod commands;
 
+use crate::session::RuntimeIdentity;
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -306,7 +307,6 @@ impl BlockingByteStream for NetworkMuxDriver {
 /// Protocol-specific service for listener lifecycle, UDP addressing and TCP peer registry.
 pub struct NetworkRuntime {
     running: Arc<AtomicBool>,
-    session_id: Mutex<Option<String>>,
     max_clients: usize,
     tcp_client: Mutex<Option<TcpDriver>>,
     tcp_listener: Mutex<Option<TcpListenerTransport>>,
@@ -326,7 +326,7 @@ impl SessionAttach for RuntimeAttach {
         self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 
@@ -340,7 +340,6 @@ impl NetworkRuntime {
     ) -> Self {
         Self {
             running: Arc::new(AtomicBool::new(true)),
-            session_id: Mutex::new(None),
             max_clients,
             tcp_client: Mutex::new(None),
             tcp_listener: Mutex::new(None),
@@ -352,8 +351,7 @@ impl NetworkRuntime {
         }
     }
 
-    pub fn start(&self, app: tauri::AppHandle, session_id: &str) -> Result<(), String> {
-        *self.session_id.lock().map_err(|error| error.to_string())? = Some(session_id.to_string());
+    pub fn start(&self, app: tauri::AppHandle, identity: &RuntimeIdentity) -> Result<(), String> {
         let mut spawned = 0usize;
 
         if let Some(driver) = self
@@ -364,7 +362,7 @@ impl NetworkRuntime {
         {
             register_tcp_peer(
                 &app,
-                session_id,
+                identity,
                 driver,
                 self.encoding.clone(),
                 self.data_mode.clone(),
@@ -381,7 +379,7 @@ impl NetworkRuntime {
             .take()
         {
             let app = app.clone();
-            let session_id = session_id.to_string();
+            let identity = identity.clone();
             let running = self.running.clone();
             let max_clients = self.max_clients;
             let encoding = self.encoding.clone();
@@ -398,7 +396,7 @@ impl NetworkRuntime {
                             }
                             if let Err(error) = register_tcp_peer(
                                 &app,
-                                &session_id,
+                                &identity,
                                 driver,
                                 encoding.clone(),
                                 data_mode.clone(),
@@ -428,7 +426,7 @@ impl NetworkRuntime {
         {
             let socket = Arc::new(socket.try_clone().map_err(|error| error.to_string())?);
             let app = app.clone();
-            let session_id = session_id.to_string();
+            let identity = identity.clone();
             let running = self.running.clone();
             let encoding = self.encoding.clone();
             let data_mode = self.data_mode.clone();
@@ -440,7 +438,7 @@ impl NetworkRuntime {
                         Ok(Some((n, source))) => {
                             emit_udp_datagram(
                                 &app,
-                                &session_id,
+                                &identity,
                                 &encoding,
                                 &data_mode,
                                 source,
@@ -505,13 +503,14 @@ fn client_limit_reached(max_clients: usize, connected_peers: usize) -> bool {
 
 fn register_tcp_peer(
     app: &tauri::AppHandle,
-    parent_id: &str,
+    parent_identity: &RuntimeIdentity,
     driver: TcpDriver,
     encoding: String,
     data_mode: String,
     core: Arc<NetworkCore>,
     mirror_tx: mpsc::Sender<Vec<u8>>,
 ) -> Result<String, String> {
+    let parent_id = parent_identity.session_id.as_str();
     let peer_addr = driver
         .peer_addr()
         .map(|value| value.to_string())
@@ -522,6 +521,7 @@ fn register_tcp_peer(
         .unwrap_or_else(|_| "unknown".to_string());
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
     let channel_id = uuid::Uuid::new_v4().to_string();
+    let child_identity = parent_identity.for_session(channel_id.clone());
     let index = core.next_peer_index.fetch_add(1, Ordering::Relaxed);
     let peer_name = format!("Peer {}", index + 1);
     let io = Arc::new(SessionIo::new(
@@ -545,20 +545,21 @@ fn register_tcp_peer(
         let _ = app_data.emit(
             "session-data",
             serde_json::json!({
-                "session_id": batched.session_id,
+                "session_id": batched.identity.session_id,
+                "runtime_id": batched.identity.runtime_id,
                 "data_b64": batched.data_b64,
             }),
         );
     });
     let encoding_log = encoding.clone();
     let data_mode_log = data_mode.clone();
-    let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
+    let on_data: Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send> = Box::new(move |identity, data| {
         let payload = data.clone();
         let mirror_payload = data.clone();
-        batcher.push(session_id.clone(), data);
+        batcher.push(identity.clone(), data);
         let _ = mirror_tx.send(mirror_payload);
         let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
-            session_id,
+            session_id: identity.session_id,
             direction: DataDirection::RX,
             stream: None,
             data_mode: data_mode_log.clone(),
@@ -569,53 +570,61 @@ fn register_tcp_peer(
     });
 
     let app_disconnect = app.clone();
-    let parent_for_disconnect = parent_id.to_string();
+    let parent_for_disconnect = parent_identity.clone();
     let peer_for_disconnect = channel_id.clone();
     let io_for_disconnect = io.clone();
     let core_for_disconnect = core.clone();
     let disconnect_parent = core.role == "client";
-    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> = Box::new(move |_id, info| {
-        core_for_disconnect.mark_peer_disconnected(&peer_for_disconnect);
-        let mut parent_was_disconnected = false;
-        if let Ok(mut store) = app_disconnect
-            .state::<crate::AppState>()
-            .session_store
-            .lock()
-        {
-            store.mark_sub_disconnected(
-                &parent_for_disconnect,
-                &peer_for_disconnect,
-                info.retain_terminal,
-            );
-            if disconnect_parent
-                && store.session_state(&parent_for_disconnect) == Some(SessionState::Connected)
+    let on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send> =
+        Box::new(move |_id, info| {
+            core_for_disconnect.mark_peer_disconnected(&peer_for_disconnect);
+            let mut parent_was_disconnected = false;
+            if let Ok(mut store) = app_disconnect
+                .state::<crate::AppState>()
+                .session_store
+                .lock()
             {
-                store.mark_disconnected(&parent_for_disconnect);
-                parent_was_disconnected = true;
+                if !store.mark_sub_disconnected(
+                    &parent_for_disconnect,
+                    &peer_for_disconnect,
+                    info.retain_terminal,
+                ) {
+                    return;
+                }
+                if disconnect_parent
+                    && store.session_state(&parent_for_disconnect.session_id)
+                        == Some(SessionState::Connected)
+                {
+                    if let Some(cleanup) = store.mark_disconnected(&parent_for_disconnect) {
+                        cleanup.schedule();
+                        parent_was_disconnected = true;
+                    }
+                }
             }
-        }
-        let _ = app_disconnect.emit(
-            "netdbg-peer-left",
-            serde_json::json!({
-                "session_id": parent_for_disconnect,
-                "peer_id": peer_for_disconnect,
-                "tx_bytes": io_for_disconnect.tx_bytes(),
-                "rx_bytes": io_for_disconnect.rx_bytes(),
-            }),
-        );
-        if parent_was_disconnected {
             let _ = app_disconnect.emit(
-                "session-disconnected",
+                "netdbg-peer-left",
                 serde_json::json!({
-                    "session_id": parent_for_disconnect,
-                    "reason": info.reason,
-                    "disconnect_info": info,
+                    "session_id": parent_for_disconnect.session_id,
+                    "runtime_id": parent_for_disconnect.runtime_id,
+                    "peer_id": peer_for_disconnect,
+                    "tx_bytes": io_for_disconnect.tx_bytes(),
+                    "rx_bytes": io_for_disconnect.rx_bytes(),
                 }),
             );
-        }
-    });
+            if parent_was_disconnected {
+                let _ = app_disconnect.emit(
+                    "session-disconnected",
+                    serde_json::json!({
+                        "session_id": parent_for_disconnect.session_id,
+                    "runtime_id": parent_for_disconnect.runtime_id,
+                        "reason": info.reason,
+                        "disconnect_info": info,
+                    }),
+                );
+            }
+        });
     let data_plane =
-        SessionDataPlane::attach_paused(runtime, channel_id.clone(), on_data, on_disconnect)
+        SessionDataPlane::attach_paused(runtime, child_identity.clone(), on_data, on_disconnect)
             .map_err(|error| error.to_string())?;
     let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
@@ -626,7 +635,7 @@ fn register_tcp_peer(
     );
     SessionStore::spawn_stats_collector(
         app.clone(),
-        channel_id.clone(),
+        child_identity.clone(),
         io.clone(),
         connected_at,
         stats_cancel_flag.clone(),
@@ -672,6 +681,7 @@ fn register_tcp_peer(
         "netdbg-peer-joined",
         serde_json::json!({
             "session_id": parent_id,
+            "runtime_id": parent_identity.runtime_id,
             "peer_id": channel_id,
             "peer_name": peer_name,
             "peer_addr": peer_addr,
@@ -682,13 +692,13 @@ fn register_tcp_peer(
         .session_store
         .lock()
         .map_err(|error| error.to_string())?
-        .activate_data_plane(&channel_id)?;
+        .activate_data_plane(&child_identity)?;
     Ok(channel_id)
 }
 
 fn emit_udp_datagram(
     app: &tauri::AppHandle,
-    session_id: &str,
+    identity: &RuntimeIdentity,
     encoding: &str,
     data_mode: &str,
     source: SocketAddr,
@@ -697,7 +707,8 @@ fn emit_udp_datagram(
     let _ = app.emit(
         "session-data",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": identity.session_id,
+            "runtime_id": identity.runtime_id,
             "data_b64": base64_encode(datagram),
             "source_addr": source.to_string(),
         }),
@@ -706,7 +717,7 @@ fn emit_udp_datagram(
         let _ = engine
             .sender()
             .try_send(LogEntry::SessionData(DataLogEntry {
-                session_id: session_id.to_string(),
+                session_id: identity.session_id.clone(),
                 direction: DataDirection::RX,
                 stream: None,
                 data_mode: data_mode.to_string(),

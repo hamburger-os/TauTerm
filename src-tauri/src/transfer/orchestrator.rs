@@ -17,6 +17,7 @@ use crate::kernel::file_transfer::{
 };
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::kernel::session_store::SessionState;
+use crate::session::{RuntimeId, RuntimeIdentity};
 use crate::transfer::config::{ReceiveProtocolOptions, SendProtocolOptions};
 use crate::transfer::panic_guard::PanicGuard;
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -26,6 +27,7 @@ use crate::AppState;
 
 pub struct SendContext {
     pub session_id: String,
+    pub runtime_id: RuntimeId,
     pub files: Vec<FileInfo>,
     pub remote_dir: Option<String>,
     pub options: FileTransferOptions,
@@ -36,6 +38,7 @@ pub struct SendContext {
 
 pub struct ReceiveContext {
     pub session_id: String,
+    pub runtime_id: RuntimeId,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
     pub options: FileTransferOptions,
@@ -46,6 +49,7 @@ pub struct ReceiveContext {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TransferStartAck {
+    pub runtime_id: RuntimeId,
     pub transfer_id: String,
 }
 
@@ -87,25 +91,33 @@ pub fn spawn_progress_broadcaster(
     mut rx: UnboundedReceiver<UnifiedProgress>,
     session_id: String,
     transfer_id: String,
+    runtime_id: RuntimeId,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(mut progress) = rx.recv().await {
             progress.session_id = session_id.clone();
             progress.transfer_id = transfer_id.clone();
+            progress.runtime_id = runtime_id;
             let _ = app.emit("file-transfer:progress", &progress);
         }
     })
 }
 
-fn restore_session_state(app: &AppHandle, session_id: &str, transfer_id: &str) {
+fn release_transfer_slot(
+    app: &AppHandle,
+    session_id: &str,
+    transfer_id: &str,
+    runtime_id: RuntimeId,
+) {
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(mut store) = state.session_store.lock() {
-            if let Some(handle) = store.get_session_mut(session_id) {
-                let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                if handle.state != SessionState::Disconnected {
-                    handle.state = SessionState::Connected;
-                }
-            }
+            store.transfer_done(
+                &RuntimeIdentity {
+                    session_id: session_id.into(),
+                    runtime_id,
+                },
+                Some(transfer_id),
+            );
         }
     }
 }
@@ -147,6 +159,7 @@ fn emit_transfer_finished(
     client_session_id: &str,
     transfer_id: &str,
     protocol: &str,
+    runtime_id: RuntimeId,
     result: &Result<Vec<BatchFileResult>, FileTransferError>,
 ) {
     let (success, cancelled, error) = transfer_terminal_summary(result);
@@ -155,6 +168,7 @@ fn emit_transfer_finished(
         "file-transfer:finished",
         serde_json::json!({
             "session_id": client_session_id,
+            "runtime_id": runtime_id,
             "transfer_id": transfer_id,
             "protocol": protocol,
             "success": success,
@@ -171,16 +185,24 @@ fn emit_transfer_started(
     transfer_id: &str,
     protocol: &str,
     direction: &str,
+    runtime_id: RuntimeId,
 ) {
     let _ = app.emit(
         "file-transfer:started",
         serde_json::json!({
             "session_id": client_session_id,
+            "runtime_id": runtime_id,
             "transfer_id": transfer_id,
             "protocol": protocol,
             "direction": direction,
         }),
     );
+}
+
+struct InlineTransferLease {
+    io: Box<dyn crate::transfer::protocol::TransferIo>,
+    cancel: Arc<AtomicBool>,
+    runtime_id: RuntimeId,
 }
 
 pub struct InlineTransferOrchestrator {
@@ -235,20 +257,17 @@ impl InlineTransferOrchestrator {
         app: &AppHandle,
         session_id: &str,
         transfer_id: &str,
-    ) -> Result<
-        (
-            Box<dyn crate::transfer::protocol::TransferIo>,
-            Arc<AtomicBool>,
-        ),
-        String,
-    > {
-        let (io, cancel) = {
+        expected_runtime_id: RuntimeId,
+    ) -> Result<InlineTransferLease, String> {
+        let (io, cancel, runtime_id) = {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
             let io = {
                 let handle = store.get_session(session_id).ok_or(not_found)?;
-                if handle.state != SessionState::Connected {
+                if handle.state != SessionState::Connected
+                    || handle.runtime_id != expected_runtime_id
+                {
                     return Err("会话未连接".into());
                 }
                 handle
@@ -258,16 +277,21 @@ impl InlineTransferOrchestrator {
                     .ok_or("当前会话没有可独占的数据面")?
             };
             let cancel = store.reserve_inline_transfer(session_id, transfer_id)?;
-            let not_found = store.session_not_found(session_id);
-            let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-            handle.state = SessionState::Transferring;
-            (io, cancel)
+            let runtime_id = store
+                .runtime_identity(session_id)
+                .ok_or("会话不存在")?
+                .runtime_id;
+            (io, cancel, runtime_id)
         };
 
         match io.acquire_exclusive(format!("file-transfer:{transfer_id}")) {
-            Ok(lease) => Ok((Box::new(lease), cancel)),
+            Ok(lease) => Ok(InlineTransferLease {
+                io: Box::new(lease),
+                cancel,
+                runtime_id,
+            }),
             Err(error) => {
-                restore_session_state(app, session_id, transfer_id);
+                release_transfer_slot(app, session_id, transfer_id, runtime_id);
                 Err(format!("无法获取文件传输独占 I/O: {error}"))
             }
         }
@@ -286,17 +310,22 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             return Err(format!("传输协议 '{}' 只支持普通文件", self.pt));
         }
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let InlineTransferLease {
+            io,
+            cancel,
+            runtime_id,
+        } = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id, ctx.runtime_id)?;
         let protocol_handler = match self.create_send_protocol_handler(&ctx.protocol_options) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);
-                restore_session_state(&app, &ctx.session_id, &transfer_id);
+                release_transfer_slot(&app, &ctx.session_id, &transfer_id, runtime_id);
                 return Err(error);
             }
         };
         let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
+            runtime_id,
             transfer_id: transfer_id.clone(),
         };
         let broadcaster = spawn_progress_broadcaster(
@@ -304,6 +333,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             ctx.progress_rx,
             client_id.clone(),
             transfer_id.clone(),
+            runtime_id,
         );
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -320,7 +350,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 drop(progress_tx);
                 let _ = broadcaster.await;
                 drop(transfer);
-                restore_session_state(&task_app, &task_sid, &task_transfer_id);
+                release_transfer_slot(&task_app, &task_sid, &task_transfer_id, runtime_id);
                 return;
             }
             let result = transfer
@@ -335,12 +365,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             drop(progress_tx);
             let _ = broadcaster.await;
             drop(transfer);
-            restore_session_state(&task_app, &task_sid, &task_transfer_id);
+            release_transfer_slot(&task_app, &task_sid, &task_transfer_id, runtime_id);
             emit_transfer_finished(
                 &task_app,
                 &task_client_id,
                 &task_transfer_id,
                 task_protocol.as_str(),
+                runtime_id,
                 &result,
             );
         });
@@ -348,9 +379,22 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.register_transfer_task(&ctx.session_id, handle)?;
+            store.register_transfer_task(
+                &RuntimeIdentity {
+                    session_id: ctx.session_id.clone(),
+                    runtime_id,
+                },
+                handle,
+            )?;
         }
-        emit_transfer_started(&app, &client_id, &transfer_id, self.pt.as_str(), "send");
+        emit_transfer_started(
+            &app,
+            &client_id,
+            &transfer_id,
+            self.pt.as_str(),
+            "send",
+            runtime_id,
+        );
         let _ = start_tx.send(());
         Ok(ack)
     }
@@ -362,17 +406,22 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         client_id: String,
     ) -> Result<TransferStartAck, String> {
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let InlineTransferLease {
+            io,
+            cancel,
+            runtime_id,
+        } = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id, ctx.runtime_id)?;
         let protocol_handler = match self.create_receive_protocol_handler(&ctx.protocol_options) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);
-                restore_session_state(&app, &ctx.session_id, &transfer_id);
+                release_transfer_slot(&app, &ctx.session_id, &transfer_id, runtime_id);
                 return Err(error);
             }
         };
         let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
+            runtime_id,
             transfer_id: transfer_id.clone(),
         };
         let broadcaster = spawn_progress_broadcaster(
@@ -380,6 +429,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             ctx.progress_rx,
             client_id.clone(),
             transfer_id.clone(),
+            runtime_id,
         );
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -396,7 +446,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 drop(progress_tx);
                 let _ = broadcaster.await;
                 drop(transfer);
-                restore_session_state(&task_app, &task_sid, &task_transfer_id);
+                release_transfer_slot(&task_app, &task_sid, &task_transfer_id, runtime_id);
                 return;
             }
             let result = transfer
@@ -411,12 +461,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             drop(progress_tx);
             let _ = broadcaster.await;
             drop(transfer);
-            restore_session_state(&task_app, &task_sid, &task_transfer_id);
+            release_transfer_slot(&task_app, &task_sid, &task_transfer_id, runtime_id);
             emit_transfer_finished(
                 &task_app,
                 &task_client_id,
                 &task_transfer_id,
                 task_protocol.as_str(),
+                runtime_id,
                 &result,
             );
         });
@@ -424,9 +475,22 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.register_transfer_task(&ctx.session_id, handle)?;
+            store.register_transfer_task(
+                &RuntimeIdentity {
+                    session_id: ctx.session_id.clone(),
+                    runtime_id,
+                },
+                handle,
+            )?;
         }
-        emit_transfer_started(&app, &client_id, &transfer_id, self.pt.as_str(), "receive");
+        emit_transfer_started(
+            &app,
+            &client_id,
+            &transfer_id,
+            self.pt.as_str(),
+            "receive",
+            runtime_id,
+        );
         let _ = start_tx.send(());
         Ok(ack)
     }
@@ -445,22 +509,24 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let internal_id = ctx.session_id.clone();
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (ft, cancel_flag) = {
+        let (ft, cancel_flag, runtime_id) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
             let handle = store.get_session_mut(&internal_id).ok_or(not_found)?;
-            if handle.state != SessionState::Connected {
+            if handle.state != SessionState::Connected || handle.runtime_id != ctx.runtime_id {
                 return Err("会话未连接".into());
             }
             let ft = handle
                 .file_transfer
                 .clone()
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
+            let runtime_id = handle.runtime_id;
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
-            (ft, cancel_flag)
+            (ft, cancel_flag, runtime_id)
         };
         let protocol = ft.protocol().to_string();
         let ack = TransferStartAck {
+            runtime_id,
             transfer_id: transfer_id.clone(),
         };
         let broadcaster = spawn_progress_broadcaster(
@@ -468,6 +534,7 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
             ctx.progress_rx,
             client_id.clone(),
             transfer_id.clone(),
+            runtime_id,
         );
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -487,6 +554,7 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 task_client_id.clone(),
                 task_protocol.clone(),
                 task_transfer_id.clone(),
+                runtime_id,
             );
             if start_rx.await.is_err() {
                 drop(progress_tx);
@@ -510,15 +578,29 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 &task_client_id,
                 &task_transfer_id,
                 &task_protocol,
+                runtime_id,
                 &result,
             );
         });
 
         {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.register_transfer_task(&internal_id, handle)?;
+            store.register_transfer_task(
+                &RuntimeIdentity {
+                    session_id: internal_id.clone(),
+                    runtime_id,
+                },
+                handle,
+            )?;
         }
-        emit_transfer_started(&app, &client_id, &transfer_id, &protocol, "send");
+        emit_transfer_started(
+            &app,
+            &client_id,
+            &transfer_id,
+            &protocol,
+            "send",
+            runtime_id,
+        );
         let _ = start_tx.send(());
         Ok(ack)
     }
@@ -532,22 +614,24 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let internal_id = ctx.session_id.clone();
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (ft, cancel_flag) = {
+        let (ft, cancel_flag, runtime_id) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
             let handle = store.get_session_mut(&internal_id).ok_or(not_found)?;
-            if handle.state != SessionState::Connected {
+            if handle.state != SessionState::Connected || handle.runtime_id != ctx.runtime_id {
                 return Err("会话未连接".into());
             }
             let ft = handle
                 .file_transfer
                 .clone()
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
+            let runtime_id = handle.runtime_id;
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
-            (ft, cancel_flag)
+            (ft, cancel_flag, runtime_id)
         };
         let protocol = ft.protocol().to_string();
         let ack = TransferStartAck {
+            runtime_id,
             transfer_id: transfer_id.clone(),
         };
         let broadcaster = spawn_progress_broadcaster(
@@ -555,6 +639,7 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
             ctx.progress_rx,
             client_id.clone(),
             transfer_id.clone(),
+            runtime_id,
         );
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -574,6 +659,7 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 task_client_id.clone(),
                 task_protocol.clone(),
                 task_transfer_id.clone(),
+                runtime_id,
             );
             if start_rx.await.is_err() {
                 drop(progress_tx);
@@ -597,15 +683,29 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 &task_client_id,
                 &task_transfer_id,
                 &task_protocol,
+                runtime_id,
                 &result,
             );
         });
 
         {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.register_transfer_task(&internal_id, handle)?;
+            store.register_transfer_task(
+                &RuntimeIdentity {
+                    session_id: internal_id.clone(),
+                    runtime_id,
+                },
+                handle,
+            )?;
         }
-        emit_transfer_started(&app, &client_id, &transfer_id, &protocol, "receive");
+        emit_transfer_started(
+            &app,
+            &client_id,
+            &transfer_id,
+            &protocol,
+            "receive",
+            runtime_id,
+        );
         let _ = start_tx.send(());
         Ok(ack)
     }

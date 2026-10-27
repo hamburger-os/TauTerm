@@ -66,7 +66,7 @@ async fn connect_session(
         .await
         .map_err(|e| e.to_string())?;
     let session_name = name.unwrap_or_else(|| format!("TFTP :{}", endpoint));
-    let sid = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
@@ -90,10 +90,13 @@ async fn connect_session(
             },
         )?
     };
-    let runtime = state
-        .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
-        .runtime(&sid)
-        .ok_or_else(|| "TFTP runtime 注册失败".to_string())?;
+    let sid = runtime_identity.session_id.clone();
+    let runtime =
+        crate::plugin_application::capture_session_runtime(&state, &runtime_identity, || {
+            state
+                .plugin::<crate::plugins::tftp::TftpAdapter>(crate::plugins::tftp::PLUGIN_ID)
+                .runtime(&sid)
+        })?;
     if let Some(prev) = prev_params {
         match runtime.dynamic_params.lock() {
             Ok(mut value) => *value = prev,
@@ -103,14 +106,14 @@ async fn connect_session(
     if let Err(error) = tftp::try_start_server(&app, &runtime, &sid) {
         log::warn!("[TFTP] 服务端自动启动失败 (session={}): {}", sid, error);
     }
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": sid, "plugin_id": "tftp", "content_type": "custom",
             "endpoint": endpoint, "name": session_name, "connection_type": "tftp",
             "params": params, "send_bar_enabled": false, "transfer_enabled": false,
         }),
-    );
+    )?;
     Ok(sid)
 }
 
@@ -352,11 +355,4 @@ pub async fn tftp_get_status(
         file_root: String::new(),
         dynamic_params: TftpDynamicParams::default(),
     })
-}
-
-pub(crate) fn session_disconnected(app: &AppHandle, session_id: &str) {
-    let _ = app.emit(
-        "tftp-server-status",
-        serde_json::json!({ "session_id": session_id, "running": false }),
-    );
 }

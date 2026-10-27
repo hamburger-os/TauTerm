@@ -14,6 +14,8 @@
 //! - Base64 编码在 Rust 端开销极小（纯查表），JS 端 atob() 原生实现
 //! - 保留 flush 机制确保交互式输入（如按键）立即回显
 
+use crate::session::RuntimeIdentity;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -29,12 +31,12 @@ fn should_report_drop(total: u64) -> bool {
 
 #[derive(Debug)]
 pub struct BatchedData {
-    pub session_id: String,
+    pub identity: RuntimeIdentity,
     pub data_b64: String,
 }
 
 enum BatchCmd {
-    Push(String, Vec<u8>),
+    Push(RuntimeIdentity, Vec<u8>),
     Shutdown,
 }
 
@@ -64,7 +66,7 @@ impl DataBatcher {
     /// 入队显示数据。返回 Some(total_dropped) 表示本次因显示队列过载丢弃。
     ///
     /// 这是 Presentation Path 的受控降级，不代表线路/Recorder 数据可以静默丢失。
-    pub fn push(&self, session_id: String, data: Vec<u8>) -> Option<u64> {
+    pub fn push(&self, session_id: RuntimeIdentity, data: Vec<u8>) -> Option<u64> {
         if self.tx.try_send(BatchCmd::Push(session_id, data)).is_err() {
             let total = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             if should_report_drop(total) {
@@ -92,7 +94,7 @@ impl DataBatcher {
             window_start: Option<Instant>,
         }
 
-        let mut pending_map: std::collections::HashMap<String, Pending> =
+        let mut pending_map: std::collections::HashMap<RuntimeIdentity, Pending> =
             std::collections::HashMap::new();
 
         let window = Duration::from_millis(BATCH_WINDOW_MS);
@@ -129,7 +131,7 @@ impl DataBatcher {
                     if entry.buf.len() >= BATCH_FLUSH_THRESHOLD {
                         let buf = std::mem::take(&mut entry.buf);
                         emit_fn(BatchedData {
-                            session_id: session_id.clone(),
+                            identity: session_id.clone(),
                             data_b64: base64_encode(&buf),
                         });
                         pending_map.remove(&session_id);
@@ -139,7 +141,7 @@ impl DataBatcher {
                     for (sid, p) in pending_map.drain() {
                         if !p.buf.is_empty() {
                             emit_fn(BatchedData {
-                                session_id: sid,
+                                identity: sid,
                                 data_b64: base64_encode(&p.buf),
                             });
                         }
@@ -148,7 +150,7 @@ impl DataBatcher {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     let now = Instant::now();
-                    let expired: Vec<String> = pending_map
+                    let expired: Vec<RuntimeIdentity> = pending_map
                         .iter()
                         .filter_map(|(sid, p)| {
                             p.window_start.and_then(|s| {
@@ -165,7 +167,7 @@ impl DataBatcher {
                         if let Some(p) = pending_map.remove(&sid) {
                             if !p.buf.is_empty() {
                                 emit_fn(BatchedData {
-                                    session_id: sid,
+                                    identity: sid,
                                     data_b64: base64_encode(&p.buf),
                                 });
                             }
@@ -176,7 +178,7 @@ impl DataBatcher {
                     for (sid, p) in pending_map.drain() {
                         if !p.buf.is_empty() {
                             emit_fn(BatchedData {
-                                session_id: sid,
+                                identity: sid,
                                 data_b64: base64_encode(&p.buf),
                             });
                         }
@@ -286,14 +288,32 @@ mod tests {
                 .expect("test receiver should stay alive");
         });
 
-        batcher.push("s1".into(), b"hello".to_vec());
-        batcher.push("s1".into(), b" ".to_vec());
-        batcher.push("s1".into(), b"world".to_vec());
+        batcher.push(
+            RuntimeIdentity {
+                session_id: "s1".into(),
+                runtime_id: crate::session::RuntimeId(1),
+            },
+            b"hello".to_vec(),
+        );
+        batcher.push(
+            RuntimeIdentity {
+                session_id: "s1".into(),
+                runtime_id: crate::session::RuntimeId(1),
+            },
+            b" ".to_vec(),
+        );
+        batcher.push(
+            RuntimeIdentity {
+                session_id: "s1".into(),
+                runtime_id: crate::session::RuntimeId(1),
+            },
+            b"world".to_vec(),
+        );
 
         let got = emit_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("batch should be emitted within timeout");
-        assert_eq!(got.session_id, "s1");
+        assert_eq!(got.identity.session_id, "s1");
         assert_eq!(got.data_b64, base64_encode(b"hello world"));
 
         assert!(

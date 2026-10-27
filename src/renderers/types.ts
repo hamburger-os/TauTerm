@@ -2,7 +2,7 @@
  * 渲染器共享类型
  */
 
-export type TabState = "disconnected" | "connecting" | "connected" | "transferring" | "error";
+export type TabState = import("../core/session-lifecycle").ConnectionStatus;
 
 export interface TabInfo {
   id: string;

@@ -65,14 +65,14 @@ export default function NetworkConnectForm({ params, onChange, disabled = false 
       <div className={styles.grid2}>
         <div className={styles.field}>
           <label className={styles.label}>{t("network.transport")}</label>
-          <select className={`${styles.control} liquid-glass-input liquid-glass-select`} value={transport} onChange={event => update({ transport: event.target.value, ...(event.target.value === "udp" ? { data_mode: undefined } : { data_mode: p.data_mode ?? "text" }) })} disabled={disabled}>
+          <select className={`${styles.control} liquid-glass-input liquid-glass-select`} data-testid="network-transport" value={transport} onChange={event => update({ transport: event.target.value, ...(event.target.value === "udp" ? { data_mode: undefined } : { data_mode: p.data_mode ?? "text" }) })} disabled={disabled}>
             <option value="tcp">{t("network.transportTcp")}</option>
             <option value="udp">{t("network.transportUdp")}</option>
           </select>
         </div>
         <div className={styles.field}>
           <label className={styles.label}>{t("network.role")}</label>
-          <select className={`${styles.control} liquid-glass-input liquid-glass-select`} value={role} onChange={event => update({ role: event.target.value })} disabled={disabled}>
+          <select className={`${styles.control} liquid-glass-input liquid-glass-select`} data-testid="network-role" value={role} onChange={event => update({ role: event.target.value })} disabled={disabled}>
             <option value="client">{t("network.roleClient")}</option>
             <option value="server">{t("network.roleServer")}</option>
           </select>
@@ -83,22 +83,22 @@ export default function NetworkConnectForm({ params, onChange, disabled = false 
         <div className={styles.grid2}>
           <div className={styles.field}>
             <label className={styles.label}>{t("network.remoteHost")}</label>
-            <input className={`${styles.control} liquid-glass-input`} value={String(p.remote_host ?? "")} onChange={event => update({ remote_host: event.target.value })} placeholder={t("network.remoteHostPlaceholder")} disabled={disabled} />
+            <input className={`${styles.control} liquid-glass-input`} data-testid="network-remote-host" value={String(p.remote_host ?? "")} onChange={event => update({ remote_host: event.target.value })} placeholder={t("network.remoteHostPlaceholder")} disabled={disabled} />
           </div>
           <div className={styles.field}>
             <label className={styles.label}>{t("network.remotePort")}</label>
-            <input className={`${styles.control} liquid-glass-input`} type="number" min={1} max={65535} value={Number(p.remote_port ?? 8080)} onChange={event => update({ remote_port: Number(event.target.value) })} disabled={disabled} />
+            <input className={`${styles.control} liquid-glass-input`} type="number" min={1} max={65535} data-testid="network-remote-port" value={Number(p.remote_port ?? 8080)} onChange={event => update({ remote_port: Number(event.target.value) })} disabled={disabled} />
           </div>
         </div>
       ) : (
         <div className={styles.grid2}>
           <div className={styles.field}>
             <label className={styles.label}>{t("network.localHost")}</label>
-            <input className={`${styles.control} liquid-glass-input`} value={String(p.local_host ?? "0.0.0.0")} onChange={event => update({ local_host: event.target.value })} disabled={disabled} />
+            <input className={`${styles.control} liquid-glass-input`} data-testid="network-local-host" value={String(p.local_host ?? "0.0.0.0")} onChange={event => update({ local_host: event.target.value })} disabled={disabled} />
           </div>
           <div className={styles.field}>
             <label className={styles.label}>{t("network.localPort")}</label>
-            <input className={`${styles.control} liquid-glass-input`} type="number" min={1} max={65535} value={Number(p.local_port ?? 8080)} onChange={event => update({ local_port: Number(event.target.value) })} disabled={disabled} />
+            <input className={`${styles.control} liquid-glass-input`} type="number" min={1} max={65535} data-testid="network-local-port" value={Number(p.local_port ?? 8080)} onChange={event => update({ local_port: Number(event.target.value) })} disabled={disabled} />
           </div>
         </div>
       )}

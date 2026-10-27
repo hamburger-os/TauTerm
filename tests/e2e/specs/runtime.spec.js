@@ -1,5 +1,93 @@
+import { tcpFixture, udpFixture, availableTcpPort, tcpClient } from "../helpers/loopback.mjs";
+
+const testId = id => $(`[data-testid="${id}"]`);
+async function visibleTestId(id) {
+  let visible;
+  await browser.waitUntil(async () => {
+    for (const element of await $$(`[data-testid="${id}"]`)) {
+      if (await element.isDisplayed()) { visible = element; return true; }
+    }
+    return false;
+  }, { timeout: 10_000, timeoutMsg: `Visible control missing: ${id}` });
+  return visible;
+}
+async function sessionEntry(name) {
+  const entries = await $$('[data-testid="session-entry"]');
+  for (const entry of entries) if ((await entry.getText()).includes(name)) return entry;
+  throw new Error(`Session entry missing: ${name}`);
+}
+async function sessionAction(name, action) {
+  const entry = await sessionEntry(name);
+  await entry.click();
+  await entry.click({ button: "right" });
+  const item = testId(`context-action-${action}`);
+  await item.waitForDisplayed();
+  await item.click();
+  await $('[role="menu"]').waitForExist({ reverse: true });
+}
+async function createNetwork(name, transport, port, role = "client") {
+  await testId("new-session-button").click();
+  await testId("connection-type-network").click();
+  await testId("session-name").setValue(name);
+  await testId("network-transport").selectByAttribute("value", transport);
+  await testId("network-role").selectByAttribute("value", role);
+  await testId(`network-${role === "client" ? "remote" : "local"}-host`).setValue("127.0.0.1");
+  await testId(`network-${role === "client" ? "remote" : "local"}-port`).setValue(String(port));
+  await testId("save-session").click();
+  await testId("connect-dialog-overlay").waitForExist({ reverse: true });
+  await sessionAction(name, "connect");
+  try { await (await visibleTestId("send-input")).waitForEnabled(); }
+  catch (error) {
+    console.error("Connection diagnostics:", await runtimeSnapshot(name), await browser.execute(() => ({
+      inputs: [...document.querySelectorAll('[data-testid="send-input"]')].map(input => ({ disabled: input.disabled, visible: input.getBoundingClientRect().height > 0 })),
+      text: document.body.innerText.slice(-4000),
+    })));
+    throw error;
+  }
+}
+async function send(text) {
+  await (await visibleTestId("send-input")).setValue(text);
+  await (await visibleTestId("send-button")).click();
+}
+async function received(text) {
+  await browser.waitUntil(async () => (await (await visibleTestId("network-workspace")).getText()).includes(text), {
+    timeout: 10_000, timeoutMsg: `RX presentation missing: ${text}`,
+  });
+}
+async function runtimeSnapshot(name) {
+  return browser.executeAsync(async (sessionName, done) => {
+    try {
+      const tabs = await window.__TAURI_INTERNALS__.invoke("get_tabs");
+      const tab = tabs.find(item => item.name === sessionName);
+      done(tab ? { id: tab.id, runtimeId: tab.runtimeId, state: tab.state } : null);
+    } catch (error) { done({ error: String(error) }); }
+  }, name);
+}
+async function removeSession(name) {
+  const entry = await sessionEntry(name).catch(() => null);
+  if (!entry) return;
+  const runtime = await runtimeSnapshot(name);
+  if (runtime?.state === "connected") {
+    await sessionAction(name, "disconnect");
+    await (await visibleTestId("send-input")).waitForEnabled({ reverse: true });
+  }
+  await sessionAction(name, "delete");
+  const confirm = $('[role="alertdialog"] [data-action="confirm"]');
+  await confirm.waitForDisplayed();
+  await confirm.click();
+  await browser.waitUntil(async () => !(await sessionEntry(name).catch(() => null)), { timeout: 10_000 });
+}
+
 describe("TauTerm runtime smoke", () => {
   before(async () => {
+    await browser.waitUntil(async () => browser.execute(() => Boolean(window.__TAURI_INTERNALS__)), {
+      timeout: 20_000, timeoutMsg: "Tauri IPC bridge did not initialize",
+    });
+    const identifier = await browser.executeAsync(async done => {
+      try { done(await window.__TAURI_INTERNALS__.invoke("plugin:app|identifier")); }
+      catch (error) { done(String(error)); }
+    });
+    expect(identifier).toBe("com.tauterm.e2e");
     await browser.waitUntil(
       async () => browser.execute(() => document.readyState === "complete"),
       {
@@ -39,6 +127,12 @@ describe("TauTerm runtime smoke", () => {
       console.error("TauTerm startup diagnostics:", JSON.stringify(diagnostics, null, 2));
       throw error;
     }
+    const previousFixtures = [];
+    for (const entry of await $$('[data-testid="session-entry"]')) {
+      const name = (await entry.getText()).split("\n")[0].trim();
+      if (/^E2E (TCP|UDP|Server) \d+$/.test(name)) previousFixtures.push(name);
+    }
+    for (const name of previousFixtures) await removeSession(name);
   });
 
   it("renders the primary application shell without document overflow", async () => {
@@ -75,14 +169,7 @@ describe("TauTerm runtime smoke", () => {
     const dialog = await $('[data-testid="connect-dialog-overlay"]');
     await dialog.waitForDisplayed();
 
-    const selected = await browser.execute(() => {
-      const button = Array.from(document.querySelectorAll("button"))
-        .find(element => element.textContent?.includes("Modbus 调试助手"));
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      return true;
-    });
-    expect(selected).toBe(true);
+    await testId("connection-type-modbus").click();
 
     const form = await $('[data-testid="tauterm-modbus-connect-form"]');
     await form.waitForDisplayed();
@@ -92,6 +179,83 @@ describe("TauTerm runtime smoke", () => {
 
     await browser.keys(["Escape"]);
     await dialog.waitForDisplayed({ reverse: true });
+  });
+
+  it("receives early TCP bytes, confirms TX, handles remote EOF and reconnects the same saved Session", async () => {
+    const peer = await tcpFixture();
+    const name = `E2E TCP ${Date.now()}`;
+    try {
+      await createNetwork(name, "tcp", peer.port);
+      await received("GREETING-1");
+      const first = await runtimeSnapshot(name);
+      expect(first?.runtimeId).toMatch(/^[1-9]\d*$/);
+      await send("tcp-first");
+      await browser.waitUntil(() => peer.clients[0].received.includes("tcp-first"));
+      await received("ECHO:tcp-first");
+      peer.clients[0].socket.end();
+      await (await visibleTestId("send-input")).waitForEnabled({ reverse: true });
+      await sessionAction(name, "connect");
+      await (await visibleTestId("send-input")).waitForEnabled();
+      await received("GREETING-2");
+      const second = await runtimeSnapshot(name);
+      expect(second.id).toBe(first.id);
+      expect(BigInt(second.runtimeId) > BigInt(first.runtimeId)).toBe(true);
+      const staleWrite = await browser.executeAsync(async (id, runtimeId, done) => {
+        try {
+          await window.__TAURI_INTERNALS__.invoke("write_data", {
+            sessionId: id, runtimeId, data: Array.from(new TextEncoder().encode("STALE-WRITE")), transcode: false,
+          });
+          done("accepted");
+        } catch { done("rejected"); }
+      }, first.id, first.runtimeId);
+      expect(staleWrite).toBe("rejected");
+      expect(peer.clients[1].received).not.toContain("STALE-WRITE");
+      await send("tcp-second");
+      await browser.waitUntil(() => peer.clients[1]?.received.includes("tcp-second"));
+      await received("ECHO:tcp-second");
+      expect(peer.clients.length).toBe(2);
+    } finally {
+      try { await removeSession(name); } finally { await peer.close(); }
+    }
+  });
+
+  it("exchanges UDP datagrams and remains usable after disconnect/reconnect", async () => {
+    const peer = await udpFixture();
+    const name = `E2E UDP ${Date.now()}`;
+    try {
+      await createNetwork(name, "udp", peer.port);
+      await send("udp-first");
+      await browser.waitUntil(() => peer.received.some(data => data.includes("udp-first")));
+      await received("ECHO:udp-first");
+      await sessionAction(name, "disconnect");
+      await (await visibleTestId("send-input")).waitForEnabled({ reverse: true });
+      await sessionAction(name, "connect");
+      await (await visibleTestId("send-input")).waitForEnabled();
+      await send("udp-second");
+      await browser.waitUntil(() => peer.received.some(data => data.includes("udp-second")));
+      await received("ECHO:udp-second");
+    } finally {
+      try { await removeSession(name); } finally { await peer.close(); }
+    }
+  });
+
+  it("publishes TCP server peers before early data and closes active children with their parent", async () => {
+    const port = await availableTcpPort();
+    const name = `E2E Server ${Date.now()}`;
+    let peer;
+    try {
+      await createNetwork(name, "tcp", port, "server");
+      peer = await tcpClient(port);
+      await received("EARLY-PEER-DATA");
+      await send("server-reply");
+      await browser.waitUntil(() => peer.received.includes("server-reply"));
+      await sessionAction(name, "disconnect");
+      await browser.waitUntil(() => peer.socket.destroyed);
+      await (await visibleTestId("send-input")).waitForEnabled({ reverse: true });
+    } finally {
+      peer?.socket.destroy();
+      await removeSession(name);
+    }
   });
 
   after(async () => {

@@ -10,6 +10,12 @@
 
 ### Network Debug
 
+peer 注册、数据和退出绑定 [CORE.md](CORE.md) 的根连接身份；后台 child 数据面遵循根/child 发布屏障。前端 peer 列表只有一个查询入口，实时 peer 事件使较早的列表查询失效，删除后重新建立同 ID store 使用新的请求作用域；带旧身份的 peer/stats/data 事件不能覆盖当前实例。
+
+Network runtime store 同时拥有 TCP 分帧/流式解码、UDP 报文时间线与有界展示缓存；视图只投影同一快照，不再维护第二个 view store、监听依赖注册表或另一套 RX/TX 缓存。连接预检先等待插件全局数据监听就绪，因而 accept 后立即到达的首包也能在视图尚未挂载时保留。断连/删除清理实例的分帧定时器与解码器，迟到事件和查询不能重建已释放的 store。发送展示消费真实 ACK 返回的线上字节；UDP IPC 同样校验调用方捕获的运行身份。
+
+TCP server 的已关闭 peer 随历史保留接收路由，承接 DataBatcher 在 peer-left 之后投递的最后一批字节；显式清除历史或根会话结束时才移除路由。实时统计事件也使较早的 peer 查询失效，防止旧快照把已增长的计数回滚。
+
 TCP/UDP 使用统一的网络调试入口，但保持传输语义差异：
 
 - TCP Client 是单连接流；TCP Server 可以管理多个 peer；每个 TCP peer 由独立 `DataPlaneRuntime` 驱动并作为 Session 子连接注册；

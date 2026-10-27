@@ -17,8 +17,9 @@
  * - 看门狗注册表触发时自删条目，key 加会话前缀防跨会话冲突。
  * - 组件卸载只退订 React 订阅，不注销 Tauri 监听器（tab 切换不丢事件）。
  */
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { AsyncRequestScope, RuntimeEventCursor } from "../core/session-lifecycle";
 
 // ═══════════════════════════════════════════════════════════════════
 // 类型
@@ -75,8 +76,10 @@ const cleanupFns = new Map<string, () => void>();
 const releaseFns = new Map<string, () => void>();
 const apiCache = new Map<string, SessionStoreApi<unknown>>();
 const sessionOpts = new Map<string, PluginSessionStoreOptions<unknown>>();
-/** 注册代际：断连后重注册递增，用于废弃旧代在途的 init/getStatus 结果 */
-const generations = new Map<string, number>();
+/** Registration tokens never repeat, including release/recreate of the same saved Session ID. */
+const registrations = new Map<string, object>();
+const statusScopes = new Map<string, AsyncRequestScope>();
+const connections = new Map<string, RuntimeEventCursor>();
 /** 看门狗定时器（key 带 sessionId 前缀） */
 const watchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 let globalDisconnectReady: Promise<void> | null = null;
@@ -104,10 +107,11 @@ function clearSessionWatchdogs(sid: string): void {
 function ensureGlobalDisconnectListener(): Promise<void> {
   if (!globalDisconnectReady) {
     globalDisconnectReady = (async () => {
-      await listen<{ session_id: string }>("session-disconnected", (event) => {
+      await listen<{ session_id: string; runtime_id: string }>("session-disconnected", (event) => {
         const sid = event.payload.session_id;
         const opts = sessionOpts.get(sid);
-        if (!opts) return;
+        if (!opts || !connections.get(sid)?.accept(event.payload.runtime_id, false)) return;
+        statusScopes.get(sid)?.invalidate();
         const api = apiCache.get(sid);
         if (api) {
           const patch = opts.onSessionDisconnected?.(
@@ -122,6 +126,7 @@ function ensureGlobalDisconnectListener(): Promise<void> {
           cleanupFns.get(sid)?.();
           cleanupFns.delete(sid);
           sessionOpts.delete(sid);
+          registrations.delete(sid);
           clearSessionWatchdogs(sid);
         }
       });
@@ -147,38 +152,46 @@ function ensureGlobalDisconnectListener(): Promise<void> {
  */
 function ensureGlobalConnectListener(): Promise<void> {
   if (!globalConnectReady) {
-    globalConnectReady = (async () => {
-      await listen<{ session_id: string }>("session-connected", (event) => {
-        const sid = event.payload.session_id;
-        const opts = sessionOpts.get(sid);
-        if (!opts?.getStatus) return;
-        const api = apiCache.get(sid);
-        if (!api) return;
-        const gen = generations.get(sid);
-        opts
-          .getStatus(sid, api)
-          .then((patch) => {
-            if (patch && generations.get(sid) === gen) api.setState(patch);
-          })
-          .catch(() => {});
-      });
-    })().catch((e) => {
-      // 注册失败（IPC 抖动）：重置为 null 使下次挂载自动重试
-      console.error(
-        "[usePluginSessionStore] session-connected 注册失败，下次挂载将重试:",
-        e
-      );
+    globalConnectReady = listen<{ session_id: string; runtime_id: string }>("session-connected", event => {
+      const sid = event.payload.session_id;
+      if (!connections.get(sid)?.accept(event.payload.runtime_id, true)) return;
+      statusScopes.get(sid)?.invalidate();
+      refreshStatus(sid);
+    }).then(() => undefined).catch(error => {
+      console.error("[usePluginSessionStore] session-connected listener failed:", error);
       globalConnectReady = null;
     });
   }
   return globalConnectReady;
 }
 
-function makeApi<TState>(sessionId: string): SessionStoreApi<TState> {
+function refreshStatus(sessionId: string): void {
+  const opts = sessionOpts.get(sessionId);
+  const api = apiCache.get(sessionId);
+  const registration = registrations.get(sessionId);
+  const scope = statusScopes.get(sessionId);
+  if (!opts?.getStatus || !api || !registration || !scope) return;
+  const currentRequest = scope.begin();
+  const isCurrent = () => registrations.get(sessionId) === registration && currentRequest();
+  const guardedApi: SessionStoreApi<unknown> = {
+    ...api,
+    setState: patch => { if (isCurrent()) api.setState(patch); },
+    setWatchdog: (key, callback, timeout) => { if (isCurrent()) api.setWatchdog(key, callback, timeout); },
+    clearWatchdog: key => { if (isCurrent()) api.clearWatchdog(key); },
+  };
+  void Promise.resolve().then(() => opts.getStatus!(sessionId, guardedApi)).then(patch => {
+    if (patch && isCurrent()) api.setState(patch);
+  }).catch(() => {});
+}
+
+function makeApi<TState>(sessionId: string, registration: object): SessionStoreApi<TState> {
+  const initialSnapshot = stores.get(sessionId) as TState;
+  const isCurrent = () => registrations.get(sessionId) === registration;
   return {
     sessionId,
-    getState: () => (stores.get(sessionId) as TState | undefined) ?? (EMPTY_SNAPSHOT as TState),
+    getState: () => isCurrent() ? (stores.get(sessionId) as TState) : initialSnapshot,
     setState: (patch) => {
+      if (!isCurrent()) return;
       const prev = stores.get(sessionId) as TState | undefined;
       if (!prev) return;
       const p = typeof patch === "function" ? patch(prev) : patch;
@@ -186,6 +199,7 @@ function makeApi<TState>(sessionId: string): SessionStoreApi<TState> {
       subscribers.get(sessionId)?.forEach((cb) => cb());
     },
     setWatchdog: (key, fn, timeoutMs) => {
+      if (!isCurrent()) return;
       const fullKey = `${sessionId}:${key}`;
       const old = watchdogs.get(fullKey);
       if (old) clearTimeout(old);
@@ -193,11 +207,12 @@ function makeApi<TState>(sessionId: string): SessionStoreApi<TState> {
         fullKey,
         setTimeout(() => {
           watchdogs.delete(fullKey); // 触发即自删，不留残留条目
-          fn();
+          if (isCurrent()) fn();
         }, timeoutMs)
       );
     },
     clearWatchdog: (key) => {
+      if (!isCurrent()) return;
       const fullKey = `${sessionId}:${key}`;
       const old = watchdogs.get(fullKey);
       if (old) {
@@ -214,9 +229,12 @@ function ensureSession<TState>(
   options: PluginSessionStoreOptions<TState>
 ): void {
   if (sessionOpts.has(sessionId)) return;
-  // 注册代际：断连后重注册时递增，旧代在途的 init/getStatus 结果据此废弃
-  const gen = (generations.get(sessionId) ?? 0) + 1;
-  generations.set(sessionId, gen);
+  const registration = {};
+  registrations.set(sessionId, registration);
+  const scope = statusScopes.get(sessionId) ?? new AsyncRequestScope();
+  scope.invalidate();
+  statusScopes.set(sessionId, scope);
+  if (!connections.has(sessionId)) connections.set(sessionId, new RuntimeEventCursor());
   sessionOpts.set(sessionId, options as PluginSessionStoreOptions<unknown>);
   if (options.onRelease) {
     releaseFns.set(sessionId, options.onRelease);
@@ -225,26 +243,20 @@ function ensureSession<TState>(
   if (!stores.has(sessionId)) {
     stores.set(sessionId, options.createState());
   }
-  const api = makeApi<TState>(sessionId);
+  const api = makeApi<TState>(sessionId, registration);
   apiCache.set(sessionId, api as SessionStoreApi<unknown>);
-  Promise.resolve(options.init(api))
+  Promise.all([ensureGlobalDisconnectListener(), ensureGlobalConnectListener()]).then(() => options.init(api))
     .then((unlisten) => {
       // 异步注册完成前会话已断开或被新一代注册取代 → 立即撤销
-      if (!sessionOpts.has(sessionId) || generations.get(sessionId) !== gen) {
+      if (registrations.get(sessionId) !== registration) {
         unlisten.forEach((f) => f());
         return;
       }
       cleanupFns.set(sessionId, () => unlisten.forEach((f) => f()));
+      refreshStatus(sessionId);
     })
     .catch((e) => console.error(`[usePluginSessionStore] 监听器注册失败 (${sessionId}):`, e));
-  options
-    .getStatus?.(sessionId, api)
-    .then((patch) => {
-      if (patch && sessionOpts.has(sessionId) && generations.get(sessionId) === gen) {
-        api.setState(patch);
-      }
-    })
-    .catch(() => {});
+
 }
 
 /**
@@ -268,7 +280,10 @@ export function releaseSessionStore(sessionId: string): void {
   stores.delete(sessionId);
   apiCache.delete(sessionId);
   subscribers.delete(sessionId);
-  generations.delete(sessionId);
+  registrations.delete(sessionId);
+  statusScopes.get(sessionId)?.invalidate();
+  statusScopes.delete(sessionId);
+  connections.delete(sessionId);
 }
 
 function subscribe(sessionId: string, cb: () => void): () => void {
@@ -293,9 +308,6 @@ export function usePluginSessionStore<TState>(
   sessionId: string,
   options: PluginSessionStoreOptions<TState>
 ): { state: TState; api: SessionStoreApi<TState> } {
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
-
   // 渲染期幂等注册（会话级状态在首次渲染即可用）
   ensureSession(sessionId, options);
 

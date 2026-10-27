@@ -64,10 +64,10 @@ function isMdEvent(event: TrdpEvent) {
 
 export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
-  const { state } = useSession();
+  const { state, isSessionRuntimeCurrent } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
-  const sessionConnected = tab?.state === "connected" || tab?.state === "transferring";
+  const sessionConnected = tab?.state === "connected";
 
   const [page, setPage] = useState<Page>("overview");
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +220,7 @@ export default function TrdpMonitorView({ sessionId }: { sessionId: string }) {
     };
 
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
-      if (disposed || payload.session_id !== sessionId) return;
+      if (disposed || payload.session_id !== sessionId || !isSessionRuntimeCurrent(sessionId, payload.runtime_id)) return;
 
       if (payload.event === "capture_progress") {
         setCaptureFrameCount(payload.frame_count ?? 0);

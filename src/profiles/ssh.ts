@@ -1,6 +1,6 @@
 import type { TabInfo } from "../context/SessionContext";
 import type { ProfileResolver, SessionProfile } from "./types";
-import type { IconName } from "../components/common/Icon";
+import { statusIconName, statusValue } from "./status";
 
 /**
  * SSH 连接的 Profile 解析器
@@ -33,24 +33,3 @@ export const sshProfile: ProfileResolver = (tab: TabInfo): SessionProfile => {
     ],
   };
 };
-
-function statusIconName(state: string): IconName {
-  switch (state) {
-    case "connected": return "status-connected";
-    case "disconnected": return "status-disconnected";
-    case "connecting": return "status-connecting";
-    case "transferring": return "status-transferring";
-    default: return "status-idle";
-  }
-}
-
-function statusValue(state: string): string {
-  switch (state) {
-    // 使用协议无关的状态文案，避免 SSH 会话显示"串口已连接"
-    case "connected": return "statusBar.connected";
-    case "disconnected": return "statusBar.disconnected";
-    case "connecting": return "statusBar.connecting";
-    case "transferring": return "transfer.transferringStatus";
-    default: return state;
-  }
-}

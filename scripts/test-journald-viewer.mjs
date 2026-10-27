@@ -65,7 +65,10 @@ assert.doesNotMatch(source.stream, /journald:entry/);
 assert.match(source.stream, /disposedRef/);
 assert.match(source.stream, /listenerEpochRef/);
 assert.match(source.stream, /generation !== generationRef\.current/);
-assert.match(source.stream, /await stopJournalStream\(sessionId\)\.catch/);
+assert.match(source.stream, /await stopJournalStream\(sessionId, runtimeId\)\.catch/);
+assert.doesNotMatch(source.backend, /static ACTIVE_STREAMS|static ACTIVE_EXPORTS/);
+assert.match(source.backend, /struct JournaldRuntime/);
+assert.match(source.backend, /runtime_id/);
 assert.match(
   source.stream,
   /listen<JournalErrorEvent>[\s\S]*setError\(event\.payload\.error\);[\s\S]*listen<JournalEndedEvent>/,

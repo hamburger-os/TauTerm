@@ -1,9 +1,62 @@
 //! Lua 安全沙箱
 //!
 //! 创建受限的 Lua 运行环境，移除危险的标准库模块，
-//! 设置内存和指令限制，防止恶意脚本影响系统稳定性。
+//! 这里设置内存限制；指令预算与取消统一由 execution 模块拥有。
 
 use mlua::Lua;
+
+fn snapshot_metatable(lua: &Lua, source: mlua::Table) -> mlua::Result<mlua::Table> {
+    for name in ["__gc", "__close"] {
+        if !matches!(source.raw_get::<mlua::Value>(name)?, mlua::Value::Nil) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "自动化沙箱不支持自定义 {name} 清理函数"
+            )));
+        }
+    }
+    let snapshot = lua.create_table()?;
+    for pair in source.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair?;
+        snapshot.raw_set(key, value)?;
+    }
+    Ok(snapshot)
+}
+
+fn install_metatable_boundary(lua: &Lua) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let native_set: mlua::Function = globals.get("setmetatable")?;
+    globals.set(
+        "setmetatable",
+        lua.create_function(
+            move |lua, (table, metatable): (mlua::Table, Option<mlua::Table>)| {
+                let snapshot = metatable
+                    .map(|value| snapshot_metatable(lua, value))
+                    .transpose()?;
+                native_set.call::<mlua::Table>((table, snapshot))
+            },
+        )?,
+    )?;
+    let native_get: mlua::Function = globals.get("getmetatable")?;
+    globals.set(
+        "getmetatable",
+        lua.create_function(move |lua, value: mlua::Value| {
+            // Preserve explicitly protected metatables and their public marker value.
+            if let mlua::Value::Table(table) = &value {
+                if let Some(metatable) = table.metatable() {
+                    let protected: mlua::Value = metatable.raw_get("__metatable")?;
+                    if !matches!(protected, mlua::Value::Nil) {
+                        return Ok(protected);
+                    }
+                }
+            }
+            match native_get.call::<mlua::Value>(value)? {
+                mlua::Value::Table(metatable) => {
+                    snapshot_metatable(lua, metatable).map(mlua::Value::Table)
+                }
+                other => Ok(other),
+            }
+        })?,
+    )
+}
 
 /// 创建沙箱化的 Lua VM
 ///
@@ -46,6 +99,9 @@ pub fn create_sandboxed_lua() -> mlua::Result<Lua> {
     // ── 内存限制 ──
     // 限制 Lua VM 总内存分配为 1MB
     lua.set_memory_limit(1024 * 1024)?;
+    // Lua disables hooks during GC finalization. Snapshot installation and inspection prevent
+    // late metatable mutation from injecting uninterruptible cleanup code after validation.
+    install_metatable_boundary(&lua)?;
 
     Ok(lua)
 }
@@ -84,5 +140,45 @@ mod tests {
         let lua = create_sandboxed_lua().unwrap();
         let result = lua.load(r#"return os == nil"#).eval::<bool>().unwrap();
         assert!(result);
+    }
+
+    #[test]
+    fn finalizers_are_rejected_and_late_mutation_cannot_install_them() {
+        let lua = create_sandboxed_lua().unwrap();
+        for name in ["__gc", "__close"] {
+            let error = lua
+                .load(format!(
+                    "setmetatable({{}}, {{ {name}=function() while true do end end }})"
+                ))
+                .exec()
+                .expect_err("unsupported finalizer");
+            assert!(error.to_string().contains(name));
+        }
+        lua.load(
+            r#"
+            local mt = {__index = {value = 7}}
+            local object = setmetatable({}, mt)
+            mt.__gc = function() error('must never run') end
+            mt.__close = mt.__gc
+            local inspected = getmetatable(object)
+            inspected.__gc = mt.__gc
+            inspected.__close = mt.__close
+            assert(object.value == 7)
+            assert(getmetatable(object).__gc == nil)
+            assert(getmetatable(object).__close == nil)
+            setmetatable(object, {__index={value=9}})
+            assert(object.value == 9)
+            setmetatable(object, nil)
+            assert(getmetatable(object) == nil)
+            object = nil
+            collectgarbage()
+            local marker = {}
+            local protected = setmetatable({}, {__metatable=marker})
+            assert(getmetatable(protected) == marker)
+            assert(not pcall(setmetatable, protected, {}))
+        "#,
+        )
+        .exec()
+        .unwrap();
     }
 }

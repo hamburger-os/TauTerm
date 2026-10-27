@@ -284,6 +284,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     {availableModes.map(mode => (
                       <motion.button
                         key={mode.id}
+                        data-testid={`connection-type-${mode.id}`}
                         className={`${styles.modeCard} liquid-glass-card`}
                         whileHover={{ scale: 1.03, borderColor: "var(--accent-primary)" }}
                         whileTap={{ scale: 0.97 }}
@@ -316,6 +317,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                   <div className={styles.field}>
                     <label className={styles.label}>{t("session.renameSession")} ({t("session.newSession")})</label>
                     <input
+                      data-testid="session-name"
                       className={`${styles.input} liquid-glass-input`}
                       type="text"
                       placeholder={sessionNamePlaceholder}
@@ -355,6 +357,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     </button>
                     <button
                       className={`${styles.connectBtn} liquid-primary-button`}
+                      data-testid="save-session"
                       onClick={() => void handleCreate()}
                       disabled={!canSubmit}
                     >

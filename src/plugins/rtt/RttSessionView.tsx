@@ -93,7 +93,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
-  const connected = tab?.state === "connected" || tab?.state === "transferring";
+  const connected = tab?.state === "connected";
   const runtimeReadable = connected || tab?.disconnectInfo?.retain_terminal === true;
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
   const snapshot = runtime.snapshot;

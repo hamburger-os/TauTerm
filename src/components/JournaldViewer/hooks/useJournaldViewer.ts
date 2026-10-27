@@ -43,6 +43,7 @@ export interface UseJournaldViewerReturn {
 
 export function useJournaldViewer(
   sessionId: string,
+  runtimeId: string | null,
   isConnected: boolean,
 ): UseJournaldViewerReturn {
   const [subTab, setSubTab] = useState<SubTab>("realtime");
@@ -51,12 +52,13 @@ export function useJournaldViewer(
 
   const stream = useJournalStream(
     sessionId,
+    runtimeId,
     isConnected,
     subTab === "realtime",
     filter,
   );
-  const history = useJournalHistory(sessionId, isConnected);
-  const exporter = useJournalExport(sessionId, isConnected);
+  const history = useJournalHistory(sessionId, runtimeId, isConnected);
+  const exporter = useJournalExport(sessionId, runtimeId, isConnected);
 
   const setFilter = useCallback(
     (partial: Partial<JournaldFilter>) => {

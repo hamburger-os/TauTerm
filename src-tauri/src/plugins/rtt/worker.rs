@@ -75,7 +75,7 @@ pub(super) struct WorkerContext {
     pub config: RttConfig,
     pub embedded_debug: Arc<EmbeddedDebugManager>,
     pub app: AppHandle,
-    pub session_id: String,
+    pub identity: crate::session::RuntimeIdentity,
     pub shared: Arc<RttShared>,
     pub shutting_down: Arc<AtomicBool>,
     pub worker_exited: Arc<AtomicBool>,
@@ -98,11 +98,12 @@ pub(super) fn run(
         config,
         embedded_debug,
         app,
-        session_id,
+        identity,
         shared,
         shutting_down,
         worker_exited,
     } = context;
+    let session_id = identity.session_id.clone();
 
     shared.set_phase(RttPhase::OpeningBackend);
     log::info!(
@@ -308,7 +309,7 @@ pub(super) fn run(
         shared.set_error(error.clone());
         let _ = emit_snapshot(&app, &session_id, &shared);
         if !shutting_down.load(Ordering::Acquire) {
-            notify_unexpected_disconnect(app, session_id, error);
+            notify_unexpected_disconnect(app, identity, error);
         }
     } else {
         shared.set_stopped();
@@ -475,16 +476,27 @@ fn emit_snapshot(app: &AppHandle, session_id: &str, shared: &Arc<RttShared>) -> 
     .map_err(|_| ())
 }
 
-fn notify_unexpected_disconnect(app: AppHandle, session_id: String, error: RttError) {
+fn notify_unexpected_disconnect(
+    app: AppHandle,
+    identity: crate::session::RuntimeIdentity,
+    error: RttError,
+) {
     std::thread::spawn(move || {
         let state: State<'_, AppState> = app.state();
-        if let Ok(mut store) = state.session_store.lock() {
-            store.mark_disconnected(&session_id);
-        }
+        let cleanup = state
+            .session_store
+            .lock()
+            .ok()
+            .and_then(|mut store| store.mark_disconnected(&identity));
+        let Some(cleanup) = cleanup else {
+            return;
+        };
+        cleanup.schedule();
         let _ = app.emit(
             "session-disconnected",
             json!({
-                "session_id": session_id,
+                "session_id": identity.session_id,
+                "runtime_id": identity.runtime_id,
                 "reason": error.message,
                 "disconnect_info": {
                     "kind": "io_error",

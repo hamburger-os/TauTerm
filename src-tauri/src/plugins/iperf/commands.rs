@@ -89,7 +89,7 @@ async fn connect_session(
         .await
         .map_err(|e| e.to_string())?;
     let session_name = name.unwrap_or_else(|| format!("iperf :{}", endpoint));
-    let sid = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
@@ -113,10 +113,13 @@ async fn connect_session(
             },
         )?
     };
-    let runtime = state
-        .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
-        .runtime(&sid)
-        .ok_or_else(|| "iperf runtime 注册失败".to_string())?;
+    let sid = runtime_identity.session_id.clone();
+    let runtime =
+        crate::plugin_application::capture_session_runtime(&state, &runtime_identity, || {
+            state
+                .plugin::<crate::plugins::iperf::IperfAdapter>(crate::plugins::iperf::PLUGIN_ID)
+                .runtime(&sid)
+        })?;
     if let Some(prev) = prev_params {
         let current = runtime.get_params();
         let merged = iperf::IperfDynamicParams {
@@ -137,18 +140,19 @@ async fn connect_session(
         let _ = app.emit(
             "iperf-server-status",
             serde_json::json!({
-                "session_id": sid, "running": false, "error": error,
+                "session_id": sid,
+            "runtime_id": runtime_identity.runtime_id, "running": false, "error": error,
             }),
         );
     }
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": sid, "plugin_id": "iperf", "content_type": "custom",
             "endpoint": endpoint, "name": session_name, "connection_type": "iperf",
             "params": resolved_params, "send_bar_enabled": false, "transfer_enabled": false,
         }),
-    );
+    )?;
     Ok(sid)
 }
 
@@ -453,11 +457,4 @@ pub async fn iperf_get_status(
         dynamic_params: IperfDynamicParams::default(),
         last_summary: None,
     })
-}
-
-pub(crate) fn session_disconnected(app: &AppHandle, session_id: &str) {
-    let _ = app.emit(
-        "iperf-server-status",
-        serde_json::json!({ "session_id": session_id, "running": false }),
-    );
 }

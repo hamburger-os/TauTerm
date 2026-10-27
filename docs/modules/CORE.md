@@ -8,7 +8,7 @@ TauTerm 的插件模型是 **显式编译期内建插件架构**，不是运行�
 
 ## 当前方案
 
-后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。`PluginRuntime` 是插件身份、canonical manifest、通用 `ProtocolAdapter` 与类型化 contribution 的唯一后端运行时目录；`plugins/catalog.rs` 是唯一了解完整内建插件集合的后端 composition 模块，负责把 manifest、Adapter、连接/配置/断开 contribution、插件专属 IPC wiring 以及需要宿主资源的插件初始化组装成 `PluginRuntime`。`AppState` 与应用 bootstrap 不再为 Serial、SSH、Telnet 等维护平行 adapter 字段、逐插件初始化分支或插件命令清单。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把普通 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。Container Session 可以额外提供协议无关 `AutomationIo` capability，使多路协议参与 SendBar/Lua 而不伪造一个不存在的主 DataPlane。
+后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。`PluginRuntime` 是插件身份、canonical manifest、通用 `ProtocolAdapter` 与类型化 contribution 的唯一后端运行时目录；`plugins/catalog.rs` 是唯一了解完整内建插件集合的后端 composition 模块，负责把 manifest、Adapter、连接/配置 contribution、插件专属 IPC wiring 以及需要宿主资源的插件初始化组装成 `PluginRuntime`。`AppState` 与应用 bootstrap 不再为 Serial、SSH、Telnet 等维护平行 adapter 字段、逐插件初始化分支或插件命令清单。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 `SessionService`、显式 `FileTransfer` capability、可选子终端工厂和 attach hook 等明确能力；核心把普通 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。Container Session 可以额外提供协议无关 `AutomationIo` capability，使多路协议参与 SendBar/Lua 而不伪造一个不存在的主 DataPlane。
 
 Transport、Protocol、Session Runtime 三层职责固定：Transport 只拥有串口/TCP/UDP/PTY 等物理或系统资源；Protocol 解释 Telnet、Modbus、SSH 等协议语义；Session Runtime 负责生命周期、事件、日志、脚本、统计、子连接和取消。协议不得复制公共 Session 生命周期，Session Runtime 也不得解析协议字段。
 
@@ -32,15 +32,24 @@ stateDiagram-v2
   Saved --> Connecting
   Connecting --> Connected
   Connecting --> Disconnected
-  Connected --> Transferring
-  Transferring --> Connected
+  Connected --> Disconnecting
+  Disconnecting --> Disconnected
   Connected --> Disconnected
-  Transferring --> Disconnected
   Disconnected --> Connecting
   Disconnected --> [*]
 ```
 
-`Transferring` 只表示 Session 的 inline 独占资源被传输任务占用；真实底层资源仍归 DataPlane Runtime 所有。连接、断开、异常退出、子连接关闭和传输结束必须通过统一生命周期收敛。`SessionDataPlane` 对需要注册顺序保证的 Session/child 使用 paused attach：先建立订阅与事件线程但阻塞回调，待 SessionStore 注册和 `session-connected`/peer joined 发布完成后再显式 activate；因此数据与断开事件不能抢在权威 Session 状态之前。
+连接健康与传输活动分别建模。前端的 Connecting/Disconnecting 表达待完成操作；后端连接事实由 SessionStore 提供，传输任务不能改写连接状态，移除最后一个 child 也不能由前端推断父 Session 断开。传输自身的状态机由 [TRANSFER.md](TRANSFER.md) 定义。
+
+SessionStore 为每次根连接签发进程内单调递增的 `runtime_id`，child 继承根连接代次；它与稳定的 `session_id` 共同标识一次运行实例。跨 IPC 使用十进制字符串保存完整整数精度，不写入 Library。回调、统计、数据批次、传输结果与关闭命令携带捕获的身份；提交前验证实例仍匹配。跨异步边界的插件工作同时捕获匹配的类型化 runtime，不能在恢复执行后只按裸 Session ID 取回重连实例。
+
+`SessionDataPlane` 使用 paused attach 建立订阅并暂缓回调。公共发布入口验证身份、补充 canonical Session 字段、发布 connected，再释放数据面；child 数据回调需要根与 child 都完成发布，因此初期数据和断开不能越过注册屏障。插件只贡献自身元数据，不复制公共发布逻辑。前端对同实例重复 connected 和已关闭实例的迟到 connected 保持幂等，对新实例丢弃旧 child。
+
+公共 write/resize 命令也必须携带原连接身份；SessionStore 在同一短锁内校验实例仍连接并捕获其 SessionIo，随后锁外等待真实驱动 ACK。Network 等插件可把根会话的运行身份传递给后台 child I/O；是否存在可见页签不决定底层发送能力。迟到请求不能重新按裸 Session ID 获取重连后的 I/O。
+
+插件发送 contribution 接收原运行身份与通用默认发送能力；默认发送返回驱动确认后的真实线上字节，插件据此维护自身 TX 展示，不复制转码规则或猜测“原始输入就是已写入字节”。
+
+显式根会话关闭使用两阶段资源清理：SessionStore 锁内提交断开状态、取消任务并移出根/子 DataPlane、脚本、传输任务及插件 service/attachment；返回的 `SessionCleanup` 是这些资源的唯一清理 owner。请求 transport 关闭、线程 join、teardown delay 和插件 shutdown/detach 在锁外 blocking worker 执行，用户断开命令等待清理后再返回。同步生命周期回调把 cleanup owner 交给后台清理任务；插件仍只提供自身能力，公共层不解释协议字段。插件 runtime 弱索引的 detach 校验实际实例身份，旧实例的迟到清理不能移除重连后的新索引。Lua 执行控制与取消的具体合同见 [AUTOMATION.md](AUTOMATION.md)。
 
 ## 设计边界
 

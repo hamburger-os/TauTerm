@@ -1,118 +1,19 @@
-import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginRegistry } from "../core/plugin-registry";
 import { releaseSessionStore } from "../hooks/usePluginSessionStore";
 import i18n from "../i18n";
+import { AsyncRequestScope } from "../core/session-lifecycle";
 
 // ── Types ───────────────────────────────────────────
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "transferring";
-
-export interface DisconnectInfo {
-  kind: "user_requested" | "remote_eof" | "io_error" | "device_removed" | "process_exited";
-  reason: string;
-  exit_code?: number | null;
-  retain_terminal: boolean;
-}
-
-/** I/O 运行时统计 */
-export interface SessionStats {
-  txBytes: number;
-  rxBytes: number;
-  /** UDP 会话级累计 RX 报文数（无对端模型，报文计数语义明确） */
-  rxPackets?: number;
-  /** UDP 会话级累计 TX 报文数 */
-  txPackets?: number;
-}
-
-export interface TabInfo {
-  id: string;
-  name: string;
-  connection_type: string;
-  endpoint: string;
-  state: ConnectionStatus;
-  /** 插件标识符 */
-  pluginId: string;
-  /** 连接参数（恢复会话时用于回填配置） */
-  params?: Record<string, unknown>;
-  /** I/O 实时统计 */
-  stats: SessionStats;
-  /** 连接建立时的时间戳 (Date.now()) */
-  connectedAt: number | null;
-  /** 异常断开时保留终端现场所需的结构化原因；仅驻留于当前进程内。 */
-  disconnectInfo?: DisconnectInfo;
-  /** 是否启用文件传输子系统；缺省值由插件 definition 决定。 */
-  transferEnabled?: boolean;
-  /** 文件传输协议 ID */
-  transferProtocol?: string;
-  /** 是否启用发送栏；缺省值由插件 manifest/definition 决定。 */
-  sendBarEnabled?: boolean;
-  /** 父会话 ID；非空表示通用子 channel。 */
-  parentId?: string | null;
-  /** 子 channel 在父会话中的自动编号（从 0 开始） */
-  channelIndex?: number;
-  /** 子 channel 是否以提升权限运行；仅对声明对应能力的插件有意义。 */
-  elevated?: boolean;
-  /** 根会话是否是可创建多个子终端的容器。 */
-  isContainer?: boolean;
-}
-
-/** connect() 参数对象 */
-export interface ConnectOptions {
-  endpoint: string;
-  params: Record<string, unknown>;
-  name?: string;
-  pluginId: string;
-  transferEnabled?: boolean;
-  transferProtocol?: string;
-  sendBarEnabled?: boolean;
-  initialElevated?: boolean;
-  sessionId?: string;
-}
-
-export interface ConnectionTypeInfo {
-  id: string;
-  label: string;
-  available: boolean;
-  description: string;
-  icon: string;
-  content_type: string;
-}
-
-export interface EndpointInfo {
-  name: string;
-  description: string;
-  connection_type: string;
-  params?: Record<string, unknown>;
-}
-
-interface SessionState {
-  tabs: TabInfo[];
-  activeTabId: string | null;
-  connectionTypes: ConnectionTypeInfo[];
-  endpoints: EndpointInfo[];
-  error: string | null;
-}
-
-type SessionAction =
-  | { type: "SET_TABS"; tabs: TabInfo[] }
-  | { type: "ADD_TAB"; tab: TabInfo }
-  | { type: "REMOVE_TAB"; id: string }
-  | { type: "RENAME_TAB"; id: string; name: string }
-  | { type: "REORDER_TABS"; ids: string[] }
-  | { type: "SET_ACTIVE"; id: string | null }
-  | { type: "SET_CONNECTION_TYPES"; types: ConnectionTypeInfo[] }
-  | { type: "SET_ENDPOINTS"; endpoints: EndpointInfo[] }
-  | { type: "REPLACE_ENDPOINTS_FOR_PLUGIN"; pluginId: string; endpoints: EndpointInfo[] }
-  | { type: "SET_ERROR"; error: string | null }
-  | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
-  | { type: "SET_TAB_DISCONNECTED"; id: string; info?: DisconnectInfo }
-  | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
-  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
-  | { type: "CLEAR_TABS" }
-  | { type: "REMOVE_CHILD"; id: string; parentId: string }
-  | { type: "REMOVE_ALL_CHILDREN"; parentId: string };
+import {
+  initialSessionState, sessionReducer,
+  type SessionAction, type SessionState, type TabInfo, type SavedSessionConfig,
+  type ConnectionStatus, type DisconnectInfo, type ConnectOptions, type ConnectionTypeInfo, type EndpointInfo,
+} from "../core/session-state";
+export type { TabInfo, SessionStats, ConnectionStatus, DisconnectInfo, ConnectOptions, ConnectionTypeInfo, EndpointInfo } from "../core/session-state";
 
 function decodeBase64(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -122,96 +23,6 @@ function decodeBase64(b64: string): Uint8Array {
   return bytes;
 }
 
-const initialState: SessionState = {
-  tabs: [],
-  activeTabId: null,
-  connectionTypes: [],
-  endpoints: [],
-  error: null,
-};
-
-function sessionReducer(state: SessionState, action: SessionAction): SessionState {
-  switch (action.type) {
-    case "SET_TABS": return { ...state, tabs: action.tabs };
-    case "ADD_TAB":
-      return {
-        ...state,
-        tabs: [...state.tabs, action.tab],
-        activeTabId: action.tab.isContainer && state.tabs.some(tab => tab.parentId === action.tab.id)
-          ? state.activeTabId
-          : action.tab.id,
-      };
-    case "REMOVE_TAB": {
-      const childIds = state.tabs.filter(t => t.parentId === action.id).map(t => t.id);
-      const allRemoved = new Set([action.id, ...childIds]);
-      const remaining = state.tabs.filter(t => !allRemoved.has(t.id));
-      let nextActive = state.activeTabId;
-      if (nextActive && allRemoved.has(nextActive)) nextActive = remaining.find(t => !t.parentId)?.id ?? null;
-      return { ...state, tabs: remaining, activeTabId: nextActive };
-    }
-    case "RENAME_TAB": return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, name: action.name } : t) };
-    case "REORDER_TABS":
-      return { ...state, tabs: action.ids.map(id => state.tabs.find(t => t.id === id)).filter((t): t is TabInfo => t !== undefined) };
-    case "SET_ACTIVE": return { ...state, activeTabId: action.id };
-    case "SET_CONNECTION_TYPES": return { ...state, connectionTypes: action.types };
-    case "SET_ENDPOINTS": return { ...state, endpoints: action.endpoints };
-    case "REPLACE_ENDPOINTS_FOR_PLUGIN":
-      return { ...state, endpoints: [...state.endpoints.filter(endpoint => endpoint.connection_type !== action.pluginId), ...action.endpoints] };
-    case "SET_ERROR": return { ...state, error: action.error };
-    case "SET_TAB_STATE":
-      return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, state: action.state, disconnectInfo: undefined } : t) };
-    case "SET_TAB_DISCONNECTED":
-      return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, state: "disconnected", disconnectInfo: action.info } : t) };
-    case "UPDATE_TAB_STATS":
-      return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, stats: action.stats, connectedAt: action.connectedAt ?? t.connectedAt } : t) };
-    case "UPDATE_TAB_CONFIG":
-      return {
-        ...state,
-        tabs: state.tabs.map(t => t.id === action.id ? {
-          ...t,
-          name: action.name,
-          endpoint: action.endpoint,
-          params: action.params,
-          transferEnabled: action.transferEnabled ?? t.transferEnabled,
-          transferProtocol: action.transferProtocol ?? t.transferProtocol,
-          sendBarEnabled: action.sendBarEnabled ?? t.sendBarEnabled,
-          pluginId: action.pluginId ?? t.pluginId,
-          connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
-        } : t),
-      };
-    case "REMOVE_CHILD": {
-      const remaining = state.tabs.filter(t => t.id !== action.id);
-      let nextActive = state.activeTabId;
-      if (nextActive === action.id) {
-        const siblings = remaining.filter(t => t.parentId === action.parentId);
-        nextActive = siblings[0]?.id ?? action.parentId ?? remaining.find(t => !t.parentId)?.id ?? null;
-      }
-      const hasOtherChildren = remaining.some(t => t.parentId === action.parentId);
-      if (!hasOtherChildren) {
-        const parentTab = remaining.find(t => t.id === action.parentId);
-        if (parentTab) {
-          return {
-            ...state,
-            tabs: remaining.map(t => t.id === action.parentId ? { ...t, state: "disconnected" as ConnectionStatus } : t),
-            activeTabId: nextActive,
-          };
-        }
-      }
-      return { ...state, tabs: remaining, activeTabId: nextActive };
-    }
-    case "REMOVE_ALL_CHILDREN": {
-      const childIds = new Set(state.tabs.filter(t => t.parentId === action.parentId).map(t => t.id));
-      return {
-        ...state,
-        tabs: state.tabs.filter(t => t.parentId !== action.parentId),
-        activeTabId: state.activeTabId && childIds.has(state.activeTabId) ? action.parentId : state.activeTabId,
-      };
-    }
-    case "CLEAR_TABS": return { ...state, tabs: [], activeTabId: null };
-    default: return state;
-  }
-}
-
 interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
@@ -219,7 +30,7 @@ interface SessionContextValue {
   connect: (opts: ConnectOptions) => Promise<string | null>;
   reconnectSession: (sessionId: string, initialElevated?: boolean) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name: string | undefined, pluginId: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
-  disconnect: (sessionId: string) => Promise<void>;
+  disconnect: (sessionId: string) => Promise<boolean>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string | null) => Promise<void>;
@@ -231,10 +42,13 @@ interface SessionContextValue {
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   subscribeDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => () => void;
   isSessionConnected: (sessionId: string) => boolean;
+  isSessionRuntimeCurrent: (sessionId: string, runtimeId: string) => boolean;
+  getSessionRuntimeId: (sessionId: string) => string | null;
   sendToTarget: (containerId: string, data: string | Uint8Array) => Promise<void>;
   updateSessionStats: (sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
   clearError: () => void;
+  reportError: (message: string) => void;
   startSessionLog: (sessionId: string) => Promise<string>;
   stopSessionLog: (sessionId: string) => Promise<void>;
   loggingSessions: Set<string>;
@@ -244,16 +58,29 @@ interface SessionContextValue {
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(sessionReducer, initialState);
+  const [state, setState] = useState(initialSessionState);
+  const stateRef = useRef(state);
+  const dispatch = useCallback((action: SessionAction) => {
+    const next = sessionReducer(stateRef.current, action);
+    stateRef.current = next;
+    setState(next);
+  }, []);
+  const operationScopes = useRef(new Map<string, AsyncRequestScope>());
+  const pendingOperations = useRef(new Set<string>());
+  const scopeFor = (sessionId: string) => {
+    let scope = operationScopes.current.get(sessionId);
+    if (!scope) { scope = new AsyncRequestScope(); operationScopes.current.set(sessionId, scope); }
+    return scope;
+  };
   const dataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataSubscribersRef = useRef<Set<(sessionId: string, data: Uint8Array) => void>>(new Set());
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
-  const tabsRef = useRef(state.tabs);
-  tabsRef.current = state.tabs;
+  const tabsRef = { get current() { return stateRef.current.tabs; } };
   const lastActiveChildRef = useRef<Map<string, string>>(new Map());
   const endpointRefreshesRef = useRef<Map<string, Promise<EndpointInfo[]>>>(new Map());
   const endpointRefreshCompletedAtRef = useRef<Map<string, number>>(new Map());
+  const catalogReadRef = useRef<Promise<SavedSessionConfig[]> | null>(null);
 
   useEffect(() => {
     const activeId = state.activeTabId;
@@ -337,6 +164,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transferProtocol,
       sendBarEnabled,
     });
+    if (sessionId && (pendingOperations.current.has(sessionId)
+      || tabsRef.current.find(tab => tab.id === sessionId)?.state !== "disconnected")) return null;
+    const isCurrent = sessionId ? scopeFor(sessionId).begin() : () => true;
+    if (sessionId) pendingOperations.current.add(sessionId);
     dispatch({ type: "SET_ERROR", error: null });
     if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connecting" });
     try {
@@ -354,10 +185,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         },
       });
     } catch (e) {
-      const error = plugin?.formatSessionError?.(e, "connect") ?? String(e);
-      dispatch({ type: "SET_ERROR", error });
-      if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
+      if (isCurrent() && (!sessionId || tabsRef.current.find(tab => tab.id === sessionId)?.state === "connecting")) {
+        const error = plugin?.formatSessionError?.(e, "connect") ?? String(e);
+        dispatch({ type: "SET_ERROR", error });
+        if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
+      }
       return null;
+    } finally {
+      if (sessionId && isCurrent()) pendingOperations.current.delete(sessionId);
     }
   }, []);
 
@@ -429,6 +264,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         type: "ADD_TAB",
         tab: {
           id: sessionId,
+          runtimeId: null,
           name: effectiveName,
           connection_type: pluginId,
           endpoint,
@@ -449,30 +285,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const disconnect = useCallback(async (sessionId: string) => {
-    const tab = state.tabs.find(t => t.id === sessionId);
-    if (tab?.state === "disconnected") return;
-    dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
+  const disconnect = useCallback(async (sessionId: string): Promise<boolean> => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (tab?.state === "disconnected") return true;
+    if (!tab?.runtimeId || tab.state !== "connected" || pendingOperations.current.has(sessionId)) return false;
+    const isCurrent = scopeFor(sessionId).begin();
+    pendingOperations.current.add(sessionId);
+    dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnecting" });
     try {
-      await invoke("disconnect_session", { sessionId });
-    } catch (e) {
-      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
-      dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
+      const ack = await invoke<{ session_id: string; runtime_id: string }>("disconnect_session", { sessionId, runtimeId: tab.runtimeId });
+      if (!isCurrent() || tabsRef.current.find(item => item.id === sessionId)?.runtimeId !== ack.runtime_id) return false;
+      dispatch({ type: "SESSION_DISCONNECTED", id: sessionId, runtimeId: ack.runtime_id });
+      return true;
+    } catch (error) {
+      // Reconcile from the authoritative runtime snapshot, never infer connected from failure.
+      try {
+        const snapshot = await invoke<Array<{ id: string; runtimeId: string; state: string }>>("get_tabs");
+        const pending = tabsRef.current.find(item => item.id === sessionId);
+        if (isCurrent() && pending?.runtimeId === tab.runtimeId && pending.state === "disconnecting") {
+          const current = snapshot.find(item => item.id === sessionId);
+          if (!current) dispatch({ type: "SESSION_DISCONNECTED", id: sessionId, runtimeId: tab.runtimeId });
+          else if (current.runtimeId === tab.runtimeId && current.state === "connected") dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
+        }
+      } catch { /* Preserve the pending state when runtime authority cannot be reached. */ }
+      if (isCurrent()) dispatch({ type: "SET_ERROR", error: `断开失败: ${error}` });
+      return false;
+    } finally {
+      if (isCurrent()) pendingOperations.current.delete(sessionId);
     }
-  }, [state.tabs]);
+  }, []);
 
   const deleteSession = useCallback(async (sessionId: string, skipDisconnect = false) => {
-    const tab = state.tabs.find(t => t.id === sessionId);
-    if (!skipDisconnect && (tab?.state === "connected" || tab?.state === "connecting" || tab?.state === "transferring")) {
-      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
-      try {
-        await invoke("disconnect_session", { sessionId });
-      } catch (_e) {
-        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
-        dispatch({ type: "SET_ERROR", error: "Cannot delete active session — disconnect failed" });
-        return;
-      }
-    }
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (!skipDisconnect && tab?.state !== "disconnected" && !(await disconnect(sessionId))) return;
+    if (pendingOperations.current.has(sessionId)) return;
+    const isCurrent = scopeFor(sessionId).begin();
+    pendingOperations.current.add(sessionId);
     try {
       await invoke("delete_session_config", { sessionId });
     } catch (e) {
@@ -483,27 +331,36 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           error: String(e),
         }),
       });
+      if (isCurrent()) pendingOperations.current.delete(sessionId);
       return;
     }
+    if (!isCurrent()) return;
+    pendingOperations.current.delete(sessionId);
+    operationScopes.current.get(sessionId)?.invalidate();
+    operationScopes.current.delete(sessionId);
     dispatch({ type: "REMOVE_TAB", id: sessionId });
     tab && pluginRegistry.get(tab.pluginId)?.runtimeStore?.release?.(sessionId);
     releaseSessionStore(sessionId);
-  }, [state.tabs]);
+  }, [disconnect]);
 
-  const writeData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+  const writeData = useCallback(async (sessionId: string, data: string | Uint8Array, owner: TabInfo) => {
+    const identity = owner.runtimeId;
+    if (!identity) throw new Error("Session runtime is not connected");
     const isText = typeof data === "string";
     const bytes = isText ? new TextEncoder().encode(data) : data;
-    const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
+    const written = await invoke<number[]>("write_data", { sessionId, runtimeId: identity, data: Array.from(bytes), transcode: isText });
     const writtenBytes = new Uint8Array(written);
+    if (tabsRef.current.find(tab => tab.id === owner.id)?.runtimeId !== identity) return writtenBytes;
     sentDataCallbackRef.current?.(sessionId, writtenBytes);
     sentDataSubscribersRef.current.forEach(callback => callback(sessionId, writtenBytes));
+    return writtenBytes;
   }, []);
 
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
     const tab = tabsRef.current.find(item => item.id === sessionId);
-    if (!tab || tab.state === "disconnected") return;
+    if (!tab || tab.state !== "connected") return;
     try {
-      await writeData(sessionId, data);
+      await writeData(sessionId, data, tab);
     } catch (error) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
       throw error;
@@ -567,18 +424,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sendBarEnabled?: boolean,
     pluginId?: string,
   ) => {
-    const tab = state.tabs.find(t => t.id === sessionId);
-    const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
-    if (wasConnected) {
-      dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sessionId });
-      try {
-        await invoke("disconnect_session", { sessionId });
-        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
-      } catch (e) {
-        dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
-        return;
-      }
-    }
+    const tab = tabsRef.current.find(t => t.id === sessionId);
+    const wasConnected = tab?.state === "connected";
+    if (wasConnected && !(await disconnect(sessionId))) return;
+    if (pendingOperations.current.has(sessionId)) return;
+    const isCurrent = scopeFor(sessionId).begin();
 
     const effectivePluginId = pluginId || tab?.pluginId;
     if (!effectivePluginId) {
@@ -597,6 +447,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transferProtocol: transferProtocol ?? tab?.transferProtocol,
       sendBarEnabled: sendBarEnabled ?? tab?.sendBarEnabled,
     });
+    pendingOperations.current.add(sessionId);
     try {
       await invoke("save_session_config", {
         request: {
@@ -613,8 +464,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `保存配置失败: ${e}` });
       return;
+    } finally {
+      if (isCurrent()) pendingOperations.current.delete(sessionId);
     }
 
+    if (!isCurrent()) return;
     const persistedParams = plugin?.persistedConnectionParams?.(normalizedParams, sessionId) ?? normalizedParams;
     dispatch({
       type: "UPDATE_TAB_CONFIG",
@@ -629,29 +483,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
 
     if (wasConnected) {
-      try {
-        const newSessionId = await invoke<string>("connect_session", {
-          request: {
-            endpoint,
-            params: persistedParams,
-            name: effectiveName,
-            pluginId: effectivePluginId,
-            transferEnabled: sessionOptions.transferEnabled,
-            transferProtocol: sessionOptions.transferProtocol ?? null,
-            sendBarEnabled: sessionOptions.sendBarEnabled,
-            sessionId,
-          },
-        });
-        dispatch({ type: "SET_TAB_STATE", id: newSessionId, state: "connected" });
-      } catch (e) {
-        dispatch({ type: "SET_ERROR", error: `重连失败: ${e}` });
-      }
+      await connect({ endpoint, params: persistedParams, name: effectiveName, pluginId: effectivePluginId,
+        transferEnabled: sessionOptions.transferEnabled, transferProtocol: sessionOptions.transferProtocol,
+        sendBarEnabled: sessionOptions.sendBarEnabled, sessionId });
     }
-  }, [state.tabs]);
+  }, [connect, disconnect]);
 
   const openChannel = useCallback(async (parentSessionId: string, elevated = false): Promise<string | null> => {
     try {
-      return await invoke<string>("open_channel", { sessionId: parentSessionId, elevated });
+      const runtimeId = tabsRef.current.find(tab => tab.id === parentSessionId)?.runtimeId;
+      if (!runtimeId) return null;
+      return await invoke<string>("open_channel", { sessionId: parentSessionId, runtimeId, elevated });
     } catch (e) {
       const parent = tabsRef.current.find(tab => tab.id === parentSessionId);
       const plugin = parent ? pluginRegistry.get(parent.pluginId) : undefined;
@@ -662,32 +504,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closeChannel = useCallback(async (channelId: string, parentId: string) => {
+    const runtimeId = tabsRef.current.find(tab => tab.id === parentId)?.runtimeId;
+    if (!runtimeId) return;
     const resetCounter = !tabsRef.current.some(tab => tab.parentId === parentId && tab.id !== channelId);
     try {
-      await invoke("close_channel", { sessionId: channelId, parentId, resetCounter });
-      dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
+      await invoke("close_channel", { sessionId: channelId, runtimeId, parentId, resetCounter });
+      if (tabsRef.current.find(tab => tab.id === parentId)?.runtimeId === runtimeId) dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `关闭终端失败: ${e}` });
     }
   }, []);
 
   const clearError = useCallback(() => dispatch({ type: "SET_ERROR", error: null }), []);
+  const reportError = useCallback((message: string) => dispatch({ type: "SET_ERROR", error: message }), []);
 
   const loadSavedSessions = useCallback(async () => {
     try {
-      const saved = await invoke<Array<{
-        id: string;
-        name: string;
-        connection_type: string;
-        endpoint: string;
-        params: Record<string, unknown>;
-        timestamp: number;
-        plugin_id: string;
-        transfer_enabled?: boolean;
-        transfer_protocol?: string;
-        send_bar_enabled?: boolean;
-      }>>("load_sessions");
-      if (!saved?.length) return;
+      // StrictMode may replay startup effects. Share the one catalog read across those calls.
+      const saved = await (catalogReadRef.current ??= invoke<SavedSessionConfig[]>("load_sessions"));
       const tabs: TabInfo[] = saved.map(s => {
         const pluginId = s.plugin_id;
         const params = pluginRegistry.get(pluginId)?.normalizeConnectionParams?.(s.params) ?? s.params;
@@ -698,6 +532,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         });
         return {
           id: s.id,
+          runtimeId: null,
           name: s.name,
           connection_type: s.connection_type,
           endpoint: s.endpoint,
@@ -711,11 +546,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           sendBarEnabled: sessionOptions.sendBarEnabled,
         };
       });
-      dispatch({ type: "SET_TABS", tabs });
-      dispatch({ type: "SET_ACTIVE", id: tabs[0].id });
+      dispatch({ type: "CATALOG_LOADED", tabs });
     } catch (e) {
       dispatch({
-        type: "SET_ERROR",
+        type: "CATALOG_FAILED",
         error: i18n.t("session.loadPersistFailed", {
           defaultValue: "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
           error: String(e),
@@ -733,23 +567,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const isSessionConnected = useCallback((sessionId: string): boolean => {
     const tab = tabsRef.current.find(item => item.id === sessionId);
-    return tab?.state === "connected" || tab?.state === "transferring";
+    return tab?.state === "connected";
   }, []);
+  const getSessionRuntimeId = useCallback((sessionId: string): string | null => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    return tab?.state === "connected" ? tab.runtimeId : null;
+  }, []);
+  const isSessionRuntimeCurrent = useCallback((sessionId: string, runtimeId: string): boolean => {
+    return getSessionRuntimeId(sessionId) === runtimeId;
+  }, [getSessionRuntimeId]);
 
   const sendToTarget = useCallback(async (sessionId: string, data: string | Uint8Array) => {
     const tab = tabsRef.current.find(item => item.id === sessionId);
-    if (!tab || tab.state === "disconnected") return;
+    if (!tab?.runtimeId || tab.state !== "connected") return;
     const plugin = pluginRegistry.get(tab.pluginId);
     try {
       if (plugin?.sendData) {
         await plugin.sendData({
           sessionId,
+          runtimeId: tab.runtimeId,
           params: tab.params ?? {},
           data,
-          sendDefault: writeData,
+          sendDefault: (targetId, payload) => writeData(targetId, payload, tab),
         });
       } else {
-        await writeData(sessionId, data);
+        await writeData(sessionId, data, tab);
       }
     } catch (error) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
@@ -758,9 +600,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [writeData]);
 
   const updateSessionStats = useCallback((sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (!tab?.runtimeId || tab.state !== "connected") return;
     dispatch({
       type: "UPDATE_TAB_STATS",
       id: sessionId,
+      runtimeId: tab.runtimeId,
       stats: { txBytes, rxBytes, ...(rxPackets !== undefined ? { rxPackets } : {}), ...(txPackets !== undefined ? { txPackets } : {}) },
       connectedAt: undefined,
     });
@@ -771,8 +616,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
     (async () => {
-      const u1 = await listen<{ session_id: string; data_b64?: string; data?: number[] }>("session-data", event => {
-        const data = event.payload.data_b64 ? decodeBase64(event.payload.data_b64) : new Uint8Array(event.payload.data ?? []);
+      const u1 = await listen<{ session_id: string; runtime_id: string; data_b64: string }>("session-data", event => {
+        const tab = tabsRef.current.find(tab => tab.id === event.payload.session_id);
+        // A batch queued before EOF may arrive after the same runtime's disconnect event.
+        if (!tab || tab.runtimeId !== event.payload.runtime_id) return;
+        const data = decodeBase64(event.payload.data_b64);
         dataCallbackRef.current?.(event.payload.session_id, data);
       });
       if (cancelled) { u1(); return; }
@@ -780,6 +628,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const u2 = await listen<{
         session_id: string;
+        runtime_id: string;
         endpoint: string;
         connection_type: string;
         plugin_id: string;
@@ -804,77 +653,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferProtocol: event.payload.transfer_protocol ?? existingTab?.transferProtocol,
           sendBarEnabled: event.payload.send_bar_enabled ?? existingTab?.sendBarEnabled,
         });
-        if (existingTab) {
-          dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
-          dispatch({
-            type: "UPDATE_TAB_CONFIG",
-            id: sid,
-            endpoint: event.payload.endpoint,
-            params: eventParams,
-            name: existingTab.name,
-            transferEnabled: eventOptions.transferEnabled,
-            transferProtocol: eventOptions.transferProtocol,
-            sendBarEnabled: eventOptions.sendBarEnabled,
-            pluginId: eventPluginId,
+        dispatch({
+          type: "SESSION_CONNECTED",
+          tab: {
+            id: sid, runtimeId: event.payload.runtime_id,
+            name: event.payload.name || existingTab?.name || pluginRegistry.get(eventPluginId)?.manifest.name || eventPluginId,
+            connection_type: event.payload.connection_type,
+            endpoint: event.payload.endpoint, state: "connected", pluginId: eventPluginId,
+            params: eventParams, stats: { txBytes: 0, rxBytes: 0 },
             connectedAt: event.payload.connected_at ?? Date.now(),
-          });
-        } else if (parentId) {
-          dispatch({ type: "SET_TAB_STATE", id: parentId, state: "connected" });
-          dispatch({
-            type: "ADD_TAB",
-            tab: {
-              id: sid,
-              name: event.payload.name,
-              connection_type: event.payload.connection_type,
-              endpoint: event.payload.endpoint,
-              state: "connected",
-              pluginId: eventPluginId,
-              params: eventParams,
-              stats: { txBytes: 0, rxBytes: 0 },
-              connectedAt: event.payload.connected_at ?? Date.now(),
-              transferEnabled: event.payload.transfer_enabled ?? false,
-              transferProtocol: event.payload.transfer_protocol,
-              sendBarEnabled: eventOptions.sendBarEnabled,
-              parentId,
-              channelIndex: event.payload.channel_index,
-              elevated: event.payload.elevated ?? false,
-            },
-          });
-        } else {
-          dispatch({
-            type: "ADD_TAB",
-            tab: {
-              id: sid,
-              name: event.payload.name || `${pluginRegistry.get(eventPluginId)?.manifest.name || eventPluginId.toUpperCase()} @ ${event.payload.endpoint}`,
-              connection_type: event.payload.connection_type,
-              endpoint: event.payload.endpoint,
-              state: "connected",
-              pluginId: eventPluginId,
-              params: eventParams,
-              stats: { txBytes: 0, rxBytes: 0 },
-              connectedAt: event.payload.connected_at ?? Date.now(),
-              transferEnabled: eventOptions.transferEnabled,
-              transferProtocol: eventOptions.transferProtocol,
-              sendBarEnabled: eventOptions.sendBarEnabled,
-              isContainer: event.payload.is_container ?? false,
-            },
-          });
-        }
+            transferEnabled: eventOptions.transferEnabled, transferProtocol: eventOptions.transferProtocol,
+            sendBarEnabled: eventOptions.sendBarEnabled, parentId,
+            channelIndex: event.payload.channel_index, elevated: event.payload.elevated,
+            isContainer: event.payload.is_container,
+          },
+        });
       });
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
-      const u2e = await listen<{ channel_id: string; parent_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", event => {
+      const u2e = await listen<{ channel_id: string; parent_id: string; runtime_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", event => {
+        if (tabsRef.current.find(tab => tab.id === event.payload.channel_id)?.runtimeId !== event.payload.runtime_id) return;
         if (event.payload.disconnect_info?.retain_terminal) dispatch({ type: "SET_TAB_DISCONNECTED", id: event.payload.channel_id, info: event.payload.disconnect_info });
         else dispatch({ type: "REMOVE_CHILD", id: event.payload.channel_id, parentId: event.payload.parent_id });
       });
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
 
-      const u3 = await listen<{ session_id: string; reason?: string; disconnect_info?: DisconnectInfo }>("session-disconnected", event => {
+      const u3 = await listen<{ session_id: string; runtime_id: string; reason?: string; disconnect_info?: DisconnectInfo }>("session-disconnected", event => {
         const sid = event.payload.session_id;
-        dispatch({ type: "SET_TAB_DISCONNECTED", id: sid, info: event.payload.disconnect_info });
-        if (!event.payload.disconnect_info?.retain_terminal) dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
+        if (tabsRef.current.find(tab => tab.id === sid)?.runtimeId !== event.payload.runtime_id) return;
+        dispatch({ type: "SESSION_DISCONNECTED", id: sid, runtimeId: event.payload.runtime_id, info: event.payload.disconnect_info });
         disconnectCallbackRef.current?.(sid, event.payload.reason);
         setLoggingSessions(prev => {
           if (!prev.has(sid)) return prev;
@@ -892,18 +701,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u3(); return; }
       unlisteners.push(u3);
 
-      const u4 = await listen<{ session_id: string }>("file-transfer:started", event => {
-        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "transferring" });
-      });
-      if (cancelled) { u4(); return; }
-      unlisteners.push(u4);
-
-      const u5 = await listen<{ session_id: string; success: boolean }>("file-transfer:finished", event => {
-        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
-      });
-      if (cancelled) { u5(); return; }
-      unlisteners.push(u5);
-
       const u7 = await listen<{ session_id: string }>("session-switched", event => {
         dispatch({ type: "SET_ACTIVE", id: event.payload.session_id });
       });
@@ -916,8 +713,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u8(); return; }
       unlisteners.push(u8);
 
-      const u9 = await listen<{ tab_id: string; tx_bytes: number; rx_bytes: number; connected_at?: number | null }>("session-stats", event => {
-        dispatch({ type: "UPDATE_TAB_STATS", id: event.payload.tab_id, stats: { txBytes: event.payload.tx_bytes, rxBytes: event.payload.rx_bytes }, connectedAt: event.payload.connected_at });
+      const u9 = await listen<{ tab_id: string; runtime_id: string; tx_bytes: number; rx_bytes: number; connected_at?: number | null }>("session-stats", event => {
+        dispatch({ type: "UPDATE_TAB_STATS", id: event.payload.tab_id, runtimeId: event.payload.runtime_id, stats: { txBytes: event.payload.tx_bytes, rxBytes: event.payload.rx_bytes }, connectedAt: event.payload.connected_at });
       });
       if (cancelled) { u9(); return; }
       unlisteners.push(u9);
@@ -932,9 +729,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
-    void listen<{ session_id: string; dropped_chunks: number }>("session-display-overflow", event => {
+    void listen<{ session_id: string; runtime_id: string; dropped_chunks: number }>("session-display-overflow", event => {
       if (disposed) return;
       const tab = tabsRef.current.find(item => item.id === event.payload.session_id);
+      if (tab?.runtimeId !== event.payload.runtime_id || tab.state !== "connected") return;
       dispatch({
         type: "SET_ERROR",
         error: i18n.t("session.displayOverflow", {
@@ -993,10 +791,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       onDataSent,
       subscribeDataSent,
       isSessionConnected,
+      isSessionRuntimeCurrent,
+      getSessionRuntimeId,
       sendToTarget,
       updateSessionStats,
       onSessionDisconnect,
       clearError,
+      reportError,
       startSessionLog,
       stopSessionLog,
       loggingSessions,

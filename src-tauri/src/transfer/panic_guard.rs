@@ -1,38 +1,22 @@
-//! PanicGuard — RAII 守卫确保传输任务 panic/abort 时也能清理会话状态
+//! RAII 守卫确保传输任务 panic/abort 时也能释放原连接实例的调度槽。
 //!
 //! 用于 Auxiliary 传输的 tokio::spawn 块内。即使 task panic 或被 abort，
-//! Drop 实现也会调用 `transfer_done()` 释放取消标志，防止会话
-//! 永久卡在 "传输中" 状态。
-//!
-//! ## 使用方式
-//! ```ignore
-//! let mut guard = PanicGuard::new(app.clone(), session_id.clone());
-//! // ... 执行传输 ...
-//! // 正常结束后先调用 complete() 释放 SessionStore 传输占用，再显式 emit finished
-//! // Drop 时：若未 complete 则自动 cleanup 并 emit 失败事件
-//! ```
+//! Drop 调用 `transfer_done()` 释放取消标志；它不改写连接健康状态。
 
 use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 
+use crate::session::{RuntimeId, RuntimeIdentity};
 use crate::AppState;
 
-/// RAII 守卫：Drop 时自动调用 `SessionStore::transfer_done()`
-///
-/// # 使用方式
-/// ```ignore
-/// let mut guard = PanicGuard::new(app.clone(), session_id.clone());
-/// // ... 执行传输 ...
-/// // 成功路径：显式 emit 成功事件后 defuse
-/// guard.defuse();
-/// // Drop 时：若未 defuse（panic / abort / 错误路径）自动 emit 失败事件
-/// ```
+/// 正常路径先 complete 再发布 finished；未完成的 Drop 清理并发布精确任务失败。
 pub(crate) struct PanicGuard {
     app: AppHandle,
     sid: String,
     client_id: String,
     protocol: String,
     transfer_id: String,
+    runtime_id: RuntimeId,
     /// 标记传输已正常完成。若 Drop 时仍为 false，说明异常退出。
     defused: bool,
     cleaned: bool,
@@ -45,6 +29,7 @@ impl PanicGuard {
         client_id: String,
         protocol: String,
         transfer_id: String,
+        runtime_id: RuntimeId,
     ) -> Self {
         Self {
             app,
@@ -52,6 +37,7 @@ impl PanicGuard {
             client_id,
             protocol,
             transfer_id,
+            runtime_id,
             defused: false,
             cleaned: false,
         }
@@ -63,7 +49,13 @@ impl PanicGuard {
         }
         if let Some(app_state) = self.app.try_state::<AppState>() {
             if let Ok(mut store) = app_state.session_store.lock() {
-                store.transfer_done(&self.sid, Some(&self.transfer_id));
+                store.transfer_done(
+                    &RuntimeIdentity {
+                        session_id: self.sid.clone(),
+                        runtime_id: self.runtime_id,
+                    },
+                    Some(&self.transfer_id),
+                );
             }
         }
         self.cleaned = true;
@@ -87,6 +79,8 @@ impl Drop for PanicGuard {
                 "file-transfer:finished",
                 serde_json::json!({
                     "session_id": &self.client_id,
+                    "runtime_id": self.runtime_id,
+                    "results": serde_json::Value::Null,
                     "transfer_id": &self.transfer_id,
                     "protocol": &self.protocol,
                     "success": false,

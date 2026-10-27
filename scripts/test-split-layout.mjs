@@ -17,7 +17,24 @@ import {
 import {
   parsePersistedWorkspaceLayout,
   serializeWorkspaceLayout,
+  canPersistWorkspaceLayout,
 } from "../src/core/workspace-layout.ts";
+
+// Failed or incomplete startup I/O must preserve yesterday's on-disk layout. Both read orders
+// are exercised; an empty-but-successful library is ready, while a failed read is never empty.
+const previousDiskLayout = '{"saved":"yesterday"}';
+for (const statuses of [
+  ["loading", "loading"], ["loading", "ready"], ["ready", "loading"],
+  ["error", "ready"], ["ready", "error"], ["error", "error"],
+]) {
+  let disk = previousDiskLayout;
+  if (canPersistWorkspaceLayout(statuses[0], statuses[1], false)) {
+    disk = serializeWorkspaceLayout(createInitialSplitLayout(), new Map());
+  }
+  assert.equal(disk, previousDiskLayout, `startup ${statuses.join("/")} must not overwrite disk`);
+}
+assert.equal(canPersistWorkspaceLayout("ready", "ready", true), false, "restoration owns selection until finished");
+assert.equal(canPersistWorkspaceLayout("ready", "ready", false), true, "successful empty library permits normal persistence");
 
 let state = createInitialSplitLayout("p1");
 assert.equal(countPanes(state.root), 1);

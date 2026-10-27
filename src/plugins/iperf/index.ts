@@ -36,7 +36,7 @@ export const iperfPlugin = definePlugin({
     {
       id: "iperf-version",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      when: ({ activeTab }) => activeTab?.state === "connected",
       render: ({ activeTab }) => createElement(
         StatusBarBadge,
         null,

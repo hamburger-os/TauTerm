@@ -7,6 +7,15 @@ import {
 
 export const WORKSPACE_LAYOUT_VERSION = 1;
 
+/** A failed startup read never grants permission to overwrite the persisted Workspace. */
+export function canPersistWorkspaceLayout(
+  layoutStatus: "loading" | "ready" | "error",
+  catalogStatus: "loading" | "ready" | "error",
+  restoring: boolean,
+): boolean {
+  return layoutStatus === "ready" && catalogStatus === "ready" && !restoring;
+}
+
 const MAX_WORKSPACE_TREE_DEPTH = MAX_WORKSPACE_PANES;
 
 interface PersistedWorkspaceLayoutV1 {

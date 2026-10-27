@@ -7,7 +7,7 @@
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, LazyLock, Mutex,
+    Arc, Mutex,
 };
 use std::time::Duration;
 
@@ -19,6 +19,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 
 use super::handler::SshHandler;
+use crate::session::RuntimeIdentity;
 
 const MAX_QUERY_LIMIT: usize = 500;
 const EXPORT_PAGE_LIMIT: usize = MAX_QUERY_LIMIT;
@@ -91,18 +92,24 @@ impl OperationState {
 
 struct ActiveOperations {
     label: &'static str,
-    inner: Mutex<HashMap<String, Arc<OperationState>>>,
+    inner: Mutex<OperationSlots>,
+}
+
+#[derive(Default)]
+struct OperationSlots {
+    closed: bool,
+    operations: HashMap<String, Arc<OperationState>>,
 }
 
 impl ActiveOperations {
     fn new(label: &'static str) -> Self {
         Self {
             label,
-            inner: Mutex::new(HashMap::new()),
+            inner: Mutex::new(OperationSlots::default()),
         }
     }
 
-    fn register(&'static self, session_id: &str) -> Result<OperationGuard, String> {
+    fn register(self: &Arc<Self>, session_id: &str) -> Result<OperationGuard, String> {
         let mut operations = self.inner.lock().unwrap_or_else(|poisoned| {
             log::error!(
                 "[{}:{}] operation registry poisoned; recovering",
@@ -111,14 +118,17 @@ impl ActiveOperations {
             );
             poisoned.into_inner()
         });
-        match operations.entry(session_id.to_string()) {
+        if operations.closed {
+            return Err("SSH runtime is closed".into());
+        }
+        match operations.operations.entry(session_id.to_string()) {
             Entry::Occupied(_) => Err("operation_already_running".to_string()),
             Entry::Vacant(entry) => {
                 let state = Arc::new(OperationState::new());
                 entry.insert(state.clone());
                 Ok(OperationGuard {
                     session_id: session_id.to_string(),
-                    registry: self,
+                    registry: self.clone(),
                     state,
                 })
             }
@@ -134,14 +144,14 @@ impl ActiveOperations {
             );
             poisoned.into_inner()
         });
-        let state = operations.get(session_id).cloned();
+        let state = operations.operations.get(session_id).cloned();
         if let Some(state) = &state {
             state.cancel();
         }
         state
     }
 
-    fn unregister(&self, session_id: &str) {
+    fn unregister(&self, session_id: &str, expected: &Arc<OperationState>) {
         let mut operations = self.inner.lock().unwrap_or_else(|poisoned| {
             log::error!(
                 "[{}:{}] operation registry poisoned; recovering",
@@ -150,13 +160,30 @@ impl ActiveOperations {
             );
             poisoned.into_inner()
         });
-        operations.remove(session_id);
+        if operations
+            .operations
+            .get(session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, expected))
+        {
+            operations.operations.remove(session_id);
+        }
+    }
+
+    fn close(&self) {
+        let mut slots = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        slots.closed = true;
+        for operation in slots.operations.values() {
+            operation.cancel();
+        }
     }
 }
 
 struct OperationGuard {
     session_id: String,
-    registry: &'static ActiveOperations,
+    registry: Arc<ActiveOperations>,
     state: Arc<OperationState>,
 }
 
@@ -168,15 +195,30 @@ impl OperationGuard {
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        self.registry.unregister(&self.session_id);
+        self.registry.unregister(&self.session_id, &self.state);
         self.state.mark_done();
     }
 }
 
-static ACTIVE_STREAMS: LazyLock<ActiveOperations> =
-    LazyLock::new(|| ActiveOperations::new("journald:stream"));
-static ACTIVE_EXPORTS: LazyLock<ActiveOperations> =
-    LazyLock::new(|| ActiveOperations::new("journald:export"));
+/// Background work belongs to one SSH connection; child ids retain independent slots.
+pub struct JournaldRuntime {
+    streams: Arc<ActiveOperations>,
+    exports: Arc<ActiveOperations>,
+}
+
+impl JournaldRuntime {
+    pub fn new() -> Self {
+        Self {
+            streams: Arc::new(ActiveOperations::new("journald:stream")),
+            exports: Arc::new(ActiveOperations::new("journald:export")),
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.streams.close();
+        self.exports.close();
+    }
+}
 
 // ── Domain model ──────────────────────────────────────────────────────
 
@@ -570,7 +612,7 @@ fn flush_partial_line(line_buffer: &mut Vec<u8>, batch: &mut Vec<JournalEntry>, 
     line_buffer.clear();
 }
 
-fn emit_stream_batch(app: &AppHandle, session_id: &str, batch: &mut Vec<JournalEntry>) {
+fn emit_stream_batch(app: &AppHandle, identity: &RuntimeIdentity, batch: &mut Vec<JournalEntry>) {
     if batch.is_empty() {
         return;
     }
@@ -578,41 +620,46 @@ fn emit_stream_batch(app: &AppHandle, session_id: &str, batch: &mut Vec<JournalE
     let _ = app.emit(
         "journald:batch",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": identity.session_id,
+            "runtime_id": identity.runtime_id,
             "entries": entries,
             "dropped": 0usize,
         }),
     );
 }
 
-fn emit_stream_error(app: &AppHandle, session_id: &str, message: impl Into<String>) {
+fn emit_stream_error(app: &AppHandle, identity: &RuntimeIdentity, message: impl Into<String>) {
     let _ = app.emit(
         "journald:error",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": identity.session_id,
+            "runtime_id": identity.runtime_id,
             "error": error_payload(message),
         }),
     );
 }
 
-fn emit_stream_ended(app: &AppHandle, session_id: &str, reason: &str) {
+fn emit_stream_ended(app: &AppHandle, identity: &RuntimeIdentity, reason: &str) {
     let _ = app.emit(
         "journald:stream-ended",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": identity.session_id,
+            "runtime_id": identity.runtime_id,
             "reason": reason,
         }),
     );
 }
 
 pub async fn start_journald_stream(
+    runtime: &JournaldRuntime,
     session: &Arc<russh::client::Handle<SshHandler>>,
     app_handle: AppHandle,
-    session_id: String,
+    identity: RuntimeIdentity,
     filters: &JournaldQueryFilters,
 ) -> Result<(), String> {
-    let guard = ACTIVE_STREAMS
-        .register(&session_id)
+    let guard = runtime
+        .streams
+        .register(&identity.session_id)
         .map_err(|error| format!("journald stream: {error}"))?;
     let operation = guard.state();
 
@@ -623,13 +670,21 @@ pub async fn start_journald_stream(
             return Err(format!("SSH channel open failed: {error}"));
         }
     };
+    if operation.is_cancelled() {
+        let _ = channel.close().await;
+        return Err("journald stream cancelled".into());
+    }
     let command = build_command("journalctl", &build_stream_args(filters));
     if let Err(error) = channel.exec(true, command.as_str()).await {
         drop(guard);
         return Err(format!("journalctl follow exec failed: {error}"));
     }
 
-    let sid = session_id.clone();
+    if operation.is_cancelled() {
+        let _ = channel.close().await;
+        return Err("journald stream cancelled".into());
+    }
+    let sid = identity;
     tokio::spawn(async move {
         let _guard = guard;
         let mut line_buffer = Vec::new();
@@ -643,7 +698,7 @@ pub async fn start_journald_stream(
             tokio::select! {
                 _ = operation.cancelled() => {
                     let _ = channel.close().await;
-                    flush_partial_line(&mut line_buffer, &mut batch, &sid);
+                    flush_partial_line(&mut line_buffer, &mut batch, &sid.session_id);
                     emit_stream_batch(&app_handle, &sid, &mut batch);
                     // Explicit Stop awaits this task through OperationState. Do not
                     // emit stream-ended for cancellation: a queued old end event
@@ -665,7 +720,7 @@ pub async fn start_journald_stream(
                                 );
                                 line_buffer.clear();
                             } else {
-                                push_complete_lines(&mut line_buffer, &mut batch, &sid);
+                                push_complete_lines(&mut line_buffer, &mut batch, &sid.session_id);
                                 if batch.len() >= STREAM_BATCH_SIZE {
                                     emit_stream_batch(&app_handle, &sid, &mut batch);
                                 }
@@ -681,11 +736,11 @@ pub async fn start_journald_stream(
                             exit_status = Some(status);
                         }
                         Some(ChannelMsg::Eof) => {
-                            flush_partial_line(&mut line_buffer, &mut batch, &sid);
+                            flush_partial_line(&mut line_buffer, &mut batch, &sid.session_id);
                             emit_stream_batch(&app_handle, &sid, &mut batch);
                         }
                         Some(ChannelMsg::Close) | None => {
-                            flush_partial_line(&mut line_buffer, &mut batch, &sid);
+                            flush_partial_line(&mut line_buffer, &mut batch, &sid.session_id);
                             emit_stream_batch(&app_handle, &sid, &mut batch);
                             if exit_status.unwrap_or(0) != 0 {
                                 let output = JournalctlOutput {
@@ -713,12 +768,8 @@ pub async fn start_journald_stream(
     Ok(())
 }
 
-pub fn stop_journald_stream(session_id: &str) {
-    ACTIVE_STREAMS.cancel(session_id);
-}
-
-pub async fn stop_journald_stream_confirm(session_id: &str) {
-    if let Some(operation) = ACTIVE_STREAMS.cancel(session_id) {
+pub async fn stop_journald_stream_confirm(runtime: &JournaldRuntime, session_id: &str) {
+    if let Some(operation) = runtime.streams.cancel(session_id) {
         operation.wait_done().await;
     }
 }
@@ -747,7 +798,7 @@ impl Drop for TempExportFile {
 async fn run_journald_export_task(
     session: &Arc<russh::client::Handle<SshHandler>>,
     app_handle: &AppHandle,
-    session_id: &str,
+    identity: &RuntimeIdentity,
     filters: &JournaldQueryFilters,
     target_path: &str,
     operation: &OperationState,
@@ -814,7 +865,7 @@ async fn run_journald_export_task(
         if final_page || now.duration_since(last_progress) >= Duration::from_millis(200) {
             let _ = app_handle.emit(
                 "journald:export-progress",
-                serde_json::json!({ "session_id": session_id, "loaded": total }),
+                serde_json::json!({ "session_id": identity.session_id, "runtime_id": identity.runtime_id, "loaded": total }),
             );
             last_progress = now;
         }
@@ -848,19 +899,21 @@ async fn run_journald_export_task(
 }
 
 pub async fn start_journald_export(
+    runtime: &JournaldRuntime,
     session: &Arc<russh::client::Handle<SshHandler>>,
     app_handle: AppHandle,
-    session_id: String,
+    identity: RuntimeIdentity,
     filters: &JournaldQueryFilters,
     file_path: String,
 ) -> Result<(), String> {
-    let guard = ACTIVE_EXPORTS
-        .register(&session_id)
+    let guard = runtime
+        .exports
+        .register(&identity.session_id)
         .map_err(|error| format!("journald export: {error}"))?;
     let operation = guard.state();
     let session = session.clone();
     let filters = filters.clone();
-    let sid = session_id.clone();
+    let sid = identity;
     let target_path = file_path;
 
     tokio::spawn(async move {
@@ -884,7 +937,8 @@ pub async fn start_journald_export(
                 let _ = app_handle.emit(
                     "journald:export-complete",
                     serde_json::json!({
-                        "session_id": sid,
+                        "session_id": sid.session_id,
+                        "runtime_id": sid.runtime_id,
                         "file_path": target_path,
                         "total": total,
                     }),
@@ -897,32 +951,64 @@ pub async fn start_journald_export(
     Ok(())
 }
 
-fn emit_export_error(app: &AppHandle, session_id: &str, message: impl Into<String>) {
+fn emit_export_error(app: &AppHandle, identity: &RuntimeIdentity, message: impl Into<String>) {
     let message = message.into();
-    log::error!("[journald:export:{}] {}", session_id, message);
+    log::error!("[journald:export:{}] {}", identity.session_id, message);
     let _ = app.emit(
         "journald:export-error",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": identity.session_id,
+            "runtime_id": identity.runtime_id,
             "error": error_payload(message),
         }),
     );
 }
 
-fn emit_export_cancelled(app: &AppHandle, session_id: &str) {
+fn emit_export_cancelled(app: &AppHandle, identity: &RuntimeIdentity) {
     let _ = app.emit(
         "journald:export-cancelled",
-        serde_json::json!({ "session_id": session_id }),
+        serde_json::json!({ "session_id": identity.session_id, "runtime_id": identity.runtime_id }),
     );
 }
 
-pub fn stop_journald_export(session_id: &str) {
-    ACTIVE_EXPORTS.cancel(session_id);
+pub fn stop_journald_export(runtime: &JournaldRuntime, session_id: &str) {
+    runtime.exports.cancel(session_id);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_old_runtime_shutdown_cannot_cancel_new_runtime_operations() {
+        let old = JournaldRuntime::new();
+        let current = JournaldRuntime::new();
+        let old_guard = old.streams.register("same-child").unwrap();
+        let current_guard = current.streams.register("same-child").unwrap();
+        let other_child = current.streams.register("other-child").unwrap();
+        old.shutdown();
+        assert!(old_guard.state().is_cancelled());
+        assert!(!current_guard.state().is_cancelled());
+        assert!(!other_child.state().is_cancelled());
+        assert!(old.streams.register("late-child").is_err());
+        assert!(old.exports.register("late-child").is_err());
+        drop(old_guard);
+        assert!(current.streams.register("same-child").is_err());
+        current.shutdown();
+        assert!(current_guard.state().is_cancelled());
+        assert!(other_child.state().is_cancelled());
+    }
+
+    #[test]
+    fn an_obsolete_operation_guard_cannot_unregister_a_replacement() {
+        let operations = Arc::new(ActiveOperations::new("test"));
+        let old = operations.register("child").unwrap();
+        operations.unregister("child", &old.state());
+        let replacement = operations.register("child").unwrap();
+        drop(old);
+        assert!(operations.register("child").is_err());
+        assert!(!replacement.state().is_cancelled());
+    }
 
     fn filters() -> JournaldQueryFilters {
         JournaldQueryFilters {

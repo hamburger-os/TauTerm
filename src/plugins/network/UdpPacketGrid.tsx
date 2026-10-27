@@ -6,7 +6,7 @@
  */
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { PacketRow } from "./NetworkDebugSessionView";
+import type { PacketRow } from "./presentation";
 import ScrollToBottomButton from "../../components/Terminal/ScrollToBottomButton";
 import ContextMenu, { type ContextMenuItem } from "../../components/common/ContextMenu";
 import type { ContextMenuState } from "../../hooks/useContextMenu";

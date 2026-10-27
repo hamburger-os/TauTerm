@@ -72,23 +72,28 @@ export function normalizeJournaldError(error: unknown): JournaldErrorPayload {
 
 export async function startJournalStream(
   sessionId: string,
+  runtimeId: string,
   filter: JournaldFilter,
 ): Promise<void> {
   await invoke<void>("start_journald_stream", {
-    sessionId,
-    level: filter.level ?? null,
-    keyword: keywordForBackend(filter),
-    unit: filter.unit?.trim() || null,
-    kernelOnly: filter.kernelOnly ?? false,
+    request: {
+      sessionId,
+      runtimeId,
+      level: filter.level ?? null,
+      keyword: keywordForBackend(filter),
+      unit: filter.unit?.trim() || null,
+      kernelOnly: filter.kernelOnly ?? false,
+    },
   });
 }
 
-export async function stopJournalStream(sessionId: string): Promise<void> {
-  await invoke<void>("stop_journald_stream", { sessionId });
+export async function stopJournalStream(sessionId: string, runtimeId: string): Promise<void> {
+  await invoke<void>("stop_journald_stream", { sessionId, runtimeId });
 }
 
 export async function queryJournalHistory(
   sessionId: string,
+  runtimeId: string,
   filter: JournaldFilter,
   cursor: string | null,
   limit = 100,
@@ -96,6 +101,7 @@ export async function queryJournalHistory(
   const response = await invoke<JournaldQueryResponse>("journald_query_cmd", {
     request: {
       sessionId,
+      runtimeId,
       level: filter.level ?? null,
       keyword: keywordForBackend(filter),
       unit: filter.unit?.trim() || null,
@@ -113,12 +119,14 @@ export async function queryJournalHistory(
 
 export async function startJournalExport(
   sessionId: string,
+  runtimeId: string,
   filePath: string,
   filter: JournaldFilter,
 ): Promise<void> {
   await invoke<void>("start_journald_export", {
     request: {
       sessionId,
+      runtimeId,
       filePath,
       level: filter.level ?? null,
       keyword: keywordForBackend(filter),
@@ -130,6 +138,6 @@ export async function startJournalExport(
   });
 }
 
-export async function cancelJournalExport(sessionId: string): Promise<void> {
-  await invoke<void>("stop_journald_export", { sessionId });
+export async function cancelJournalExport(sessionId: string, runtimeId: string): Promise<void> {
+  await invoke<void>("stop_journald_export", { sessionId, runtimeId });
 }

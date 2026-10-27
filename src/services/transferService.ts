@@ -72,7 +72,7 @@ export async function startFileTransferAndWait(
   try {
     unlisten = await listen<TransferFinishedPayload>("file-transfer:finished", (event) => {
       const payload = event.payload;
-      if (payload.session_id !== sessionId) return;
+      if (payload.session_id !== sessionId || payload.runtime_id !== request.runtimeId) return;
       if (protocol && payload.protocol !== protocol) return;
 
       if (!activeTransferId) {

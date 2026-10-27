@@ -46,7 +46,7 @@ export const tftpPlugin = definePlugin({
     {
       id: "tftp-type",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      when: ({ activeTab }) => activeTab?.state === "connected",
       render: () => createElement(StatusBarBadge, null, "TFTP"),
     },
   ],

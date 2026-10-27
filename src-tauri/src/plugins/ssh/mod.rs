@@ -735,6 +735,7 @@ pub struct SshRuntime {
     pub host_key_fingerprint: Option<String>,
     /// 远程 home 目录按需解析；基础 SSH 建连不执行额外远端命令。
     home_dir: Mutex<Option<String>>,
+    pub journald: journald::JournaldRuntime,
 }
 
 struct RuntimeAttach {
@@ -746,11 +747,7 @@ impl SessionAttach for RuntimeAttach {
         self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        // SSH-owned background operations are keyed by the final Session id, so their
-        // lifecycle cleanup belongs in the SSH attachment hook rather than SessionStore.
-        journald::stop_journald_stream(session_id);
-        journald::stop_journald_export(session_id);
-        self.runtimes.detach(session_id);
+        self.runtimes.detach(session_id, &self.runtime);
     }
 }
 
@@ -764,6 +761,7 @@ impl SshRuntime {
             sftp: Arc::new(Mutex::new(None)),
             host_key_fingerprint,
             home_dir: Mutex::new(None),
+            journald: journald::JournaldRuntime::new(),
         }
     }
 
@@ -786,7 +784,11 @@ impl SshRuntime {
     }
 }
 
-impl SessionService for SshRuntime {}
+impl SessionService for SshRuntime {
+    fn shutdown(&self) {
+        self.journald.shutdown();
+    }
+}
 
 #[async_trait::async_trait]
 impl SessionChannelFactory for SshRuntime {

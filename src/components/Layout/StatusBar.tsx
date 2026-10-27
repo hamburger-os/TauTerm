@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useSession } from "../../context/SessionContext";
+import { useTransfer } from "../../context/TransferContext";
 import {
   pluginRegistry,
   type StatusBarContext,
@@ -89,9 +90,12 @@ export default function StatusBar({
   onVersionClick,
 }: StatusBarProps) {
   const { state, loggingSessions, logStatuses } = useSession();
+  const { getActiveTaskForSession } = useTransfer();
   const activeTab = state.tabs.find(tab => tab.id === state.activeTabId) ?? null;
   const activePlugin = activeTab ? pluginRegistry.get(activeTab.pluginId) : undefined;
-  const connected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  const connected = activeTab?.state === "connected";
+  const activeTransfer = activeTab ? getActiveTaskForSession(activeTab.id) : undefined;
+  const transferring = connected && activeTransfer?.runtimeId === activeTab?.runtimeId;
   const supportsStreamStatus = activePlugin?.manifest.content_type === "terminal"
     || activePlugin?.manifest.send_bar === true;
   const dataMode = activeTab?.params?.data_mode;
@@ -122,11 +126,11 @@ export default function StatusBar({
           node: <SessionConnectionStatus tab={activeTab} />,
         }
       : null,
-    activeTab?.state === "transferring"
+    transferring
       ? {
           key: "core:activity",
           priority: PRI.activity,
-          node: <SessionActivityStatus tab={activeTab} />,
+          node: <SessionActivityStatus active />,
         }
       : null,
     connected

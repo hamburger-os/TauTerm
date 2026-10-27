@@ -198,6 +198,9 @@ jobs:
       - name: SendBar payload and architecture contract
         run: npm run check:sendbar
 
+      - name: Session lifecycle and asynchronous race behavior
+        run: npm run check:session-lifecycle
+
       - name: File-transfer lifecycle and responsive UI contract
         run: npm run check:file-transfer
 

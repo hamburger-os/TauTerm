@@ -16,6 +16,7 @@ export type ObjectKind =
   | "md_notify";
 
 export type TrdpEvent = {
+  runtime_id: string;
   session_id?: string;
   event?: string;
   command?: string;

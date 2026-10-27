@@ -8,7 +8,7 @@ use crate::kernel::session_store::SessionCreateOptions;
 use crate::plugin_application::{
     create_on_data_callback, ConnectSessionRequest, SessionConnectFuture,
 };
-use crate::session::DisconnectInfo;
+use crate::session::{DisconnectInfo, RuntimeIdentity};
 use crate::AppState;
 
 pub(crate) fn session_connector(
@@ -59,15 +59,23 @@ async fn connect_session(
     let on_data = create_on_data_callback(&app, log_tx, data_mode.clone(), encoding);
 
     let app_disconnect = app.clone();
-    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
-        Box::new(move |session_id, info| {
-            if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
-                store.mark_disconnected(&session_id);
-            }
+    let on_disconnect: Box<dyn Fn(RuntimeIdentity, DisconnectInfo) + Send> =
+        Box::new(move |identity, info| {
+            let cleanup = app_disconnect
+                .state::<AppState>()
+                .session_store
+                .lock()
+                .ok()
+                .and_then(|mut store| store.mark_disconnected(&identity));
+            let Some(cleanup) = cleanup else {
+                return;
+            };
+            cleanup.schedule();
             let _ = app_disconnect.emit(
                 "session-disconnected",
                 serde_json::json!({
-                    "session_id": session_id,
+                    "session_id": identity.session_id,
+                    "runtime_id": identity.runtime_id,
                     "reason": &info.reason,
                     "disconnect_info": &info,
                 }),
@@ -77,7 +85,7 @@ async fn connect_session(
     let transfer_enabled = transfer_enabled.unwrap_or(true);
     let transfer_protocol = transfer_protocol.unwrap_or_else(|| "ymodem".into());
     let send_bar_enabled = send_bar_enabled.unwrap_or(true);
-    let sid = {
+    let runtime_identity = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_session(
             SessionCreateOptions {
@@ -96,27 +104,27 @@ async fn connect_session(
             app.clone(),
         )?
     };
+    let sid = runtime_identity.session_id.clone();
 
-    let virtual_endpoints = match adapter.runtime(&sid) {
-        Some(runtime) => runtime
-            .initialize_virtual_ports(&app, &sid, &params)
-            .unwrap_or_else(|error| {
-                log::warn!("Serial 虚拟串口 capability 初始化失败 (session={sid}): {error}");
-                let _ = app.emit(
-                    "virtual-port-failed",
-                    serde_json::json!({
-                        "session_id": sid,
-                        "kind": "create_failed",
-                        "reason": error,
-                    }),
-                );
-                Vec::new()
-            }),
-        None => {
-            log::warn!("Serial runtime 未注册 (session={sid})");
+    let serial_runtime =
+        crate::plugin_application::capture_session_runtime(&state, &runtime_identity, || {
+            adapter.runtime(&sid)
+        })?;
+    let virtual_endpoints = serial_runtime
+        .initialize_virtual_ports(&app, &sid, &params)
+        .unwrap_or_else(|error| {
+            log::warn!("Serial 虚拟串口 capability 初始化失败 (session={sid}): {error}");
+            let _ = app.emit(
+                "virtual-port-failed",
+                serde_json::json!({
+                            "session_id": sid,
+                "runtime_id": runtime_identity.runtime_id,
+                            "kind": "create_failed",
+                            "reason": error,
+                        }),
+            );
             Vec::new()
-        }
-    };
+        });
 
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -138,10 +146,10 @@ async fn connect_session(
         endpoint,
         data_mode
     );
-    let _ = app.emit(
-        "session-connected",
+    crate::plugin_application::publish_session_connected(
+        &app,
+        &runtime_identity,
         serde_json::json!({
-            "session_id": sid,
             "endpoint": endpoint,
             "connection_type": crate::plugins::serial::PLUGIN_ID,
             "plugin_id": crate::plugins::serial::PLUGIN_ID,
@@ -153,11 +161,6 @@ async fn connect_session(
             "send_bar_enabled": send_bar_enabled,
             "virtual_endpoints": virtual_endpoints,
         }),
-    );
-    state
-        .session_store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .activate_data_plane(&sid)?;
+    )?;
     Ok(sid)
 }

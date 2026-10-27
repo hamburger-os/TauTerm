@@ -12,6 +12,8 @@ Node 可以承载 PD 与 MD 对象。Rust 侧为启用的网络 Link 管理 nati
 
 对象 Start/Stop/Send、实时抓包以及 MD Confirm 都属于运行时操作，只有 Session 真正 Connected 后才允许执行。连接状态以 native open 的结果为准，helper 异常退出会让 Session 回到 Disconnected。
 
+sidecar 启动、命令结果和事件保留捕获的 [公共连接身份](CORE.md)，跨异步等待不重新按裸 Session ID 取得其它实例。Node/Monitor 视图只接收当前实例事件，旧 sidecar 的退出或迟到消息不能关闭、更新重连后的会话。
+
 Node 工作区拥有主动对象配置与控制；总览、PD、MD、分析四个页面中的 PD/MD 页面可以创建和编辑 Publisher、Subscriber、Request、Listener、Notify 等主动对象。
 
 ### Monitor 与分析

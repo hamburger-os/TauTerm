@@ -88,7 +88,7 @@ export const rttPlugin = definePlugin({
     {
       id: "rtt-backend",
       priority: 850,
-      when: ({ activeTab }) => activeTab?.state === "connected" || activeTab?.state === "transferring",
+      when: ({ activeTab }) => activeTab?.state === "connected",
       render: ({ sessionId }) => <RttStatus sessionId={sessionId} />,
     },
   ],
