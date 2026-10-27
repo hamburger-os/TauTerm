@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **Dependency and updater hardening** — updates audited crypto/TLS/runtime dependencies, pins Rust and JavaScript Tauri updater components to the same validated 2.14.0 version, and disables unused legacy ZIP update extraction while retaining the supported installer and updater formats.
+
 ## [0.6.6] — 2026-09-23
 
 ### Added
