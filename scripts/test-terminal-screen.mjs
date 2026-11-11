@@ -1,17 +1,18 @@
 /**
  * Terminal screen contract: bytes -> cells.
  *
- * TauTerm deliberately never parses or rewrites PTY output (xterm.js owns every
- * VT semantic), so the only thing the host can get wrong on this path is the
- * terminal *configuration* it hands to xterm. That is not hypothetical: half-block
- * pixel-art logos are positioned with literal leading spaces and coloured through
- * per-cell 24-bit SGR pairs (foreground = upper pixel, background = lower pixel),
- * so one wrong option — `convertEol` rewriting a bare LF, a shifted column origin,
- * a dropped or duplicated row — shreds the artwork while every other assertion in
- * the repository still passes.
+ * xterm.js owns every terminal VT semantic; apart from the bounded ConPTY
+ * startup handshake documented in `docs/modules/LOCAL_SHELL.md`, TauTerm never
+ * parses or rewrites PTY output. So the only thing the host can get wrong on this
+ * path is the terminal *configuration* it hands to xterm. That is not
+ * hypothetical: half-block pixel-art logos are positioned with literal leading
+ * spaces and coloured through per-cell 24-bit SGR pairs (foreground = upper pixel,
+ * background = lower pixel), so one wrong option — `convertEol` rewriting a bare
+ * LF, a shifted column origin, a dropped or duplicated row — shreds the artwork
+ * while every other assertion in the repository still passes.
  *
  * This replays a captured antigravity CLI startup stream through
- * `@xterm/headless` with the host's exact options and pins the resulting cell
+ * `@xterm/headless` with the host's terminal options and pins the resulting cell
  * grid. The fixture is raw terminal output captured from a real PTY; it is a
  * rendering input, not third-party source.
  */
@@ -22,13 +23,18 @@ import pkg from "@xterm/headless";
 
 const { Terminal } = pkg;
 
-const FIXTURE = resolve(import.meta.dirname, "..", "tests", "fixtures", "agy-half-block-logo.bin");
+const ROOT = resolve(import.meta.dirname, "..");
+const FIXTURE = resolve(ROOT, "tests", "fixtures", "agy-half-block-logo.bin");
 const UPPER_HALF_BLOCK = "\u2580";
 const LOWER_HALF_BLOCK = "\u2584";
 /** `Attributes.CM_RGB`: the colour mode bitmask xterm reports for 24-bit SGR. */
 const CM_RGB = 0x03000000;
 
-/** Host options that can influence the parsed grid; kept identical to Terminal.tsx. */
+/**
+ * Host options that can influence the parsed grid. `scrollback: 0` keeps the
+ * replay to one viewport (the fixture is 30 rows); the option values themselves
+ * are pinned to the host by the source assertions at the end of this file.
+ */
 const HOST_OPTIONS = {
   convertEol: false,
   allowTransparency: true,
@@ -40,8 +46,8 @@ const HOST_OPTIONS = {
 /** Expected artwork: leading spaces, glyph run, inner gap, trailing glyph run and metadata. */
 const ART_ROWS = [
   { lead: 6, run: LOWER_HALF_BLOCK + UPPER_HALF_BLOCK + UPPER_HALF_BLOCK + LOWER_HALF_BLOCK, gap: 8, text: "Antigravity CLI 1.5.5" },
-  { lead: 5, run: UPPER_HALF_BLOCK.repeat(6), gap: 7, text: "myshow1029@gmail.com" },
-  { lead: 4, run: UPPER_HALF_BLOCK.repeat(8), gap: 6, text: "C:/work/workspace/novel-forge" },
+  { lead: 5, run: UPPER_HALF_BLOCK.repeat(6), gap: 7, text: "operator@example.com" },
+  { lead: 4, run: UPPER_HALF_BLOCK.repeat(8), gap: 6, text: "C:/work/workspace/sample-proj" },
   { lead: 3, run: LOWER_HALF_BLOCK + UPPER_HALF_BLOCK.repeat(2), gap: 4, tail: UPPER_HALF_BLOCK.repeat(2) + LOWER_HALF_BLOCK },
   { lead: 2, run: LOWER_HALF_BLOCK + UPPER_HALF_BLOCK.repeat(2), gap: 6, tail: UPPER_HALF_BLOCK.repeat(2) + LOWER_HALF_BLOCK },
 ];
@@ -141,25 +147,42 @@ for (const [index] of ART_ROWS.entries()) {
 // which is exactly how the half-block logo was shredded. Reduced form of the
 // captured engine output (capture: bundled engine 1.25, 120x30):
 const ENGINE_ROW_A = "\x1b[6C\u2584\u2580\u2580\u2584\x1b[8CAntigravity CLI 1.5.5";
-const ENGINE_ROW_B = "\x1b[34D\u2580\u2580\u2580\u2580\u2580\u2580\x1b[7Cmyshow1029@gmail.com";
+const ENGINE_ROW_B = "\x1b[34D\u2580\u2580\u2580\u2580\u2580\u2580\x1b[7Coperator@example.com";
 const engineStream = "\x1b[H" + ENGINE_ROW_A + "\n" + ENGINE_ROW_B;
 
 const ptyLike = await replay(engineStream);
 assert.equal(
   rowText(ptyLike, 1),
-  "     \u2580\u2580\u2580\u2580\u2580\u2580       myshow1029@gmail.com",
+  "     \u2580\u2580\u2580\u2580\u2580\u2580       operator@example.com",
   "a bare LF plus relative rewind must keep the engine row at its intended column",
 );
 
 const rewritten = await replay(engineStream, { convertEol: true });
 assert.equal(
   rowText(rewritten, 1),
-  "\u2580\u2580\u2580\u2580\u2580\u2580       myshow1029@gmail.com",
-  "convertEol no longer alters LF+rewind rows: re-evaluate the host option before changing it",
+  "\u2580\u2580\u2580\u2580\u2580\u2580       operator@example.com",
+  "convertEol no longer collapses LF+rewind rows: re-evaluate the host option before changing it",
 );
 
 // The separator and prompt rows below the artwork must not be displaced either.
 const separator = Math.max(...Array.from({ length: 5 }, (_, i) => logoRow + i)) + 2;
 assert.match(rowText(terminal, separator), /^\u2500+$/, "the TUI separator row is missing");
 
-console.log(`terminal-screen: pinned ${ART_ROWS.length} logo rows and their 24-bit half-block colours`);
+// Source contract: the replay above is only meaningful while the host keeps
+// PTY-backed sessions on the raw byte stream. Pin the actual host wiring too, so
+// re-enabling `convertEol` for Local Shell/SSH (or dropping the prop) fails this
+// gate instead of silently shredding block art while every other check passes.
+const terminalViewSource = readFileSync(resolve(ROOT, "src", "components", "Terminal", "TerminalView.tsx"), "utf8");
+assert.match(
+  terminalViewSource,
+  /convertEol=\{tab\.pluginId !== "local-shell" && tab\.pluginId !== "ssh"\}/,
+  "TerminalView must keep convertEol disabled for PTY-backed plugins (local-shell, ssh)",
+);
+const terminalSource = readFileSync(resolve(ROOT, "src", "components", "Terminal", "Terminal.tsx"), "utf8");
+assert.match(
+  terminalSource,
+  /convertEol: convertEolRef\.current \?\? true/,
+  "TerminalInstance must read the convertEol prop when it creates the xterm surface",
+);
+
+console.log(`terminal-screen: pinned ${ART_ROWS.length} logo rows, their 24-bit half-block colours and the PTY convertEol wiring`);

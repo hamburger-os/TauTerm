@@ -88,14 +88,25 @@ function syncWebglRenderer(
   term: XTerm,
   addonRef: { current: WebglAddon | null },
   visible: boolean,
+  onFallback: () => void,
 ): TerminalRendererKind {
   if (visible) {
     if (addonRef.current) return "webgl";
     try {
       const addon = new WebglAddon();
       addon.onContextLoss(() => {
-        addon.dispose();
-        if (addonRef.current === addon) addonRef.current = null;
+        // Disposing the addon restores xterm's DOM renderer. A lost GPU context is
+        // a downgrade too, so report it instead of leaving the state header
+        // claiming a WebGL surface (see `warnRendererFallback`).
+        try {
+          addon.dispose();
+        } catch {
+          // Renderer already gone; the terminal keeps rendering through the DOM renderer.
+        }
+        if (addonRef.current !== addon) return;
+        addonRef.current = null;
+        warnRendererFallback(term, "WebGL context lost");
+        onFallback();
       });
       term.loadAddon(addon);
       addonRef.current = addon;
@@ -171,7 +182,7 @@ function createSpectrumTerminalTheme() {
     cursor: blue,
     cursorAccent: "#060709",
     selectionBackground: withAlpha(blue, 0.3),
-    // Glass terminal: the scrollbar is a hint, not a chrome bar.
+    // Glass terminal: the scrollbar is a hint, not a decorative bar.
     scrollbarSliderBackground: "rgba(232, 234, 240, 0.16)",
     scrollbarSliderHoverBackground: "rgba(232, 234, 240, 0.28)",
     scrollbarSliderActiveBackground: "rgba(232, 234, 240, 0.4)",
@@ -539,7 +550,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
             // block/box glyphs as exact quads (see `customGlyphs`), which keeps
             // pixel-art logos, TUI frames and character scrollbars free of DOM
             // cell seams. Hidden pooled terminals stay on the DOM renderer.
-            setRendererKind(syncWebglRenderer(nextTerm, webglAddonRef, isVisibleRef.current));
+            setRendererKind(syncWebglRenderer(nextTerm, webglAddonRef, isVisibleRef.current, () => {
+              setRendererKind(DOM_TERMINAL_RENDERER);
+            }));
 
             // Align rows to whole device pixels after the font is actually loaded;
             // a refit is required because a taller cell changes the row count.
@@ -586,6 +599,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
             inputDisposable = null;
             scrollDisposable = null;
             presentationDisposable = null;
+            // The addon is owned by the disposed Terminal; drop the stale reference so a
+            // later host lifecycle (e.g. a StrictMode probe) cannot report a dead renderer.
+            webglAddonRef.current = null;
             setPresentation(IDLE_TERMINAL_PRESENTATION);
             setRendererKind(DOM_TERMINAL_RENDERER);
             if (resizeTimerRef.current) {
@@ -651,7 +667,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    setRendererKind(syncWebglRenderer(term, webglAddonRef, isVisible));
+    setRendererKind(syncWebglRenderer(term, webglAddonRef, isVisible, () => {
+      setRendererKind(DOM_TERMINAL_RENDERER);
+    }));
   }, [isVisible]);
 
   // 接管系统 paste 事件的 capture 阶段，确保不会先被 xterm 默认处理后再重复发送。

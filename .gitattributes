@@ -1,3 +1,6 @@
 # Byte-exact terminal captures and other test fixtures must never be line-ending
-# normalised: they are replayed verbatim by the screen contract tests.
-tests/fixtures/** -text
+# normalised: they are replayed verbatim by the screen contract tests. They are
+# also binary for diff purposes: the captured ANSI bytes are not reviewable text
+# and every row would otherwise be reported as trailing whitespace by
+# `git diff --check`.
+tests/fixtures/** -text -diff
