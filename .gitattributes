@@ -1,0 +1,3 @@
+# Byte-exact terminal captures and other test fixtures must never be line-ending
+# normalised: they are replayed verbatim by the screen contract tests.
+tests/fixtures/** -text
