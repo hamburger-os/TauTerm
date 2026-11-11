@@ -20,6 +20,8 @@ SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fin
 
 需要新增前端文件访问能力时，必须先证明 Rust 边界无法合理承载，并为实际目录设置最小 scope；禁止恢复全盘通配形式的 WebView 文件权限。
 
+终端剪贴板是当前唯一的 WebView 系统访问例外：前端只经 Tauri `clipboard-manager` 的文本读写 capability（`clipboard-manager:allow-read-text` / `allow-write-text`）访问系统剪贴板，不注册 `navigator.clipboard` 或其它通用剪贴板通道。剪贴板读取结果必须区分“空”和“不可用”，失败要由 UI 明确告知用户；不得为该能力扩展到文件、图片或任意二进制剪贴板格式。
+
 ### Windows 特权操作
 
 主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；服务不可用或 Debug 开发场景使用明确的 `direct-uac-on-demand`。Release 下该回退只允许从 Windows Program Files 中的受保护安装目录启动；用户可写 portable 目录不具备可信资源边界，helper 必须拒绝提权执行其中的 `setupc.exe`。该回退不是 shell/batch 透传：普通 GUI 通过随机本地命名管道启动**当前 TauTerm 可执行文件本身**的窄类型 one-shot helper，helper 与 GUI 双向核对 pipe 对端 PID，只接受固定的 install/create/cleanup 请求，并在特权侧自行派生可信 resource/ownership 路径。Local Shell 的管理员 child 是另一条独立的一次性提权路径，不等于给主应用提权。
@@ -44,6 +46,8 @@ System Log 只能覆盖仍能返回到 Rust 控制流的故障；native exceptio
 ### Native helper 与动态库
 
 TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构建不能把当前工作目录当成可信可执行文件/DLL 搜索源。
+
+Local Shell 的随包 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`，来源与许可证见 `THIRD_PARTY_LICENSES.md`）同样按受控顺序解析：先 `<安装目录>/conpty/<arch>/`，仅开发构建再尝试仓库 `<manifest>/vendor/conpty/<version>/<arch>/`，最后才是可执行文件同目录的扁平诊断副本。发布布局只包含前者的受校验副本；扁平副本不参与发布布局，也不属于 `npm run check:conpty` 的哈希校验范围，不能作为免安装分发的可信来源。引擎由驱动在首次创建 PTY 前按绝对路径预加载，不从当前工作目录或 PATH 搜索；`OpenConsole.exe` 必须与 DLL 同目录，因为 DLL 会启动该 host。
 
 ### 打包与更新
 
