@@ -6201,7 +6201,7 @@ dependencies = [
 
 [[package]]
 name = "tauterm"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "aes-gcm",
  "argon2 0.5.3",
