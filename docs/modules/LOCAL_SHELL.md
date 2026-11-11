@@ -37,6 +37,7 @@ flowchart TB
 - Local Shell 配置包含“环境变量”字段（KEY/VALUE 行），在表单中位于启动参数之前：后端校验名称（A-Z/a-z/0-9/_）、数量与长度上限后通过 `CommandBuilder` 注入 shell 进程环境，不经过 shell 语法解析；连接前忽略空行，非法/重名名称在表单内联提示，切到 WSL preset 时表单清空该区块；WSL shell 明确拒绝该字段（子系统自己管理环境），管理员 shell 通过 helper 配置一并传递，后端可识别的失败文案由插件层本地化。
 - Windows 普通本地 Shell 不经过任何额外的 helper/launcher 进程：`LocalShellDriver` 在创建伪控制台前先锁定随包分发的 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`，Microsoft Windows Console ConPTY 1.25.260930003，MIT，见 `THIRD_PARTY_LICENSES.md` 与 `src-tauri/vendor/conpty/`），然后把请求的 shell 直接作为 PTY 子进程启动。管理员 Shell 仍只多一次提权 helper，helper 内同样由驱动直接启动 shell，不改变引擎选择。选择该引擎的原因：系统内置 conhost 引擎只有在控制台输入模式已带 `ENABLE_VIRTUAL_TERMINAL_INPUT` 时才转发子进程写入的鼠标上报模式（`DECSET 1000/1002/1003/1006`），而 VT-first 全屏程序（pi 等 Node TUI）在进入 raw mode 之前就写这些序列，导致外层终端永远收不到鼠标；native console 程序（Codex/crossterm）走 `SetConsoleMode` 另一条路径，所以一直正常。随包引擎是 Windows Terminal 使用的实现，对两类程序都按字节转发，因此终端能力由终端引擎负责，不需要按程序白名单或轮询控制台模式。
 - 引擎启动握手由驱动在本地完成：引擎初始化伪控制台时会查询光标位置（`ESC[6n`）和设备属性（`ESC[c`），驱动在启动窗口内本地应答并从可见输出中移除这些查询，避免 shell 启动依赖 WebView/xterm 是否就绪，也避免 xterm 的第二次应答变成 shell 的杂散输入。
+- 该引擎**不是字节直通**：它维护自己的控制台屏幕模型，跨行时用「裸 LF + 相对光标移动（`CUB n`）」重绘行首，所以行首列只有在裸 LF 不被改写时才成立。因此宿主终端**不得**为 PTY 会话开启 xterm 的 `convertEol`：它把每个 LF 改写成 CR+LF，注入的 CR 会把光标钳到第 0 列，随后的相对移动变成空操作，整行贴到最左侧（半块像素画 logo 会因此碎成错位方块）。`convertEol` 只保留给 Serial / RTT 等非 PTY 原始字节流；该契约由 `npm run check:terminal-screen` 锁定。
 - Local Shell 使用终端搜索、尺寸与日志能力，但不启用远端传输或全局 SendBar。
 - shell 发现只提供可解释的候选；自定义 executable、参数和工作目录必须保持独立字段，避免命令字符串拼接。
 

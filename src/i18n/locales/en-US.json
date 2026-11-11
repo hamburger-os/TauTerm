@@ -1021,6 +1021,7 @@
     "clipboardUnavailable": "Could not read the system clipboard. Check that clipboard access is allowed for TauTerm.",
     "fullscreenApp": "Full-screen app",
     "mouseReporting": "Mouse reporting: {{mode}}",
+    "rendererFallback": "Renderer: DOM fallback (no WebGL)",
     "pasteWarningTitle": "Confirm Terminal Paste",
     "pasteWarningMessage": "This paste contains a line break or a large amount of data. It may submit input immediately or send a large payload to the remote system or device. Review it before continuing.",
     "pasteWarningMeta": "{{lines}} content lines · {{characters}} characters",

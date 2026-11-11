@@ -25,6 +25,12 @@ import {
   resetTerminalSurface,
   type TerminalPresentation,
 } from "../../core/terminal-presentation";
+import {
+  DOM_TERMINAL_RENDERER,
+  describeRendererFailure,
+  warnRendererFallback,
+  type TerminalRendererKind,
+} from "../../core/terminal-renderer";
 import styles from "./Terminal.module.css";
 
 /** 视口底部容差行数：视口底边与缓冲区底部的间距小于此值即视为"在底部" */
@@ -73,14 +79,18 @@ function mixHex(a: string, b: string, amount: number): string {
  * or a lost GPU context degrades to the DOM renderer instead of breaking. Pooled
  * hidden terminals stay on the DOM renderer, which keeps the number of live
  * WebGL contexts bounded by the visible Pane count instead of the tab count.
+ *
+ * Returns the renderer that is now driving the surface. The downgrade is
+ * reported instead of swallowed: `customGlyphs` only exists on the WebGL path,
+ * so a silent fallback changes how block and box-drawing characters are drawn.
  */
 function syncWebglRenderer(
   term: XTerm,
   addonRef: { current: WebglAddon | null },
   visible: boolean,
-): void {
+): TerminalRendererKind {
   if (visible) {
-    if (addonRef.current) return;
+    if (addonRef.current) return "webgl";
     try {
       const addon = new WebglAddon();
       addon.onContextLoss(() => {
@@ -89,18 +99,22 @@ function syncWebglRenderer(
       });
       term.loadAddon(addon);
       addonRef.current = addon;
-    } catch {
+      return "webgl";
+    } catch (error) {
       addonRef.current = null;
+      warnRendererFallback(term, describeRendererFailure(error));
+      return DOM_TERMINAL_RENDERER;
     }
-    return;
   }
-  if (!addonRef.current) return;
-  try {
-    addonRef.current.dispose();
-  } catch {
-    // Renderer already gone; the terminal keeps rendering through the DOM renderer.
+  if (addonRef.current) {
+    try {
+      addonRef.current.dispose();
+    } catch {
+      // Renderer already gone; the terminal keeps rendering through the DOM renderer.
+    }
+    addonRef.current = null;
   }
-  addonRef.current = null;
+  return DOM_TERMINAL_RENDERER;
 }
 
 /** Font-box height measured exactly the way xterm measures a cell. */function measureFontBoxHeight(fontFamily: string, fontSize: number): number {
@@ -262,6 +276,15 @@ interface TerminalInstanceProps {
   onDisconnectSession?: () => void;
   /** 当前 Session 是否提供 Protocol Inspector 右侧栏 */
   allowProtocolInspect?: boolean;
+  /**
+   * 是否为每一行 LF 追加 CR（xterm `convertEol`）。
+   *
+   * 只对**不是 PTY** 的字节流开启：PTY（Local Shell / SSH）的行结束翻译由
+   * 远端 termios / ConPTY 自己负责；随包的 ConPTY 引擎还会用「裸 LF + 相对光标
+   * 移动」重绘行首，把 LF 改写成 CR+LF 会让那类相对移动失效、整行贴到第 0 列。
+   * 默认开启以保持 Serial / RTT 等原始字节流的现有呈现。
+   */
+  convertEol?: boolean;
 }
 
 /**
@@ -271,7 +294,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, runtimeId, onData, isConnected = false, isActive = true, isVisible = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession, allowProtocolInspect = true },
+  { sessionId, runtimeId, onData, isConnected = false, isActive = true, isVisible = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession, allowProtocolInspect = true, convertEol = true },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -287,6 +310,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   // Host-visible emulation state (alt screen / mouse capture). xterm owns the
   // mode bits; this mirror only feeds the context-menu summary and recovery affordances.
   const [presentation, setPresentation] = useState<TerminalPresentation>(IDLE_TERMINAL_PRESENTATION);
+  // Host-visible renderer state: `customGlyphs` is WebGL-only, so a downgraded
+  // surface renders block art differently and must be explainable (see
+  // `syncWebglRenderer`).
+  const [rendererKind, setRendererKind] = useState<TerminalRendererKind>(DOM_TERMINAL_RENDERER);
   const onTermReadyRef = useRef(onTermReady);
   onTermReadyRef.current = onTermReady;
   const onCleanupRef = useRef(onCleanup);
@@ -392,6 +419,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   fontSizeRef.current = fontSize;
   const bufferLinesRef = useRef(bufferLines);
   bufferLinesRef.current = bufferLines;
+  const convertEolRef = useRef(convertEol);
+  convertEolRef.current = convertEol;
 
   // 右键上下文菜单状态
   // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用
@@ -448,7 +477,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     const lifecycle = mountXtermHost(container, {
       create: () => {
         const nextTerm = new XTerm({
-          convertEol: true,
+          // PTY-backed sessions translate line endings in the PTY, not here (see `convertEol`).
+          convertEol: convertEolRef.current ?? true,
           fontSize: fontSizeRef.current ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
           fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
           theme: terminalThemeRef.current,
@@ -509,7 +539,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
             // block/box glyphs as exact quads (see `customGlyphs`), which keeps
             // pixel-art logos, TUI frames and character scrollbars free of DOM
             // cell seams. Hidden pooled terminals stay on the DOM renderer.
-            syncWebglRenderer(nextTerm, webglAddonRef, isVisibleRef.current);
+            setRendererKind(syncWebglRenderer(nextTerm, webglAddonRef, isVisibleRef.current));
 
             // Align rows to whole device pixels after the font is actually loaded;
             // a refit is required because a taller cell changes the row count.
@@ -557,6 +587,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
             scrollDisposable = null;
             presentationDisposable = null;
             setPresentation(IDLE_TERMINAL_PRESENTATION);
+            setRendererKind(DOM_TERMINAL_RENDERER);
             if (resizeTimerRef.current) {
               clearTimeout(resizeTimerRef.current);
               resizeTimerRef.current = null;
@@ -620,7 +651,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    syncWebglRenderer(term, webglAddonRef, isVisible);
+    setRendererKind(syncWebglRenderer(term, webglAddonRef, isVisible));
   }, [isVisible]);
 
   // 接管系统 paste 事件的 capture 阶段，确保不会先被 xterm 默认处理后再重复发送。
@@ -775,8 +806,14 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         mode: presentation.mouseTrackingMode,
       }));
     }
+    // Only the degraded case is worth surfacing: a WebGL surface draws block and
+    // box-drawing glyphs as exact quads, the DOM fallback uses the font and can
+    // fragment pixel-art logos (the app must never hide that difference again).
+    if (rendererKind === DOM_TERMINAL_RENDERER) {
+      parts.push(t("terminal.rendererFallback", "Renderer: DOM fallback (no WebGL)"));
+    }
     return parts.length > 0 ? parts.join(" · ") : null;
-  }, [presentation, t]);
+  }, [presentation, rendererKind, t]);
 
   useEffect(() => {
     // A pending confirmation belongs to exactly one active terminal. If the

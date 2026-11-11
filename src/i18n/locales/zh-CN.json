@@ -1021,6 +1021,7 @@
     "clipboardUnavailable": "无法读取系统剪贴板，请检查 TauTerm 的剪贴板访问权限。",
     "fullscreenApp": "全屏应用",
     "mouseReporting": "鼠标上报：{{mode}}",
+    "rendererFallback": "渲染器：DOM 回退（无 WebGL）",
     "pasteWarningTitle": "确认终端粘贴",
     "pasteWarningMessage": "此内容包含换行或较大数据量，粘贴后可能立即提交输入，或一次向远端/设备发送大量数据。请确认内容后继续。",
     "pasteWarningMeta": "{{lines}} 行内容 · {{characters}} 个字符",

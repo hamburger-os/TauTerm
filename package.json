@@ -32,13 +32,14 @@
     "release:check": "node scripts/check-version.js --release",
     "postversion": "node scripts/sync-version.js",
     "version:sync": "node scripts/sync-version.js",
-    "check:product-integrity": "node scripts/check-product-integrity.mjs && node --experimental-strip-types scripts/check-workspace-ui-contract.mjs && node scripts/check-confirm-dialogs.mjs && node scripts/check-trdp-monitor-contract.mjs && node --experimental-strip-types scripts/test-status-bar-contract.mjs && node scripts/check-i18n-usage.mjs && node scripts/check-conpty-engine.js && node --experimental-strip-types scripts/test-terminal-cell-grid.mjs",
+    "check:product-integrity": "node scripts/check-product-integrity.mjs && node --experimental-strip-types scripts/check-workspace-ui-contract.mjs && node scripts/check-confirm-dialogs.mjs && node scripts/check-trdp-monitor-contract.mjs && node --experimental-strip-types scripts/test-status-bar-contract.mjs && node scripts/check-i18n-usage.mjs && node scripts/check-conpty-engine.js && node --experimental-strip-types scripts/test-terminal-cell-grid.mjs && node scripts/test-terminal-screen.mjs",
     "check:tauri-blocking": "node scripts/check-tauri-blocking-contract.mjs",
     "check:updater": "node --experimental-strip-types scripts/test-updater.mjs",
     "check:runtime-errors": "node scripts/check-runtime-error-contract.mjs",
     "check:terminal-clipboard": "node --experimental-strip-types scripts/test-terminal-clipboard.mjs",
     "check:conpty": "node scripts/check-conpty-engine.js",
     "check:terminal-cell-grid": "node --experimental-strip-types scripts/test-terminal-cell-grid.mjs",
+    "check:terminal-screen": "node scripts/test-terminal-screen.mjs",
     "check:engineering-tools": "node --experimental-strip-types scripts/test-engineering-tools.mjs",
     "check:file-transfer": "node scripts/test-file-transfer-lifecycle.mjs && node scripts/test-remote-document-editor-contract.mjs",
     "check:sendbar": "node --experimental-strip-types scripts/test-sendbar-contract.mjs",
@@ -67,6 +68,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@xterm/headless": "6.0.0",
     "typescript": "^5.6.3",
     "vite": "^6.0.0"
   }

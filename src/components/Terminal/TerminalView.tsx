@@ -598,6 +598,12 @@ export default function TerminalView({
           }
         }}
         allowProtocolInspect={tab.pluginId !== "local-shell"}
+        // PTY-backed streams own their line-ending translation. The bundled ConPTY
+        // engine separates rows with a bare LF and repositions the column with
+        // relative cursor moves, so `convertEol` (which rewrites LF as CR+LF)
+        // collapses those rows onto column 0 — that is what shredded half-block
+        // pixel-art logos. Serial / RTT / network byte streams keep the option.
+        convertEol={tab.pluginId !== "local-shell" && tab.pluginId !== "ssh"}
         ref={(node) => {
           if (node) terminalRefs.current.set(tab.id, node);
           else terminalRefs.current.delete(tab.id);
