@@ -11,6 +11,8 @@ import {
   type SplitLayoutState,
 } from "../../core/split-layout";
 import { useContextMenu, type ContextMenuState } from "../../hooks/useContextMenu";
+import { useKeyboard } from "../../hooks/useKeyboard";
+import { ACTION_IDS } from "../../shortcuts/actionIds";
 import TerminalView from "../Terminal/TerminalView";
 import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import Icon from "../common/Icon";
@@ -23,13 +25,16 @@ import styles from "./SplitView.module.css";
 
 const MIN_PANE_PX = 160;
 const PANE_HEADER_PX = 24;
-const EDGES: SplitEdge[] = ["left", "right", "top", "bottom"];
+/** Pointer distance (CSS px) at which a pane corner fades in. */
+const CORNER_REVEAL_RADIUS_PX = 26;
+
+type PaneCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+const SPLIT_CORNERS: PaneCorner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 
 interface SplitViewProps {
   layout: SplitLayoutState;
   paneRects: Record<PaneId, PaneRect>;
   dividers: DividerGeometry[];
-  blockedEdges: Record<PaneId, Set<SplitEdge>>;
   paneCount: number;
   onSelectPane: (paneId: PaneId) => void;
   onSplitPane: (paneId: PaneId, edge: SplitEdge) => void;
@@ -67,6 +72,31 @@ function insetPaneContent(rect: PaneRect, paneCount: number, viewportHeight: num
     ...rect,
     top: rect.top + headerRatio,
     height: Math.max(0, rect.height - headerRatio),
+  };
+}
+
+/**
+ * Pixel centre of a pane corner's 20x20 trigger. The reveal radius is measured
+ * from the trigger itself, not from the pane's geometric corner: the top triggers
+ * sit below the Pane Header, so anchoring reveal at the raw corner would place the
+ * trigger outside its own hit zone and make split-up unreachable in multi-pane
+ * workspaces. Keep this in sync with the inline button placement below.
+ */
+function cornerTriggerCenter(
+  rect: PaneRect,
+  corner: PaneCorner,
+  viewWidth: number,
+  viewHeight: number,
+  paneCount: number,
+): { x: number; y: number } {
+  const left = rect.left * viewWidth;
+  const top = rect.top * viewHeight;
+  const right = (rect.left + rect.width) * viewWidth;
+  const bottom = (rect.top + rect.height) * viewHeight;
+  const topInset = paneCount > 1 ? PANE_HEADER_PX : 1;
+  return {
+    x: corner.endsWith("left") ? left + 11 : right - 11,
+    y: corner.startsWith("top") ? top + topInset + 10 : bottom - 11,
   };
 }
 
@@ -134,7 +164,6 @@ export default function SplitView({
   layout,
   paneRects,
   dividers,
-  blockedEdges,
   paneCount,
   onSelectPane,
   onSplitPane,
@@ -144,10 +173,18 @@ export default function SplitView({
 }: SplitViewProps) {
   const { t } = useTranslation();
   const { state: sessionState } = useSession();
+  const { registerAction, unregisterAction } = useKeyboard();
   const viewRef = useRef<HTMLDivElement>(null);
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
-  const [hoveredSplit, setHoveredSplit] = useState<{ paneId: PaneId; edge: SplitEdge } | null>(null);
   const [paneMenu, setPaneMenu] = useState<PaneMenuState | null>(null);
+  // Hovering a pane corner previews and commits a split toward the nearest of
+  // that corner's two edges; the rest of the content surface stays untouched so
+  // xterm selection and TUI pointer input always receive their events.
+  const [splitIntent, setSplitIntent] = useState<{ paneId: PaneId; edge: SplitEdge } | null>(null);
+  // A corner only exists while the pointer is next to it: no persistent dots on
+  // the terminal surface, and no invisible hit-target stealing corner clicks from
+  // a full-screen TUI.
+  const [activeCorner, setActiveCorner] = useState<{ paneId: PaneId; corner: PaneCorner } | null>(null);
   const [retainedNonTerminalSessionIds, setRetainedNonTerminalSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -177,7 +214,7 @@ export default function SplitView({
   }, []);
 
   useEffect(() => {
-    if (paneCount >= MAX_WORKSPACE_PANES) setHoveredSplit(null);
+    if (paneCount >= MAX_WORKSPACE_PANES) setSplitIntent(null);
   }, [paneCount]);
 
   const tabsById = useMemo(() => {
@@ -356,6 +393,92 @@ export default function SplitView({
     return axisSize >= MIN_PANE_PX * 2;
   }, [paneCount, viewSize.height, viewSize.width]);
 
+  /** Nearest of the two edges that meet at a corner decides the split direction. */
+  const edgeForCorner = (
+    corner: PaneCorner,
+    event: React.MouseEvent<HTMLElement>,
+  ): { edge: SplitEdge; fallback: SplitEdge } => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const dx = corner.endsWith("left")
+      ? event.clientX - bounds.left
+      : bounds.right - event.clientX;
+    const dy = corner.startsWith("top")
+      ? event.clientY - bounds.top
+      : bounds.bottom - event.clientY;
+    const horizontal: SplitEdge = corner.endsWith("left") ? "left" : "right";
+    const vertical: SplitEdge = corner.startsWith("top") ? "top" : "bottom";
+    return dx <= dy
+      ? { edge: horizontal, fallback: vertical }
+      : { edge: vertical, fallback: horizontal };
+  };
+
+  /**
+   * Resolve the edge a corner click would commit. The corner is rendered while at
+   * least one of its two edges can still afford `MIN_PANE_PX`, so the geometric
+   * winner is only a preference: fall back to the other edge instead of creating a
+   * pane below the documented minimum.
+   */
+  const resolveCornerEdge = (
+    rect: PaneRect,
+    corner: PaneCorner,
+    event: React.MouseEvent<HTMLElement>,
+  ): SplitEdge | null => {
+    const { edge, fallback } = edgeForCorner(corner, event);
+    if (canOfferSplit(rect, edge)) return edge;
+    if (canOfferSplit(rect, fallback)) return fallback;
+    return null;
+  };
+
+  const previewRect = useMemo(() => {
+    if (!splitIntent || paneCount >= MAX_WORKSPACE_PANES) return null;
+    const base = paneRects[splitIntent.paneId];
+    if (!base || !canOfferSplit(base, splitIntent.edge)) return null;
+    switch (splitIntent.edge) {
+      case "left":
+        return { ...base, width: base.width / 2 };
+      case "right":
+        return { ...base, left: base.left + base.width / 2, width: base.width / 2 };
+      case "top":
+        return { ...base, height: base.height / 2 };
+      case "bottom":
+        return { ...base, top: base.top + base.height / 2, height: base.height / 2 };
+    }
+  }, [splitIntent, paneCount, paneRects, canOfferSplit]);
+
+  /** Split target: the pane that owns the active Session, else the selected pane. */
+  const resolveSplitPaneId = useCallback((): PaneId | null => {
+    const activeSessionId = sessionState.activeTabId;
+    if (activeSessionId) {
+      const entry = Object.entries(layout.assignments)
+        .find(([, sessionId]) => sessionId === activeSessionId);
+      if (entry) return entry[0] as PaneId;
+    }
+    return layout.selectedPaneId;
+  }, [layout.assignments, layout.selectedPaneId, sessionState.activeTabId]);
+
+  const requestSplit = useCallback((paneId: PaneId, edge: SplitEdge): boolean => {
+    const rect = paneRects[paneId];
+    if (!rect || !canOfferSplit(rect, edge)) return false;
+    onSplitPane(paneId, edge);
+    return true;
+  }, [canOfferSplit, onSplitPane, paneRects]);
+
+  // Split has one action path shared by the Pane menu, the Command Palette and
+  // the configurable shortcut registry; edge hot-zones over terminal content are
+  // deliberately gone so text selection and TUI pointer semantics always win.
+  useEffect(() => {
+    const splitActivePane = (edge: SplitEdge) => {
+      const paneId = resolveSplitPaneId();
+      if (paneId) requestSplit(paneId, edge);
+    };
+    registerAction(ACTION_IDS.WORKSPACE_SPLIT_RIGHT, () => splitActivePane("right"));
+    registerAction(ACTION_IDS.WORKSPACE_SPLIT_DOWN, () => splitActivePane("bottom"));
+    return () => {
+      unregisterAction(ACTION_IDS.WORKSPACE_SPLIT_RIGHT);
+      unregisterAction(ACTION_IDS.WORKSPACE_SPLIT_DOWN);
+    };
+  }, [registerAction, unregisterAction, requestSplit, resolveSplitPaneId]);
+
   const paneContextMenuState = useMemo<ContextMenuState>(() => ({
     x: paneMenu?.x ?? 0,
     y: paneMenu?.y ?? 0,
@@ -416,26 +539,37 @@ export default function SplitView({
     }
   }, [paneMenu, onClearPane, onClosePane, onSplitPane]);
 
-  const previewRect = useMemo(() => {
-    if (!hoveredSplit || paneCount >= MAX_WORKSPACE_PANES) return null;
-    const base = paneRects[hoveredSplit.paneId];
-    if (!base || !canOfferSplit(base, hoveredSplit.edge)) return null;
-    switch (hoveredSplit.edge) {
-      case "left":
-        return { ...base, width: base.width / 2 };
-      case "right":
-        return { ...base, left: base.left + base.width / 2, width: base.width / 2 };
-      case "top":
-        return { ...base, height: base.height / 2 };
-      case "bottom":
-        return { ...base, top: base.top + base.height / 2, height: base.height / 2 };
-    }
-  }, [hoveredSplit, paneCount, paneRects, canOfferSplit]);
-
   return (
     <div
       ref={viewRef}
       className={`${styles.view} liquid-glass-content`}
+      onMouseMove={(event) => {
+        const bounds = viewRef.current?.getBoundingClientRect();
+        if (!bounds || bounds.width === 0 || bounds.height === 0) return;
+        const x = event.clientX - bounds.left;
+        const y = event.clientY - bounds.top;
+        let nearest: { paneId: PaneId; corner: PaneCorner; distance: number } | null = null;
+        for (const [paneId, rect] of Object.entries(paneRects)) {
+          for (const corner of SPLIT_CORNERS) {
+            const horizontalEdge: SplitEdge = corner.endsWith("left") ? "left" : "right";
+            const verticalEdge: SplitEdge = corner.startsWith("top") ? "top" : "bottom";
+            if (!canOfferSplit(rect, horizontalEdge) && !canOfferSplit(rect, verticalEdge)) continue;
+            const anchor = cornerTriggerCenter(rect, corner, bounds.width, bounds.height, paneCount);
+            const distance = Math.hypot(x - anchor.x, y - anchor.y);
+            if (!nearest || distance < nearest.distance) nearest = { paneId, corner, distance };
+          }
+        }
+        const revealed = nearest && nearest.distance <= CORNER_REVEAL_RADIUS_PX ? nearest : null;
+        setActiveCorner(current => {
+          if (current?.paneId === revealed?.paneId && current?.corner === revealed?.corner) return current;
+          return revealed ? { paneId: revealed.paneId, corner: revealed.corner } : null;
+        });
+        if (!revealed) setSplitIntent(null);
+      }}
+      onMouseLeave={() => {
+        setActiveCorner(null);
+        setSplitIntent(null);
+      }}
     >
       {/* Pane 材质、空 Pane 与断连占位。实际非终端视图由下方 Session 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
@@ -535,7 +669,6 @@ export default function SplitView({
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
         const selected = paneId === layout.selectedPaneId;
         const showSelection = paneCount > 1 && selected;
-        const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
         const paneTitle = tab
           ? getPaneDisplayLabel(tab, tabsById)
           : t("split.emptyPane", "空分屏");
@@ -596,28 +729,58 @@ export default function SplitView({
                 </button>
               </div>
             )}
-            {paneCount < MAX_WORKSPACE_PANES && EDGES.map(edge => {
-              if (blocked.has(edge) || !canOfferSplit(rect, edge)) return null;
+            {paneCount < MAX_WORKSPACE_PANES && SPLIT_CORNERS.map(corner => {
+              const horizontalEdge: SplitEdge = corner.endsWith("left") ? "left" : "right";
+              const verticalEdge: SplitEdge = corner.startsWith("top") ? "top" : "bottom";
+              if (!canOfferSplit(rect, horizontalEdge) && !canOfferSplit(rect, verticalEdge)) {
+                return null;
+              }
+              const revealed = activeCorner?.paneId === paneId && activeCorner.corner === corner;
+              const previewCorner = (event: React.MouseEvent<HTMLElement>) => {
+                const edge = resolveCornerEdge(rect, corner, event);
+                setSplitIntent(current => (
+                  current?.paneId === paneId && current.edge === edge
+                    ? current
+                    : edge
+                      ? { paneId, edge }
+                      : null
+                ));
+              };
+              const cornerStyle: React.CSSProperties = {
+                ...(corner.startsWith("top")
+                  ? { top: paneCount > 1 ? PANE_HEADER_PX : 1 }
+                  : { bottom: 1 }),
+                ...(corner.endsWith("left") ? { left: 1 } : { right: 1 }),
+                opacity: revealed ? 0.9 : 0,
+                pointerEvents: revealed ? "auto" : "none",
+              };
               return (
                 <button
-                  key={edge}
+                  key={`${paneId}-${corner}`}
                   type="button"
-                  className={`${styles.splitTrigger} ${styles[`splitTrigger${edge[0].toUpperCase()}${edge.slice(1)}`]}`}
-                  onMouseEnter={() => setHoveredSplit({ paneId, edge })}
-                  onMouseLeave={() => setHoveredSplit(current => current?.paneId === paneId && current.edge === edge ? null : current)}
+                  className={styles.splitCorner}
+                  style={cornerStyle}
+                  tabIndex={revealed ? 0 : -1}
+                  aria-hidden={!revealed}
+                  onMouseEnter={previewCorner}
+                  onMouseMove={previewCorner}
+                  onMouseLeave={() => setSplitIntent(current => (
+                    current?.paneId === paneId ? null : current
+                  ))}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setHoveredSplit(null);
-                    onSplitPane(paneId, edge);
+                    const edge = resolveCornerEdge(rect, corner, e);
+                    setSplitIntent(null);
+                    if (edge) onSplitPane(paneId, edge);
                   }}
-                  aria-label={`${t("split.split", "分屏")} ${edge}`}
-                  title={t("split.edgeHint", "点击从此边缘创建分屏")}
+                  aria-label={t("split.cornerHint", { defaultValue: "沿最近的边缘分屏" })}
+                  title={t("split.cornerHint", { defaultValue: "沿最近的边缘分屏" })}
                 >
-                  <span />
+                  <span aria-hidden="true" />
                 </button>
               );
             })}
@@ -627,7 +790,7 @@ export default function SplitView({
 
       {previewRect && (
         <div className={styles.splitPreview} style={rectStyle(previewRect)}>
-          <span>{t("split.newPane", "新分屏")}</span>
+          <span>{t("split.newPane", { defaultValue: "新分屏" })}</span>
         </div>
       )}
 

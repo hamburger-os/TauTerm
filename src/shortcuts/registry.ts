@@ -12,11 +12,22 @@ export function buildKeyString(event: KeyboardEvent): string {
     return "";
   }
 
+  let normalizedKey = key;
+  if (/^Digit[0-9]$/.test(event.code)) {
+    // Shift+digit reports the shifted glyph through `event.key` ("%" for shift+5),
+    // so match digits by their physical key. Letters keep `event.key`: forcing the
+    // physical code would break copy/paste on AZERTY, Dvorak and other layouts.
+    normalizedKey = event.code.slice(5);
+  }
+
   const keyMap: Record<string, string> = {
     ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
     " ": "Space", Escape: "Esc",
   };
-  parts.push(keyMap[key] || (key.length === 1 ? key.toUpperCase() : key));
+  parts.push(
+    keyMap[normalizedKey]
+      || (normalizedKey.length === 1 ? normalizedKey.toUpperCase() : normalizedKey),
+  );
 
   return parts.join("+");
 }
@@ -63,6 +74,12 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", descriptionKey: "settings.shortcutsAction_terminalPaste", description: "粘贴", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SELECT_ALL, keys: "Ctrl+Shift+A", descriptionKey: "settings.shortcutsAction_terminalSelectAll", description: "全选", category: "Terminal" },
+  // Workspace. Splits stay reachable from the Pane menu, the command palette and
+  // this registry, but they deliberately ship without a default chord: Ctrl+Shift
+  // + digit belongs to full-screen applications, and a silently stolen chord is a
+  // worse default than an unbound action the user can record in Settings.
+  { id: ACTION_IDS.WORKSPACE_SPLIT_RIGHT, keys: "", descriptionKey: "settings.shortcutsAction_splitRight", description: "向右分屏", category: "Workspace" },
+  { id: ACTION_IDS.WORKSPACE_SPLIT_DOWN, keys: "", descriptionKey: "settings.shortcutsAction_splitDown", description: "向下分屏", category: "Workspace" },
   // Application
   { id: ACTION_IDS.PALETTE_OPEN, keys: "Ctrl+Shift+P", descriptionKey: "settings.shortcutsAction_openPalette", description: "打开命令面板", category: "Application" },
   { id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", descriptionKey: "settings.shortcutsAction_toggleSidebar", description: "切换左侧栏", category: "Application" },
@@ -97,9 +114,9 @@ class ShortcutRegistry {
       return target.description;
     }
 
-    // 冲突检测：检查 newKeys 是否已被其他动作占用
+    // 冲突检测：检查 newKeys 是否已被其他动作占用（未绑定的动作不参与冲突）
     for (const [existingId, existing] of this.shortcuts) {
-      if (existingId !== id && existing.keys === newKeys) {
+      if (existingId !== id && newKeys && existing.keys === newKeys) {
         return existing.description;
       }
     }
@@ -120,6 +137,7 @@ class ShortcutRegistry {
     if (isTerminalReservedShortcut(pressed)) return null;
 
     for (const shortcut of this.shortcuts.values()) {
+      if (!shortcut.keys) continue;
       if (this.keysMatch(pressed, shortcut.keys)) {
         return shortcut;
       }

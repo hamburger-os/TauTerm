@@ -20,10 +20,50 @@ const DEFAULT_LOCAL_SHELL_PARAMS: Record<string, unknown> = {
   data_mode: "text",
   encoding: "utf-8",
   send_bar_enabled: false,
+  env: [],
 };
 
 function normalizeLocalShellParams(params: Record<string, unknown>): Record<string, unknown> {
   return { ...DEFAULT_LOCAL_SHELL_PARAMS, ...params };
+}
+
+/**
+ * The environment block belongs to native shells only. Empty rows are editing
+ * artifacts and are dropped at connect time; WSL rows are dropped because the
+ * subsystem owns its environment and the backend rejects the field there.
+ */
+function normalizeEnvironmentRows(
+  value: unknown,
+  shellKind: unknown,
+): Array<{ key: string; value: string }> {
+  if (shellKind === "wsl" || !Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+    .map(entry => ({
+      key: typeof entry.key === "string" ? entry.key.trim() : "",
+      value: typeof entry.value === "string" ? entry.value : "",
+    }))
+    .filter(entry => entry.key.length > 0);
+}
+
+function formatLocalShellError(error: unknown): string {
+  const raw = String(error);
+  if (raw.includes("User cancelled the UAC elevation prompt")) {
+    return i18n.t("localShell.elevationCancelled");
+  }
+  if (raw.includes("Environment variable names may only contain")) {
+    return i18n.t("localShell.envKeyInvalid");
+  }
+  if (raw.includes("Environment variable values cannot contain NUL")) {
+    return i18n.t("localShell.envValueInvalid");
+  }
+  if (raw.includes("Too many environment variables")) {
+    return i18n.t("localShell.envTooMany");
+  }
+  if (raw.includes("Environment variables are not supported for WSL shells")) {
+    return i18n.t("localShell.envWslUnsupported");
+  }
+  return raw;
 }
 
 export const localShellPlugin = definePlugin({
@@ -35,9 +75,13 @@ export const localShellPlugin = definePlugin({
   prepareConnectionParams: async params => {
     const prepared = normalizeLocalShellParams(params);
     const cwd = typeof prepared.cwd === "string" ? prepared.cwd.trim() : "";
-    if (cwd) return { ...prepared, cwd };
-    return {
+    const normalized = {
       ...prepared,
+      env: normalizeEnvironmentRows(prepared.env, prepared.shell_kind),
+    };
+    if (cwd) return { ...normalized, cwd };
+    return {
+      ...normalized,
       cwd: prepared.shell_kind === "wsl" ? "~" : await homeDir(),
     };
   },
@@ -53,10 +97,7 @@ export const localShellPlugin = definePlugin({
   },
   resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),
   formatSessionError: (error, operation) => {
-    const raw = String(error);
-    const detail = raw.includes("User cancelled the UAC elevation prompt")
-      ? i18n.t("localShell.elevationCancelled")
-      : raw;
+    const detail = formatLocalShellError(error);
     const key = operation === "open_channel" ? "localShell.openFailed" : "localShell.connectFailed";
     return `${i18n.t(key)}: ${detail}`;
   },

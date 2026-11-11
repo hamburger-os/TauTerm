@@ -436,7 +436,9 @@ export default function TerminalView({
     onSessionData(handleSessionData);
     return () => {
       sessionDataHandlerRef.current = () => {};
-      onSessionData(() => {});
+      // Unsubscribe instead of installing a no-op consumer: a truthy no-op would
+      // silently swallow every later byte if the view remounts.
+      onSessionData(null);
     };
   }, [onSessionData, pushDualLine, processIncomingFrame, flushTextBuffers, getSessionDecoder]);
 
@@ -482,7 +484,7 @@ export default function TerminalView({
         }
       }
     });
-    return () => { onDataSent(() => {}); };
+    return () => { onDataSent(null); };
   }, [onDataSent, pushDualLine]);
 
   useEffect(() => {
@@ -565,7 +567,7 @@ export default function TerminalView({
     sendData(sessionId, data);
   }, [sendData]);
 
-  const renderTerminalBody = (tab: (typeof terminalTabs)[number], isActive: boolean) => {
+  const renderTerminalBody = (tab: (typeof terminalTabs)[number], isActive: boolean, isVisible: boolean) => {
     const isDual = tab.params?.data_mode === "dual";
     return isDual ? (
       <DualPane
@@ -582,6 +584,7 @@ export default function TerminalView({
         onData={(data) => handleData(tab.id, data)}
         isConnected={tab.state === "connected"}
         isActive={isActive}
+        isVisible={isVisible}
         onTermReady={(writeFn) => handleTermReady(tab.id, writeFn)}
         onCleanup={handleTermCleanup}
         fontSize={fontSize}
@@ -595,6 +598,12 @@ export default function TerminalView({
           }
         }}
         allowProtocolInspect={tab.pluginId !== "local-shell"}
+        // PTY-backed streams own their line-ending translation. The bundled ConPTY
+        // engine separates rows with a bare LF and repositions the column with
+        // relative cursor moves, so `convertEol` (which rewrites LF as CR+LF)
+        // collapses those rows onto column 0 — that is what shredded half-block
+        // pixel-art logos. Serial / RTT / network byte streams keep the option.
+        convertEol={tab.pluginId !== "local-shell" && tab.pluginId !== "ssh"}
         ref={(node) => {
           if (node) terminalRefs.current.set(tab.id, node);
           else terminalRefs.current.delete(tab.id);
@@ -657,7 +666,7 @@ export default function TerminalView({
                 </div>
               )}
               <div className={styles.dockedTerminalBody}>
-                {renderTerminalBody(tab, isActive)}
+                {renderTerminalBody(tab, isActive, visible)}
               </div>
             </div>
           );
@@ -720,7 +729,7 @@ export default function TerminalView({
                 className={`${styles.terminalWrapper} ${styles.stackedTerminalWrapper} ${isActive ? styles.stackedTerminalActive : ""}`}
                 aria-hidden={!isActive}
               >
-                {renderTerminalBody(tab, isActive)}
+                {renderTerminalBody(tab, isActive, isActive)}
               </div>
             );
           })}

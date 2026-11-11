@@ -44,7 +44,7 @@ Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为�
 在多 Pane Workspace 中，Pane Header 通过可见的 `…` 按钮和右键打开同一套公共 `ContextMenu`，提供以下结构操作：
 
 - **清空分屏**：只把该 Pane 的 assignment 设为 `null`，不关闭、不删除、不重连 Session，也不改变 Split Tree 或比例；若清空的是 selected Pane，则当前 UI Session 上下文变为真正的 `null`，发送区、右栏和状态上下文随之退出会话态。
-- **向右分屏 / 向下分屏**：作为可发现的标准入口；Pane 四个自由边缘的 hover 触发仍保留，用于更快地选择左/右/上/下方向。
+- **向右分屏 / 向下分屏**：作为可发现的标准入口，可从 Pane 级 chrome（多 Pane 的 Pane Header `…` 菜单）、四角小块热区、命令面板与可配置快捷键进入；四角热区平时完全不可见，只有指针靠近角标约 26px 时才淡入，并由指针离哪条边更近决定方向；若优选方向不满足最小 Pane 尺寸，则回退到该角另一条仍可用的边，绝不在内容边缘中段设热区，文本选择、鼠标上报和 TUI 自身的点击因此始终优先。分屏动作默认不绑定快捷键，避免抢占全屏应用使用的 `Ctrl+Shift+数字`。
 - **均分当前分屏**：只把目标 Pane 的直接父 Split 恢复为 50/50，不改动更外层 Split。
 - **关闭分屏**：删除 Pane 并折叠失去意义的父 Split；Session 生命周期不受影响。
 
@@ -89,6 +89,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - Pane Header 的 24px 内容 inset 与实际 header 几何保持一致；
 - Pane Header 在紧凑的单行高度内显示“会话名称 · 会话摘要”，名称仍是主身份；摘要与左侧同一 Session 卡片第二行共用一套派生规则（SSH host:port、TRDP 链路/抓包接口、Network client 本端地址等都保持一致），空间不足时整体省略，不增加 Header 高度；
 - Pane Header 的 `…` 与右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
+- 分屏入口的显形与方向规则由上面的 Pane 级入口条款单一维护：四角触发区仅在指针靠近角标时显形并接收指针，未激活角与内容边缘中段不渲染透明覆盖层，避免与 xterm 文本选择、鼠标上报和全屏应用交互冲突；单 Pane 与键盘优先场景仍可通过命令面板和设置页录制的快捷键进入。Pane 菜单按目标 Pane 执行，快捷键与命令面板按当前选中 Pane 执行，两条路径共用同一个 `splitPane` 能力；
 - TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
 - TRDP Analysis 在窄 Pane 下从双列折叠为单列；
 - TFTP/iperf 在窄 Pane 下将多列配置折叠为纵向布局；它们声明离线工作台能力后，断连不应退回统一空占位。

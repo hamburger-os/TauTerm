@@ -22,6 +22,8 @@ pub fn resolve_local_shell_session_name(params: serde_json::Value) -> Result<Str
     LocalShellAdapter::default_session_name(&params)
 }
 
+#[cfg(windows)]
+pub(crate) mod conpty_engine;
 mod driver;
 #[cfg(windows)]
 pub(crate) mod elevated;
@@ -40,6 +42,15 @@ use std::process::{Command, Stdio};
 
 const MAX_ARGUMENTS: usize = 64;
 const MAX_ARGUMENT_LENGTH: usize = 4096;
+const MAX_ENV_VARS: usize = 64;
+const MAX_ENV_VAR_LENGTH: usize = 8192;
+
+/// One environment variable injected into the spawned shell process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalShellEnvVar {
+    pub key: String,
+    pub value: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalShellConfig {
@@ -64,6 +75,9 @@ pub struct LocalShellConfig {
     /// 空字符串表示当前用户主目录。
     #[serde(default)]
     pub cwd: String,
+    /// 注入到 shell 进程的环境变量；不经过 shell 语法解析。
+    #[serde(default)]
+    pub env: Vec<LocalShellEnvVar>,
 }
 
 impl Default for LocalShellConfig {
@@ -78,6 +92,7 @@ impl Default for LocalShellConfig {
             shell_kind: default_shell_kind(),
             wsl_distro: String::new(),
             cwd: String::new(),
+            env: vec![],
         }
     }
 }
@@ -111,6 +126,35 @@ impl LocalShellConfig {
 
         if self.wsl_distro.contains('\0') || self.wsl_distro.len() > MAX_ARGUMENT_LENGTH {
             return Err("Linux subsystem distribution name is invalid".into());
+        }
+
+        if !self.env.is_empty() {
+            if self.shell_kind == "wsl" {
+                return Err("Environment variables are not supported for WSL shells".into());
+            }
+            if self.env.len() > MAX_ENV_VARS {
+                return Err(format!(
+                    "Too many environment variables (maximum {MAX_ENV_VARS})"
+                ));
+            }
+            for entry in &self.env {
+                if entry.key.is_empty()
+                    || entry.key.len() > MAX_ENV_VAR_LENGTH
+                    || !entry
+                        .key
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                {
+                    return Err(
+                        "Environment variable names may only contain A-Z, a-z, 0-9 and _".into(),
+                    );
+                }
+                if entry.value.contains('\0') || entry.value.len() > MAX_ENV_VAR_LENGTH {
+                    return Err(format!(
+                        "Environment variable values cannot contain NUL or exceed {MAX_ENV_VAR_LENGTH} bytes"
+                    ));
+                }
+            }
         }
 
         if self.shell_kind == "wsl" {
@@ -209,6 +253,7 @@ impl LocalShellConfig {
             executable,
             args,
             cwd,
+            env: self.env.clone(),
             label,
         })
     }
@@ -227,6 +272,7 @@ struct ResolvedLocalShellConfig {
     executable: PathBuf,
     args: Vec<String>,
     cwd: PathBuf,
+    env: Vec<LocalShellEnvVar>,
     label: String,
 }
 
@@ -310,9 +356,13 @@ impl SessionChannelFactory for LocalShellFactory {
         let executable = self.resolved.executable.to_string_lossy().to_string();
         match mode {
             ChannelOpenMode::Standard => {
-                let channel =
-                    LocalShellDriver::spawn(&executable, &self.resolved.args, &self.resolved.cwd)
-                        .map_err(SessionError::Io)?;
+                let channel = LocalShellDriver::spawn(
+                    &executable,
+                    &self.resolved.args,
+                    &self.resolved.cwd,
+                    &self.resolved.env,
+                )
+                .map_err(SessionError::Io)?;
                 Ok(DataPlaneRuntime::spawn(Box::new(channel)))
             }
             ChannelOpenMode::Elevated if self.elevated_supported => {
@@ -322,6 +372,7 @@ impl SessionChannelFactory for LocalShellFactory {
                         &executable,
                         &self.resolved.args,
                         &self.resolved.cwd,
+                        &self.resolved.env,
                     )
                     .map_err(SessionError::Io)?;
                     Ok(DataPlaneRuntime::spawn(Box::new(driver)))

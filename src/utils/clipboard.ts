@@ -1,31 +1,43 @@
 /**
  * 共享剪贴板工具函数
  *
- * 集中管理 navigator.clipboard 访问，统一错误处理，
- * 避免各组件中重复 try/catch 模式。
+ * 终端剪贴板统一走 Tauri 的原生 clipboard 插件（capability 只授予读写文本），
+ * 不使用 `navigator.clipboard`：Tauri 窗口不会响应 WebView2 的
+ * `CLIPBOARD_READ` 权限询问，`navigator.clipboard.readText()` 在 Windows 上会
+ * 静默失败，导致“粘贴没反应”。读取结果必须可判别，调用方才能把失败告诉用户，
+ * 而不是把它当成“剪贴板为空”。
  */
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+
+export type ClipboardReadResult =
+  | { kind: "ok"; text: string }
+  | { kind: "empty" }
+  | { kind: "unavailable"; error: string };
 
 /**
- * 将文本复制到系统剪贴板。
- * 失败时静默忽略（如剪贴板权限未授予）。
+ * 将文本写入系统剪贴板。
+ * 返回是否写入成功；调用方负责决定是否提示失败。
  */
-export async function copyToClipboard(text: string): Promise<void> {
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(text);
+    await writeText(text);
+    return true;
   } catch {
-    // 剪贴板写入失败 — 静默忽略
+    return false;
   }
 }
 
 /**
- * 从系统剪贴板读取文本。
- * 失败或为空时返回空字符串。
+ * 读取系统剪贴板文本，并把“空”和“不可用”区分开。
  */
-export async function readFromClipboard(): Promise<string> {
+export async function readClipboardText(): Promise<ClipboardReadResult> {
   try {
-    const text = await navigator.clipboard.readText();
-    return text ?? "";
-  } catch {
-    return "";
+    const text = await readText();
+    return text ? { kind: "ok", text } : { kind: "empty" };
+  } catch (error) {
+    return {
+      kind: "unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }

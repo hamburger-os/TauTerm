@@ -202,100 +202,44 @@
   opacity: 0.62;
 }
 
-.splitTrigger {
+/* 分屏只由四角小块热区触发：指针进入某个 Pane 后才显形，指针在角内时按最近的
+ * 一条边决定方向。内容边缘中段与未悬停的角都不设热区，文本选择、鼠标上报和
+ * TUI 自身的指针语义保持完整。 */
+.splitCorner {
   position: absolute;
   z-index: 11;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   background: transparent;
-  pointer-events: auto;
-  cursor: pointer;
+  pointer-events: none;
   opacity: 0;
+  cursor: pointer;
   transition: opacity var(--transition-fast), background var(--transition-fast);
 }
 
-.paneHeaderLayer:hover .splitTrigger {
-  opacity: 0.28;
-}
-
-.splitTrigger:hover {
-  opacity: 1 !important;
-  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
-}
-
-.splitTrigger span {
-  display: block;
+.splitCorner span {
   position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--accent-primary);
-  box-shadow: 0 0 10px var(--accent-glow);
+  box-shadow: 0 0 8px var(--accent-glow);
+  transform: translate(-50%, -50%);
 }
 
-/* 自由边缘本身就是 hover hit-zone；已有 Divider 的边由 blockedEdges 隐藏。
- * 左右触发区从标题栏下方开始，避免和 Pane Header 抢鼠标事件。
- * 顶部触发区保留在真实顶边，但收窄为居中的短 hit-zone，避免覆盖整条标题栏。
- */
-.splitTriggerLeft,
-.splitTriggerRight {
-  top: 24px;
-  bottom: 16px;
-  width: 12px;
+.splitCorner:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent-primary) 6%, transparent);
 }
 
-.splitTriggerLeft span,
-.splitTriggerRight span {
-  top: 50%;
-  width: 3px;
-  height: 26px;
-  transform: translateY(-50%);
-}
-
-.splitTriggerLeft {
-  left: 1px;
-}
-
-.splitTriggerLeft span {
-  left: 3px;
-}
-
-.splitTriggerRight {
-  right: 1px;
-}
-
-.splitTriggerRight span {
-  right: 3px;
-}
-
-.splitTriggerTop,
-.splitTriggerBottom {
-  left: 50%;
-  width: 56px;
-  height: 8px;
-  transform: translateX(-50%);
-}
-
-.splitTriggerTop span,
-.splitTriggerBottom span {
-  left: 50%;
-  width: 26px;
-  height: 3px;
-  transform: translateX(-50%);
-}
-
-.splitTriggerTop {
-  top: 1px;
-}
-
-.splitTriggerTop span {
-  top: 2px;
-}
-
-.splitTriggerBottom {
-  bottom: 1px;
-}
-
-.splitTriggerBottom span {
-  bottom: 2px;
+.splitCorner:focus-visible {
+  opacity: 1;
+  outline: 1px solid color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  outline-offset: -2px;
 }
 
 .splitPreview {

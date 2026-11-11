@@ -422,28 +422,3 @@ export function computeDividerGeometries(root: LayoutNode): DividerGeometry[] {
   walk(root, FULL_RECT);
   return result;
 }
-
-export function computeBlockedEdges(root: LayoutNode): Record<PaneId, Set<SplitEdge>> {
-  const result: Record<PaneId, Set<SplitEdge>> = {};
-  for (const paneId of collectPaneIds(root)) result[paneId] = new Set<SplitEdge>();
-
-  const mark = (node: LayoutNode, edge: SplitEdge) => {
-    for (const paneId of collectPaneIds(node)) result[paneId].add(edge);
-  };
-
-  const walk = (node: LayoutNode) => {
-    if (node.type === "pane") return;
-    if (node.direction === "horizontal") {
-      mark(node.first, "right");
-      mark(node.second, "left");
-    } else {
-      mark(node.first, "bottom");
-      mark(node.second, "top");
-    }
-    walk(node.first);
-    walk(node.second);
-  };
-
-  walk(root);
-  return result;
-}

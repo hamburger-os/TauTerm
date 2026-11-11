@@ -8,7 +8,6 @@ import {
   clearPaneInLayout,
   closePaneInLayout,
   collectPaneIds,
-  computeBlockedEdges,
   computeDividerGeometries,
   computePaneRects,
   countPanes,
@@ -36,7 +35,6 @@ interface SplitLayoutContextValue {
   state: SplitLayoutState;
   paneRects: Record<PaneId, PaneRect>;
   dividers: DividerGeometry[];
-  blockedEdges: Record<PaneId, Set<SplitEdge>>;
   paneCount: number;
   sessionToPane: Record<string, PaneId>;
   selectPane: (paneId: PaneId) => void;
@@ -276,7 +274,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
 
   const paneRects = useMemo(() => computePaneRects(state.root), [state.root]);
   const dividers = useMemo(() => computeDividerGeometries(state.root), [state.root]);
-  const blockedEdges = useMemo(() => computeBlockedEdges(state.root), [state.root]);
   const paneCount = useMemo(() => countPanes(state.root), [state.root]);
   const sessionToPane = useMemo(() => {
     const result: Record<string, PaneId> = {};
@@ -290,7 +287,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     state,
     paneRects,
     dividers,
-    blockedEdges,
     paneCount,
     sessionToPane,
     selectPane,
@@ -303,7 +299,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     state,
     paneRects,
     dividers,
-    blockedEdges,
     paneCount,
     sessionToPane,
     selectPane,
