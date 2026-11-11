@@ -52,6 +52,8 @@ struct HelperConfig {
     executable: String,
     args: Vec<String>,
     cwd: PathBuf,
+    #[serde(default)]
+    env: Vec<super::LocalShellEnvVar>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,7 +81,12 @@ pub struct ElevatedShellDriver {
 unsafe impl Send for ElevatedShellDriver {}
 
 impl ElevatedShellDriver {
-    pub fn spawn(executable: &str, args: &[String], cwd: &Path) -> std::io::Result<Self> {
+    pub fn spawn(
+        executable: &str,
+        args: &[String],
+        cwd: &Path,
+        env: &[super::LocalShellEnvVar],
+    ) -> std::io::Result<Self> {
         let pipe_base = format!(
             r"\\.\pipe\TauTermElevatedShell-{}",
             uuid::Uuid::new_v4().simple()
@@ -127,6 +134,7 @@ impl ElevatedShellDriver {
             executable: executable.to_string(),
             args: args.to_vec(),
             cwd: cwd.to_path_buf(),
+            env: env.to_vec(),
         };
         let payload = match serde_json::to_vec(&config) {
             Ok(payload) => payload,
@@ -427,8 +435,9 @@ fn run_helper(pipe_base: &str) -> std::io::Result<()> {
         .map_err(|error| io_other(format!("管理员 Shell 配置无效: {error}")))?;
     validate_helper_config(&config)?;
 
-    let mut shell = LocalShellDriver::spawn(&config.executable, &config.args, &config.cwd)
-        .map_err(|error| io_other(error.to_string()))?;
+    let mut shell =
+        LocalShellDriver::spawn(&config.executable, &config.args, &config.cwd, &config.env)
+            .map_err(|error| io_other(error.to_string()))?;
     let (command_tx, command_rx) = mpsc::sync_channel(64);
     std::thread::Builder::new()
         .name("elevated-shell-command-reader".into())
@@ -624,6 +633,7 @@ mod tests {
             executable: "pwsh.exe".into(),
             args: vec!["bad\0argument".into()],
             cwd: std::env::current_dir().unwrap(),
+            env: vec![],
         };
         assert!(validate_helper_config(&config).is_err());
     }
@@ -717,6 +727,7 @@ mod tests {
             executable: "cmd.exe".into(),
             args: vec!["/D".into(), "/Q".into(), "/K".into()],
             cwd: std::env::current_dir().unwrap(),
+            env: vec![],
         };
         write_frame(
             &mut command_server,

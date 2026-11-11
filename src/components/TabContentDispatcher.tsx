@@ -14,7 +14,6 @@ export default function TabContentDispatcher() {
     state,
     paneRects,
     dividers,
-    blockedEdges,
     paneCount,
     selectPane,
     splitPane,
@@ -28,7 +27,6 @@ export default function TabContentDispatcher() {
       layout={state}
       paneRects={paneRects}
       dividers={dividers}
-      blockedEdges={blockedEdges}
       paneCount={paneCount}
       onSelectPane={selectPane}
       onSplitPane={splitPane}

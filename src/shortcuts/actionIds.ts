@@ -17,6 +17,10 @@ export const ACTION_IDS = {
   TERMINAL_SEARCH: "terminal.search",
   TERMINAL_SELECT_ALL: "terminal.selectAll",
 
+  // Workspace
+  WORKSPACE_SPLIT_RIGHT: "workspace.splitRight",
+  WORKSPACE_SPLIT_DOWN: "workspace.splitDown",
+
   // Application
   PALETTE_OPEN: "palette.open",
   SIDEBAR_TOGGLE: "sidebar.toggle",

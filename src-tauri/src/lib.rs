@@ -102,6 +102,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Terminal clipboard reads/writes must not depend on WebView2's
+        // CLIPBOARD_READ permission prompt (which Tauri windows never answer),
+        // so the renderer uses the capability-scoped native clipboard plugin.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             updater_policy::UpdaterPolicy::configure(app)?;
             let window = app

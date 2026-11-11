@@ -38,8 +38,10 @@ interface SessionContextValue {
   reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string) => Promise<void>;
   openChannel: (parentSessionId: string, elevated?: boolean) => Promise<string | null>;
   closeChannel: (channelId: string, parentId: string) => Promise<void>;
-  onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
-  onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
+  /** Single terminal data consumer. Pass null when the consumer unmounts. */
+  onSessionData: (callback: ((sessionId: string, data: Uint8Array) => void) | null) => void;
+  /** Single local-echo consumer. Pass null when the consumer unmounts. */
+  onDataSent: (callback: ((sessionId: string, data: Uint8Array) => void) | null) => void;
   subscribeDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => () => void;
   isSessionConnected: (sessionId: string) => boolean;
   isSessionRuntimeCurrent: (sessionId: string, runtimeId: string) => boolean;
@@ -558,8 +560,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const onSessionData = useCallback((callback: (sessionId: string, data: Uint8Array) => void) => { dataCallbackRef.current = callback; }, []);
-  const onDataSent = useCallback((callback: (sessionId: string, data: Uint8Array) => void) => { sentDataCallbackRef.current = callback; }, []);
+  // The terminal view owns readiness buffering (`PendingSessionData`): it keeps
+  // bytes until the tab exists and its xterm write callback is registered, so a
+  // session that starts before the host is ready cannot lose its startup
+  // sequences. SessionContext only routes live data and never keeps a second,
+  // unbounded copy of it.
+  const onSessionData = useCallback(
+    (callback: ((sessionId: string, data: Uint8Array) => void) | null) => {
+      dataCallbackRef.current = callback;
+    },
+    [],
+  );
+  const onDataSent = useCallback(
+    (callback: ((sessionId: string, data: Uint8Array) => void) | null) => {
+      sentDataCallbackRef.current = callback;
+    },
+    [],
+  );
   const subscribeDataSent = useCallback((callback: (sessionId: string, data: Uint8Array) => void) => {
     sentDataSubscribersRef.current.add(callback);
     return () => { sentDataSubscribersRef.current.delete(callback); };

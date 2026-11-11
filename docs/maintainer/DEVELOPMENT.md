@@ -41,6 +41,9 @@
 | `npm run check:tauri-blocking` | 检查潜在阻塞的 Tauri command 是否错误地留在同步分发路径 |
 | `npm run check:runtime-errors` | 检查全局前端异常是否进入统一日志且公共错误文案已国际化 |
 | `npm run check:terminal-clipboard` | 检查终端复制/粘贴快捷键、统一 paste 路径、焦点恢复和多行粘贴安全规则 |
+| `npm run check:conpty` | 检查随包 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`）的文件哈希、来源记录、驱动接线与 Windows 打包映射 |
+| `npm run check:terminal-cell-grid` | 检查终端行高设备像素对齐算法：所有支持缩放/字体组合都得到整数 CSS 行高，100% 等已对齐场景不被改写 |
+| `npm run check:i18n-usage` | 检查核心 UI 静态 i18n key 是否同时存在于 en-US / zh-CN（插件与运行时合并命名空间除外） |
 | `npm run check:engineering-tools` | 检查 CRC 标准向量、严格数值/位运算转换以及 Modbus/AT 协议解析合同 |
 | `npm run check:sendbar` | 检查发送 payload、循环发送背压、SendBar 会话态/工程资产边界、运行快照与统一确认弹窗合同 |
 | `npm run check:status-bar` | 检查底部状态栏字节/速率格式化、会话切换生命周期与传输状态本地化合同 |

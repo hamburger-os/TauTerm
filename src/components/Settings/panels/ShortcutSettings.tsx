@@ -114,10 +114,11 @@ export default function ShortcutSettings() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const grouped = useMemo(() => shortcutRegistry.getByCategory(), [version]);
 
-  const categoryOrder = ["Session", "Terminal", "Application"];
+  const categoryOrder = ["Session", "Terminal", "Workspace", "Application"];
   const categoryLabelMap: Record<string, string> = {
     Session: t("settings.shortcutsCategory_session"),
     Terminal: t("settings.shortcutsCategory_terminal"),
+    Workspace: t("settings.shortcutsCategory_workspace"),
     Application: t("settings.shortcutsCategory_application"),
   };
 
@@ -153,7 +154,9 @@ export default function ShortcutSettings() {
                       ? t("settings.shortcutsRecording")
                       : isConflict
                         ? conflictMsg
-                        : formatKeys(s.keys)}
+                        : s.keys
+                          ? formatKeys(s.keys)
+                          : t("settings.shortcutsUnbound")}
                   </span>
                 </div>
               );

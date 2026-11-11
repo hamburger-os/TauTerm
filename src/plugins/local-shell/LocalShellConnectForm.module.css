@@ -65,3 +65,9 @@
   margin: 0;
   font-size: var(--text-xs);
 }
+
+.warning {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--spectrum-yellow);
+}

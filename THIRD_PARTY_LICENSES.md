@@ -6,6 +6,17 @@ This file is the repository-level inventory for third-party components that TauT
 
 ## Redistributed or vendored components
 
+### Microsoft Windows Console ConPTY 1.25.260930003
+
+- **Purpose:** Windows pseudo-console engine for Local Shell sessions. The in-box conhost engine does not forward the mouse-tracking modes that VT-first full-screen programs write before entering raw input; the redistributed engine (the implementation Windows Terminal uses) forwards them, so full-screen TUIs receive wheel and click input without any per-application workaround.
+- **Distribution form:** unmodified MIT-licensed binaries from the official `Microsoft.Windows.Console.ConPTY` NuGet package (`conpty.dll` and its sibling `OpenConsole.exe` host), vendored under `src-tauri/vendor/conpty/1.25.260930003/win-x64/` and bundled beside the Windows executable under `conpty/win-x64/`.
+- **Upstream:** https://github.com/microsoft/terminal
+- **Package:** https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY/1.25.260930003
+- **License:** MIT. Full license text ships as `THIRD_PARTY_CONPTY_MIT.txt`.
+- **Provenance, exact file hashes and the upgrade procedure:** `src-tauri/vendor/conpty/1.25.260930003/README.md`.
+
+TauTerm loads this engine dynamically from the reviewed payload (`src-tauri/src/plugins/local_shell/conpty_engine.rs`); it is not linked into TauTerm-owned code. `npm run check:conpty` verifies the payload hashes and the bundle mapping.
+
 ### com0com 3.0.0.0
 
 - **Purpose:** Windows virtual serial-port driver/setup payload.

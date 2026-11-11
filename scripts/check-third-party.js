@@ -24,6 +24,8 @@ const required = [
   "src-tauri/vendor/riperf3/LICENSE-MIT.txt",
   "src-tauri/vendor/riperf3/LICENSE-APACHE.txt",
   "src-tauri/vendor/riperf3/VENDOR-NOTES.md",
+  "src-tauri/vendor/conpty/1.25.260930003/LICENSE",
+  "src-tauri/vendor/conpty/1.25.260930003/README.md",
   "scripts/generate-third-party-notices.js",
 ];
 
@@ -42,7 +44,7 @@ if (!/^license\s*=\s*"MIT OR Apache-2\.0"$/m.test(cargoToml)) {
 }
 
 const notice = read("THIRD_PARTY_LICENSES.md");
-for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "serialport 4.10.1", "THIRD_PARTY_DEPENDENCY_LICENSES.txt", "Npcap", "libpcap"]) {
+for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "serialport 4.10.1", "THIRD_PARTY_DEPENDENCY_LICENSES.txt", "Npcap", "libpcap", "Microsoft Windows Console ConPTY 1.25.260930003"]) {
   if (!notice.includes(marker)) fail("THIRD_PARTY_LICENSES.md missing inventory marker: " + marker);
 }
 
@@ -88,7 +90,7 @@ const vendorDirs = fs.readdirSync(vendorRoot, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
   .sort();
-const reviewedVendorDirs = ["riperf3", "tcnopen"];
+const reviewedVendorDirs = ["conpty", "riperf3", "tcnopen"];
 for (const name of vendorDirs) {
   if (!reviewedVendorDirs.includes(name)) {
     fail("unreviewed vendored dependency directory: src-tauri/vendor/" + name);
@@ -133,6 +135,15 @@ if (baseConfig.build?.beforeBundleCommand !== "node scripts/generate-third-party
 }
 if (!Object.prototype.hasOwnProperty.call(windowsConfig.bundle?.resources ?? {}, "../resources/com0com/*")) {
   fail("Windows bundle must include the reviewed com0com distribution payload");
+}
+for (const [sourcePath, targetPath] of Object.entries({
+  "vendor/conpty/1.25.260930003/win-x64/conpty.dll": "conpty/win-x64/conpty.dll",
+  "vendor/conpty/1.25.260930003/win-x64/OpenConsole.exe": "conpty/win-x64/OpenConsole.exe",
+  "vendor/conpty/1.25.260930003/LICENSE": "THIRD_PARTY_CONPTY_MIT.txt",
+})) {
+  if ((windowsConfig.bundle?.resources ?? {})[sourcePath] !== targetPath) {
+    fail(`Windows bundle must ship the reviewed ConPTY engine payload: ${sourcePath} -> ${targetPath}`);
+  }
 }
 const releaseWorkflow = read(".github/workflows/release.yml");
 for (const marker of [

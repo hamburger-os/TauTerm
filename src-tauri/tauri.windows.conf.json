@@ -8,7 +8,10 @@
       "vendor/tcnopen/LICENSE": "THIRD_PARTY_TCNOPEN_MPL-2.0.txt",
       "generated/THIRD_PARTY_DEPENDENCY_LICENSES.txt": "THIRD_PARTY_DEPENDENCY_LICENSES.txt",
       "../resources/com0com/*": "",
-      "binaries/tauterm-service.exe": ""
+      "binaries/tauterm-service.exe": "",
+      "vendor/conpty/1.25.260930003/LICENSE": "THIRD_PARTY_CONPTY_MIT.txt",
+      "vendor/conpty/1.25.260930003/win-x64/conpty.dll": "conpty/win-x64/conpty.dll",
+      "vendor/conpty/1.25.260930003/win-x64/OpenConsole.exe": "conpty/win-x64/OpenConsole.exe"
     }
   }
 }
