@@ -498,6 +498,20 @@ fn validate_helper_config(config: &HelperConfig) -> std::io::Result<()> {
             .iter()
             .any(|arg| arg.contains('\0') || arg.len() > 4096)
         || !config.cwd.is_dir()
+        // Re-check the environment at the privilege boundary exactly like args:
+        // the parent validates it too, but the elevated helper must not trust the
+        // pipe payload it deserialized.
+        || config.env.len() > super::MAX_ENV_VARS
+        || config.env.iter().any(|entry| {
+            entry.key.is_empty()
+                || entry.key.len() > super::MAX_ENV_VAR_LENGTH
+                || !entry
+                    .key
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                || entry.value.contains('\0')
+                || entry.value.len() > super::MAX_ENV_VAR_LENGTH
+        })
     {
         return Err(io_other("管理员 Shell helper 配置校验失败"));
     }

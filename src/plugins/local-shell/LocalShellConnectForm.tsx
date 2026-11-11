@@ -43,8 +43,9 @@ export default function LocalShellConnectForm({
   const selectedShell = customSelected ? CUSTOM : (shellMode === "auto" ? "" : presetId);
   const isWsl = shellKind === "wsl";
   // Environment row diagnostics are inline and local: empty rows are ignored when
-  // the session starts, but a malformed or duplicated name would otherwise only
-  // surface as a backend error after the user commits the dialog.
+  // the session starts. Malformed names would otherwise only surface as a backend
+  // error after the user commits the dialog; duplicate names are advisory only
+  // because the backend applies the last value without rejecting the list.
   const envKeyInvalid = env.some(
     entry => entry.key.length > 0 && !/^[A-Za-z0-9_]+$/.test(entry.key),
   );

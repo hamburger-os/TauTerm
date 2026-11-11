@@ -66,13 +66,16 @@ mod platform {
     /// Search order: the bundled payload next to the executable (installed app),
     /// then the repository vendor directory (development builds), then a flat
     /// next-to-exe copy for diagnostics. The first complete pair wins; the host
-    /// executable must sit beside the DLL because the DLL launches it.
+    /// executable must sit beside the DLL because the DLL launches it. Keep the
+    /// reviewed vendor pair ahead of the flat diagnostic copy so a stray pair in a
+    /// development target directory cannot shadow the SHA-256-pinned payload.
     fn candidate_directories() -> Vec<PathBuf> {
         let mut directories = Vec::new();
+        let mut exe_dir = None;
         if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe_dir) = exe.parent() {
-                directories.push(exe_dir.join("conpty").join(platform_dir()));
-                directories.push(exe_dir.to_path_buf());
+            if let Some(parent) = exe.parent() {
+                directories.push(parent.join("conpty").join(platform_dir()));
+                exe_dir = Some(parent.to_path_buf());
             }
         }
         #[cfg(debug_assertions)]
@@ -83,6 +86,9 @@ mod platform {
                 .join(ENGINE_VERSION)
                 .join(platform_dir()),
         );
+        if let Some(directory) = exe_dir {
+            directories.push(directory);
+        }
         directories
     }
 
