@@ -54,7 +54,7 @@
     "envKeyDuplicate": "变量名不能重复。",
     "envValueInvalid": "变量值不能包含 NUL，也不能超过长度上限。",
     "envTooMany": "环境变量数量超过上限。",
-    "envWslUnsupported": "WSL shell 自带环境管理，请移除环境变量。"
+    "envWslUnsupported": "Linux 子系统自带环境管理，请移除环境变量。"
   },
   "serial": {
     "title": "连接设置",

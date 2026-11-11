@@ -54,7 +54,7 @@
     "envKeyDuplicate": "Variable names must be unique.",
     "envValueInvalid": "Variable values cannot contain NUL or exceed the length limit.",
     "envTooMany": "Too many environment variables.",
-    "envWslUnsupported": "WSL shells manage their own environment; remove the environment variables."
+    "envWslUnsupported": "Linux subsystem shells manage their own environment; remove the environment variables."
   },
   "serial": {
     "title": "Connection Settings",
