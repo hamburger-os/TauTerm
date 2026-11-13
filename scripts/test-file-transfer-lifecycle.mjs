@@ -345,7 +345,7 @@ const serialTransport = await source("src-tauri/src/transport/serial.rs");
 assert.doesNotMatch(serialTransport, /purge_input|bytes_to_read|serial_drain_input/);
 
 // ── Transactional SFTP commit and mid-transfer source mutation guard ─────────
-const service = await source("src-tauri/src/transfer/ssh_file_service.rs");
+const service = await source("src-tauri/src/plugins/ssh/sftp/service.rs");
 assert.match(service, /enum SftpWriteOutcome/);
 assert.match(service, /OpenFlags::WRITE\s*\|\s*OpenFlags::CREATE\s*\|\s*OpenFlags::EXCLUDE/);
 assert.match(service, /try_commit_local_noreplace[\s\S]*hard_link\(temp, candidate\)/);
@@ -368,25 +368,26 @@ assert.doesNotMatch(service, /File::create\(local_path\)/);
 assert.doesNotMatch(service, /sftp\.create\(remote_path\)/);
 assert.match(
   service,
-  /let \(mut remote_file, remote_size, remote_mtime\)[\s\S]*total != remote_size \|\| !remote_unchanged[\s\S]*remove_file\(&temp_path\)[\s\S]*未提交正式目标/,
+  /let \(mut remote_file, remote_size, remote_mtime\)[\s\S]*total != remote_size \|\| !remote_unchanged[\s\S]*remove_best_effort\(&temp_path\)[\s\S]*未提交正式目标/,
   "download must verify the remote source snapshot before committing its local temp file",
 );
 assert.match(
   service,
-  /let initial_meta = local_file[\s\S]*local_modified[\s\S]*total != local_size \|\| !local_unchanged[\s\S]*remove_file\(&temp_path\)[\s\S]*未提交正式目标/,
+  /let initial_meta = local_file[\s\S]*local_modified[\s\S]*total != local_size \|\| !local_unchanged[\s\S]*remove_best_effort\(&temp_path\)[\s\S]*未提交正式目标/,
   "upload must verify the local source snapshot before committing its remote temp file",
 );
 assert.match(service, /meta\.size\.unwrap_or\(0\) == remote_size/);
 assert.match(service, /remote_mtime\.is_none\(\) \|\| meta\.mtime == remote_mtime/);
 assert.match(service, /same_modified_time\(local_modified, meta\.modified\(\)\.ok\(\)\)/);
-assert.match(service, /pub enum SftpEntryType[\s\S]*Symlink/);
+const sftpAttrs = await source("src-tauri/src/plugins/ssh/sftp/attrs.rs");
+assert.match(sftpAttrs, /pub enum SftpEntryType[\s\S]*Symlink/);
 assert.match(service, /pub async fn sftp_list_tree_recursive/);
 assert.match(service, /pub async fn sftp_prepare_upload_directory/);
 assert.match(service, /pub async fn sftp_ensure_directory/);
 assert.match(service, /mode & 0o7777/);
 
 // ── Existing SFTP adapter safety invariants remain intact ───────────────────
-const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
+const sftp = await source("src-tauri/src/plugins/ssh/sftp/transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
 assert.match(sftp, /struct LocalDirectoryScan/);
 assert.match(sftp, /async fn scan_local_directory/);

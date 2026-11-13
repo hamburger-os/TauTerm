@@ -1,53 +1,35 @@
 //! SFTP 文件传输适配器
 //!
-//! 将 `ssh_file_service.rs` 中的 SFTP 自由函数适配到统一的 `FileTransfer` trait。
+//! 将 SFTP 文件服务的自由函数适配到统一的 `FileTransfer` trait。
 //! 由 SSH adapter 直接构造为显式 FileTransfer capability；传输层不恢复或解析协议 runtime 类型。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc::UnboundedSender, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, OverwritePolicy, ProgressPosition,
     TransferDirection, UnifiedProgress,
 };
-use crate::transfer::ssh_file_service::{
-    sftp_ensure_directory, sftp_prepare_upload_directory, SftpEntryType, SftpUploadOptions,
-    SftpWriteOutcome,
-};
 use crate::transfer::types::{BatchFileResult, FileInfo};
 
-/// SFTP 文件传输处理器
+use super::attrs::SftpEntryType;
+use super::capability::SftpCapability;
+use super::service::{
+    sftp_ensure_directory, sftp_prepare_upload_directory, SftpUploadOptions, SftpWriteOutcome,
+};
+
+/// SFTP 文件传输处理器。
 ///
-/// 由 SSH adapter 直接注入现有 SSH session 和缓存的 SFTP 子系统。
-/// 传输操作与终端 I/O 并行执行，不阻塞 shell 交互。
+/// 由 SSH adapter 注入 SFTP 能力对象；传输操作与终端 I/O 并行执行，不阻塞 shell 交互。
 pub struct SftpFileTransfer {
-    session: Arc<russh::client::Handle<crate::plugins::ssh::handler::SshHandler>>,
-    sftp_cache: Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: Arc<SftpCapability>,
 }
 
 impl SftpFileTransfer {
-    pub fn new(
-        session: Arc<russh::client::Handle<crate::plugins::ssh::handler::SshHandler>>,
-        sftp_cache: Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    ) -> Self {
-        Self {
-            session,
-            sftp_cache,
-        }
-    }
-
-    /// 获取内部 SSH session（保留用于未来扩展，当前所有操作通过 FileTransfer trait）
-    #[allow(dead_code)]
-    pub fn session(&self) -> &Arc<russh::client::Handle<crate::plugins::ssh::handler::SshHandler>> {
-        &self.session
-    }
-
-    /// 获取内部 SFTP 缓存（保留用于未来扩展，当前所有操作通过 FileTransfer trait）
-    #[allow(dead_code)]
-    pub fn sftp_cache(&self) -> &Arc<Mutex<Option<russh_sftp::client::SftpSession>>> {
-        &self.sftp_cache
+    pub fn new(cap: Arc<SftpCapability>) -> Self {
+        Self { cap }
     }
 }
 
@@ -236,17 +218,7 @@ struct LocalDirectoryScan {
     skipped: Vec<BatchFileResult>,
 }
 
-fn join_remote_path(base: &str, relative: &str) -> String {
-    let base = base.trim_end_matches('/');
-    let relative = relative.trim_start_matches('/');
-    if base.is_empty() || base == "/" {
-        format!("/{}", relative)
-    } else if relative.is_empty() {
-        base.to_string()
-    } else {
-        format!("{}/{}", base, relative)
-    }
-}
+use super::paths::join_relative as join_remote_path;
 
 fn utf8_local_name(path: &Path) -> Result<String, FileTransferError> {
     path.file_name()
@@ -395,13 +367,12 @@ impl FileTransfer for SftpFileTransfer {
             results.extend(scan.skipped);
 
             let Some(remote_root) = sftp_prepare_upload_directory(
-                &self.session,
-                &self.sftp_cache,
+                &self.cap,
                 &requested_remote,
                 options.overwrite_policy,
             )
             .await
-            .map_err(FileTransferError::Other)?
+            .map_err(|e| FileTransferError::Other(e.to_string()))?
             else {
                 results.push(BatchFileResult {
                     file_name: file.name.clone(),
@@ -413,13 +384,9 @@ impl FileTransfer for SftpFileTransfer {
             };
 
             for relative_dir in &scan.directories {
-                sftp_ensure_directory(
-                    &self.session,
-                    &self.sftp_cache,
-                    &join_remote_path(&remote_root, relative_dir),
-                )
-                .await
-                .map_err(FileTransferError::Other)?;
+                sftp_ensure_directory(&self.cap, &join_remote_path(&remote_root, relative_dir))
+                    .await
+                    .map_err(|e| FileTransferError::Other(e.to_string()))?;
             }
 
             // 即使目录为空，也保留一个成功结果，确保用户选中的根目录有可解释终态。
@@ -500,9 +467,8 @@ impl FileTransfer for SftpFileTransfer {
                 TransferDirection::Send,
             ));
 
-            let result = crate::transfer::ssh_file_service::sftp_upload(
-                &self.session,
-                &self.sftp_cache,
+            let result = super::service::sftp_upload(
+                &self.cap,
                 &file.local_path,
                 &file.remote_path,
                 SftpUploadOptions {
@@ -583,13 +549,13 @@ impl FileTransfer for SftpFileTransfer {
                         },
                         TransferDirection::Send,
                         false,
-                        Some(error.clone()),
+                        Some(error.to_string()),
                     ));
                     results.push(BatchFileResult {
                         file_name: display_name,
                         status: if is_cancelled { "skipped" } else { "failed" }.into(),
                         size: 0,
-                        error: Some(error),
+                        error: Some(error.to_string()),
                     });
                     if is_cancelled {
                         for remaining in plans.iter().skip(i + 1) {
@@ -663,13 +629,9 @@ impl FileTransfer for SftpFileTransfer {
             if cancel.load(Ordering::SeqCst) {
                 return Err(FileTransferError::Cancelled);
             }
-            let stat = crate::transfer::ssh_file_service::sftp_stat(
-                &self.session,
-                &self.sftp_cache,
-                remote_path,
-            )
-            .await
-            .map_err(FileTransferError::Other)?;
+            let stat = super::service::sftp_stat(&self.cap, remote_path)
+                .await
+                .map_err(|e| FileTransferError::Other(e.to_string()))?;
 
             let explicit_destination = options
                 .destination_paths
@@ -712,13 +674,9 @@ impl FileTransfer for SftpFileTransfer {
                         continue;
                     };
 
-                    let tree = crate::transfer::ssh_file_service::sftp_list_tree_recursive(
-                        &self.session,
-                        &self.sftp_cache,
-                        remote_path,
-                    )
-                    .await
-                    .map_err(FileTransferError::Other)?;
+                    let tree = super::service::sftp_list_tree_recursive(&self.cap, remote_path)
+                        .await
+                        .map_err(|e| FileTransferError::Other(e.to_string()))?;
 
                     for item in tree {
                         let relative = match safe_local_relative(remote_path, &item.path) {
@@ -830,9 +788,8 @@ impl FileTransfer for SftpFileTransfer {
                 TransferDirection::Receive,
             ));
 
-            let result = crate::transfer::ssh_file_service::sftp_download(
-                &self.session,
-                &self.sftp_cache,
+            let result = super::service::sftp_download(
+                &self.cap,
                 &plan.remote_path,
                 &plan.local_path,
                 options.overwrite_policy,
@@ -910,13 +867,13 @@ impl FileTransfer for SftpFileTransfer {
                         },
                         TransferDirection::Receive,
                         false,
-                        Some(e.clone()),
+                        Some(e.to_string()),
                     ));
                     results.push(BatchFileResult {
                         file_name,
                         status: if is_cancelled { "skipped" } else { "failed" }.into(),
                         size: 0,
-                        error: Some(e),
+                        error: Some(e.to_string()),
                     });
                     if is_cancelled {
                         for remaining in plans.iter().skip(i + 1) {

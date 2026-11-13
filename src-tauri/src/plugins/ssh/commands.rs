@@ -61,11 +61,6 @@ async fn connect_session(
         .get("file_service_enabled")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    let file_service_protocol_val = params
-        .get("file_service_protocol")
-        .and_then(Value::as_str)
-        .unwrap_or("sftp")
-        .to_string();
 
     let default_session_name = format!("{}@{}", ssh_config.username, ssh_config.host);
 
@@ -224,7 +219,6 @@ async fn connect_session(
             "transfer_protocol": transfer_protocol_val,
             "send_bar_enabled": send_bar_enabled_val,
             "file_service_enabled": file_service_enabled_val,
-            "file_service_protocol": file_service_protocol_val,
             "journald_enabled": journald_enabled_val,
             "host_key_fingerprint": host_key_fingerprint,
             "is_container": true,
@@ -384,11 +378,17 @@ pub struct JournaldExportRequest {
 
 // ── 命令：SSH 文件服务（SFTP）────────────────────
 
-use crate::plugins::ssh::SshRuntime;
-use crate::transfer::ssh_file_service::{
-    sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_list_dir, sftp_mkdir,
-    sftp_new_file, sftp_rename, sftp_stat,
+use crate::plugins::ssh::sftp::attrs::SftpEntry;
+use crate::plugins::ssh::sftp::document::{
+    RemoteDocumentEncodeRequest, RemoteDocumentEncodeResult, RemoteDocumentReadResult,
+    RemoteDocumentSaveRequest, RemoteDocumentSaveResult, DOCUMENT_HEX_LIMIT,
 };
+use crate::plugins::ssh::sftp::error::SftpError;
+use crate::plugins::ssh::sftp::service::{
+    sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_mkdir, sftp_new_file,
+    sftp_rename, sftp_stat,
+};
+use crate::plugins::ssh::SshRuntime;
 
 /// 解析父 Session 后从 SSH 插件自己的 typed registry 获取 runtime。
 fn get_ssh_runtime(
@@ -427,15 +427,22 @@ fn capture_ssh_runtime(
         .ok_or_else(|| format!("会话 {} 不包含 SSH runtime（可能不是 SSH 连接）", parent_id))
 }
 
-/// SFTP 列出远程目录
+/// SFTP 打开远程目录。
+///
+/// `remote_path` 为空表示起始目录（SFTP realpath 解析）。返回规范化路径与目录项，
+/// 前端不需要单独调用 "get home" 再拼路径。
 #[tauri::command]
 pub async fn sftp_list_dir_cmd(
     state: State<'_, AppState>,
     session_id: String,
-    remote_path: String,
-) -> Result<Vec<crate::transfer::ssh_file_service::SftpEntry>, String> {
+    remote_path: Option<String>,
+) -> Result<crate::plugins::ssh::sftp::service::SftpListing, SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_list_dir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    crate::plugins::ssh::sftp::service::sftp_open_directory(
+        &ssh_runtime.sftp(),
+        remote_path.as_deref(),
+    )
+    .await
 }
 
 /// SFTP 获取文件信息
@@ -444,9 +451,9 @@ pub async fn sftp_stat_cmd(
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
-) -> Result<crate::transfer::ssh_file_service::SftpFileInfo, String> {
+) -> Result<SftpEntry, SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_stat(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    sftp_stat(&ssh_runtime.sftp(), &remote_path).await
 }
 
 /// SFTP 修改文件权限
@@ -456,9 +463,9 @@ pub async fn sftp_chmod_cmd(
     session_id: String,
     remote_path: String,
     mode: u32,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_chmod(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path, mode).await
+    sftp_chmod(&ssh_runtime.sftp(), &remote_path, mode).await
 }
 
 /// SFTP 删除文件或目录
@@ -467,9 +474,9 @@ pub async fn sftp_delete_cmd(
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_delete(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    sftp_delete(&ssh_runtime.sftp(), &remote_path).await
 }
 
 /// SFTP 重命名/移动文件或目录
@@ -479,15 +486,9 @@ pub async fn sftp_rename_cmd(
     session_id: String,
     from_path: String,
     to_path: String,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_rename(
-        &ssh_runtime.session,
-        &ssh_runtime.sftp,
-        &from_path,
-        &to_path,
-    )
-    .await
+    sftp_rename(&ssh_runtime.sftp(), &from_path, &to_path).await
 }
 
 /// SFTP 创建目录
@@ -496,9 +497,9 @@ pub async fn sftp_mkdir_cmd(
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_mkdir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    sftp_mkdir(&ssh_runtime.sftp(), &remote_path).await
 }
 
 /// SFTP 创建空文件
@@ -507,9 +508,9 @@ pub async fn sftp_new_file_cmd(
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_new_file(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    sftp_new_file(&ssh_runtime.sftp(), &remote_path).await
 }
 
 /// SFTP 批量删除
@@ -518,9 +519,9 @@ pub async fn sftp_delete_batch_cmd(
     state: State<'_, AppState>,
     session_id: String,
     paths: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_delete_batch(&ssh_runtime.session, &ssh_runtime.sftp, &paths).await
+    sftp_delete_batch(&ssh_runtime.sftp(), &paths).await
 }
 
 /// SFTP 递归删除目录（包括子内容）
@@ -529,24 +530,80 @@ pub async fn sftp_delete_recursive_cmd(
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
-) -> Result<(), String> {
+) -> Result<(), SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
-    sftp_delete_recursive(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
+    sftp_delete_recursive(&ssh_runtime.sftp(), &remote_path).await
 }
 
-/// 获取 SSH 会话的远程用户 home 目录。
+/// SFTP 能力探测。
 ///
-/// 第一次真正使用文件服务时按需解析并缓存；基础 SSH 建连不执行额外远端命令。
+/// 确定性结果按连接缓存；`refresh` 为 true 时丢弃缓存重新探测（前端“重试”）。
+/// 文件面板据此显示 “不可用 + 原因”，而不是在第一次操作时抛原始传输错误。
 #[tauri::command]
-pub async fn get_ssh_home_dir(
+pub async fn ssh_sftp_availability_cmd(
     state: State<'_, AppState>,
     session_id: String,
-) -> Result<String, String> {
+    refresh: Option<bool>,
+) -> Result<crate::plugins::ssh::SftpAvailability, String> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     Ok(ssh_runtime
-        .resolve_home_dir()
-        .await
-        .unwrap_or_else(|| "/".to_string()))
+        .sftp_availability(refresh.unwrap_or(false))
+        .await)
+}
+// ── 命令：SSH 远程文档（Remote Document）──────────
+
+/// 读取远程文档（预览 / 完整打开）。
+#[tauri::command]
+pub async fn sftp_read_document_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    full: bool,
+) -> Result<RemoteDocumentReadResult, SftpError> {
+    let runtime = get_ssh_runtime(&state, &session_id)?;
+    let cap = runtime.sftp();
+    match crate::plugins::ssh::sftp::document::read_document(&cap, &remote_path, full).await {
+        Ok(document) => Ok(document),
+        Err(message) => {
+            let error = SftpError::from(message);
+            cap.invalidate_if_broken(&error).await;
+            Err(error)
+        }
+    }
+}
+
+/// 预览待保存文本按目标格式序列化后的字节（HEX 视图数据源）。
+#[tauri::command]
+pub async fn remote_document_encode_preview_cmd(
+    request: RemoteDocumentEncodeRequest,
+) -> Result<RemoteDocumentEncodeResult, String> {
+    let bytes =
+        crate::plugins::ssh::sftp::document::serialize_text(&request.text, &request.format)?;
+    let total_size = bytes.len() as u64;
+    let visible = bytes.len().min(DOCUMENT_HEX_LIMIT);
+    Ok(RemoteDocumentEncodeResult {
+        data: bytes[..visible].to_vec(),
+        total_size,
+        truncated: visible < bytes.len(),
+    })
+}
+
+/// 保存远程文档（严格序列化 + 版本校验 + 临时文件提交）。
+#[tauri::command]
+pub async fn sftp_save_document_cmd(
+    state: State<'_, AppState>,
+    request: RemoteDocumentSaveRequest,
+) -> Result<RemoteDocumentSaveResult, SftpError> {
+    let runtime = get_ssh_runtime(&state, &request.session_id)?;
+    let cap = runtime.sftp();
+    match crate::plugins::ssh::sftp::document::save_document(&cap, request).await {
+        Ok(result) => Ok(result),
+        Err(message) => {
+            let error = SftpError::from(message);
+            cap.invalidate_if_broken(&error).await;
+            Err(error)
+        }
+    }
 }
 
 // ── Journald 日志查看器命令 ──────────────────────────
@@ -580,7 +637,7 @@ pub async fn start_journald_stream(
     };
     crate::plugins::ssh::journald::start_journald_stream(
         &ssh_runtime.journald,
-        &ssh_runtime.session,
+        &ssh_runtime.handle(),
         app,
         crate::session::RuntimeIdentity {
             session_id,
@@ -636,19 +693,13 @@ pub async fn journald_query_cmd(
         until,
     };
     let limit = limit.unwrap_or(100);
-    let (entries, next_cursor) = crate::plugins::ssh::journald::journald_query(
-        &ssh_runtime.session,
+    crate::plugins::ssh::journald::journald_query(
+        &ssh_runtime.handle(),
         &filters,
         cursor.as_deref(),
         limit,
     )
-    .await?;
-    let has_more = entries.len() >= limit;
-    Ok(crate::plugins::ssh::journald::JournaldQueryResponse {
-        entries,
-        next_cursor,
-        has_more,
-    })
+    .await
 }
 
 /// 启动 journald 日志导出
@@ -685,7 +736,7 @@ pub async fn start_journald_export(
     };
     crate::plugins::ssh::journald::start_journald_export(
         &ssh_runtime.journald,
-        &ssh_runtime.session,
+        &ssh_runtime.handle(),
         app,
         crate::session::RuntimeIdentity {
             session_id,

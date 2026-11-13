@@ -16,12 +16,19 @@ use std::sync::{
 };
 use std::time::{Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 
 use russh_sftp::protocol::OpenFlags;
 
 use crate::kernel::file_transfer::OverwritePolicy;
-use crate::plugins::ssh::handler::SshHandler;
+
+use super::attrs::{entry_type_from_permissions, permissions_to_string, SftpEntry, SftpEntryType};
+use super::capability::SftpCapability;
+use super::error::SftpError;
+
+use super::paths::{
+    join as remote_join, keep_both_candidate as remote_keep_both_candidate, parts as remote_parts,
+    sibling_artifact as remote_sibling_artifact,
+};
 
 /// 传输缓冲区大小（256 KB — SSH 通道窗口约 2MB，256KB 在高 RTT 链路下能填满窗口）
 const TRANSFER_BUF_SIZE: usize = 256 * 1024;
@@ -156,90 +163,44 @@ fn is_cancelled(cancel: Option<&Arc<AtomicBool>>) -> bool {
     cancel.map(|c| c.load(Ordering::SeqCst)).unwrap_or(false)
 }
 
-async fn get_or_create_sftp(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-) -> Result<(), String> {
-    let mut cache = sftp_cache.lock().await;
-    if cache.is_none() {
-        let channel = session
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("打开 SFTP 通道失败: {}", e))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| format!("请求 SFTP 子系统失败: {}", e))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| format!("初始化 SFTP 会话失败: {}", e))?;
-        *cache = Some(sftp);
-        log::info!("SFTP 子系统通道已建立并缓存");
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SftpEntryType {
-    File,
-    Directory,
-    Symlink,
-    Fifo,
-    Socket,
-    BlockDevice,
-    CharDevice,
-    Other,
-}
-
-fn entry_type_from_permissions(perm: Option<u32>, fallback_is_dir: bool) -> SftpEntryType {
-    match perm.map(|p| p & 0o170000) {
-        Some(0o040000) => SftpEntryType::Directory,
-        Some(0o100000) => SftpEntryType::File,
-        Some(0o120000) => SftpEntryType::Symlink,
-        Some(0o010000) => SftpEntryType::Fifo,
-        Some(0o140000) => SftpEntryType::Socket,
-        Some(0o060000) => SftpEntryType::BlockDevice,
-        Some(0o020000) => SftpEntryType::CharDevice,
-        Some(0) | None if fallback_is_dir => SftpEntryType::Directory,
-        Some(0) | None => SftpEntryType::File,
-        _ => SftpEntryType::Other,
-    }
-}
-
+/// 一次“打开目录”的结果：规范化后的绝对路径 + 目录项。
 #[derive(Debug, Clone, Serialize)]
-pub struct SftpEntry {
-    pub name: String,
+pub struct SftpListing {
     pub path: String,
-    pub is_dir: bool,
-    pub entry_type: SftpEntryType,
-    pub size: u64,
-    pub accessed: Option<u64>,
-    pub modified: Option<u64>,
-    pub permissions: Option<String>,
+    pub entries: Vec<SftpEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SftpFileInfo {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    pub entry_type: SftpEntryType,
-    pub size: u64,
-    pub accessed: Option<u64>,
-    pub modified: Option<u64>,
-    pub permissions: Option<String>,
+/// 打开远端目录。`remote_path` 为空表示“起始目录”：由 SFTP realpath 解析，
+/// 解析失败即明确报错，不回退到 `/` 之类猜测值。
+pub async fn sftp_open_directory(
+    cap: &SftpCapability,
+    remote_path: Option<&str>,
+) -> Result<SftpListing, SftpError> {
+    let path = match remote_path.filter(|path| !path.is_empty()) {
+        Some(path) => path.to_string(),
+        None => cap.home_dir().await?,
+    };
+    let entries = sftp_list_dir(cap, &path).await?;
+    Ok(SftpListing { path, entries })
 }
-
 pub async fn sftp_list_dir(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<Vec<SftpEntry>, SftpError> {
+    let result = sftp_list_dir_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_list_dir_inner(
+    cap: &SftpCapability,
     remote_path: &str,
 ) -> Result<Vec<SftpEntry>, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
 
     let path = if remote_path.is_empty() {
         "."
@@ -287,14 +248,18 @@ pub async fn sftp_list_dir(
     Ok(result)
 }
 
-pub async fn sftp_stat(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_path: &str,
-) -> Result<SftpFileInfo, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+pub async fn sftp_stat(cap: &SftpCapability, remote_path: &str) -> Result<SftpEntry, SftpError> {
+    let result = sftp_stat_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_stat_inner(cap: &SftpCapability, remote_path: &str) -> Result<SftpEntry, String> {
+    let sftp = cap.client().await?;
 
     let stat = sftp
         .symlink_metadata(remote_path)
@@ -306,7 +271,7 @@ pub async fn sftp_stat(
         .unwrap_or_else(|| remote_path.to_string());
     let entry_type = entry_type_from_permissions(stat.permissions, stat.is_dir());
 
-    Ok(SftpFileInfo {
+    Ok(SftpEntry {
         name,
         path: remote_path.to_string(),
         is_dir: entry_type == SftpEntryType::Directory,
@@ -319,16 +284,26 @@ pub async fn sftp_stat(
 }
 
 pub async fn sftp_read_head(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+    max_bytes: u64,
+) -> Result<(Vec<u8>, u64), SftpError> {
+    let result = sftp_read_head_inner(cap, remote_path, max_bytes)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_read_head_inner(
+    cap: &SftpCapability,
     remote_path: &str,
     max_bytes: u64,
 ) -> Result<(Vec<u8>, u64), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-
     let (mut remote_file, total_size) = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         let stat = sftp
             .symlink_metadata(remote_path)
             .await
@@ -523,41 +498,6 @@ async fn commit_local_temp(
     }
 }
 
-fn remote_parts(path: &str) -> (&str, &str) {
-    match path.rsplit_once('/') {
-        Some((dir, name)) => (dir, name),
-        None => ("", path),
-    }
-}
-
-fn remote_join(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else if dir == "/" {
-        format!("/{}", name)
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
-
-fn remote_keep_both_candidate(path: &str, index: u32) -> String {
-    let (dir, name) = remote_parts(path);
-    let dot = name.rfind('.').filter(|idx| *idx > 0);
-    let next = match dot {
-        Some(idx) => format!("{} ({}).{}", &name[..idx], index, &name[idx + 1..]),
-        None => format!("{} ({})", name, index),
-    };
-    remote_join(dir, &next)
-}
-
-fn remote_sibling_artifact(path: &str, tag: &str) -> String {
-    let (dir, name) = remote_parts(path);
-    remote_join(
-        dir,
-        &format!(".{}.tauterm-{}-{}", name, tag, uuid::Uuid::new_v4()),
-    )
-}
-
 async fn resolve_remote_destination(
     sftp: &russh_sftp::client::SftpSession,
     requested: &str,
@@ -706,16 +646,37 @@ fn same_modified_time(left: Option<SystemTime>, right: Option<SystemTime>) -> bo
 /// 始终先写同目录临时文件。提交前不仅要求 EOF 正常结束，还会重新核对远端
 /// size/mtime 与起始快照；源文件在传输期间被截断、增长或替换时绝不提交正式目标。
 pub async fn sftp_download(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+    local_path: &str,
+    overwrite_policy: OverwritePolicy,
+    on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<SftpWriteOutcome, SftpError> {
+    let result = sftp_download_inner(
+        cap,
+        remote_path,
+        local_path,
+        overwrite_policy,
+        on_progress,
+        cancel,
+    )
+    .await
+    .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_download_inner(
+    cap: &SftpCapability,
     remote_path: &str,
     local_path: &str,
     overwrite_policy: OverwritePolicy,
     on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<SftpWriteOutcome, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-
     let requested = Path::new(local_path);
     let Some(final_path) = resolve_local_destination(requested, overwrite_policy).await? else {
         return Ok(SftpWriteOutcome::Skipped {
@@ -724,8 +685,7 @@ pub async fn sftp_download(
     };
 
     let (mut remote_file, remote_size, remote_mtime) = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         let meta = sftp
             .symlink_metadata(remote_path)
             .await
@@ -791,8 +751,7 @@ pub async fn sftp_download(
     }
 
     let remote_unchanged = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         match sftp.symlink_metadata(remote_path).await {
             Ok(meta) => {
                 entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::File
@@ -866,8 +825,24 @@ pub struct SftpUploadOptions {
 /// 数据先写远端同目录临时文件；提交前重新核对打开文件的 size/modified 快照，
 /// 源文件在传输期间变化时清理临时文件，不触碰已有正式目标。
 pub async fn sftp_upload(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    local_path: &str,
+    remote_path: &str,
+    options: SftpUploadOptions,
+    on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<SftpWriteOutcome, SftpError> {
+    let result = sftp_upload_inner(cap, local_path, remote_path, options, on_progress, cancel)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_upload_inner(
+    cap: &SftpCapability,
     local_path: &str,
     remote_path: &str,
     options: SftpUploadOptions,
@@ -878,8 +853,6 @@ pub async fn sftp_upload(
         mtime,
         overwrite_policy,
     } = options;
-    get_or_create_sftp(session, sftp_cache).await?;
-
     let mut local_file = tokio::fs::File::open(local_path)
         .await
         .map_err(|e| format!("打开本地文件 '{}' 失败: {}", local_path, e))?;
@@ -891,10 +864,9 @@ pub async fn sftp_upload(
     let local_modified = initial_meta.modified().ok();
 
     let (final_path, temp_path, mut remote_file) = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         let Some(final_path) =
-            resolve_remote_destination(sftp, remote_path, overwrite_policy).await?
+            resolve_remote_destination(&sftp, remote_path, overwrite_policy).await?
         else {
             return Ok(SftpWriteOutcome::Skipped {
                 final_path: remote_path.to_string(),
@@ -920,20 +892,14 @@ pub async fn sftp_upload(
         if is_cancelled(cancel) {
             remote_file.flush().await.ok();
             drop(remote_file);
-            let cache = sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                let _ = sftp.remove_file(&temp_path).await;
-            }
+            cap.remove_best_effort(&temp_path).await;
             return Err(transfer_cancelled_error());
         }
         let n = match local_file.read(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
                 drop(remote_file);
-                let cache = sftp_cache.lock().await;
-                if let Some(sftp) = cache.as_ref() {
-                    let _ = sftp.remove_file(&temp_path).await;
-                }
+                cap.remove_best_effort(&temp_path).await;
                 return Err(format!("读取本地文件失败: {}", e));
             }
         };
@@ -942,10 +908,7 @@ pub async fn sftp_upload(
         }
         if let Err(e) = remote_file.write_all(&buf[..n]).await {
             drop(remote_file);
-            let cache = sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                let _ = sftp.remove_file(&temp_path).await;
-            }
+            cap.remove_best_effort(&temp_path).await;
             return Err(format!("写入远程临时文件失败: {}", e));
         }
         total += n as u64;
@@ -966,10 +929,7 @@ pub async fn sftp_upload(
     if total != local_size || !local_unchanged {
         remote_file.flush().await.ok();
         drop(remote_file);
-        let cache = sftp_cache.lock().await;
-        if let Some(sftp) = cache.as_ref() {
-            let _ = sftp.remove_file(&temp_path).await;
-        }
+        cap.remove_best_effort(&temp_path).await;
         return Err(format!(
             "本地源文件 '{}' 在传输期间发生变化（预期 {} bytes，实际读取 {} bytes），已清理远端临时文件且未提交正式目标",
             local_path, local_size, total
@@ -983,17 +943,13 @@ pub async fn sftp_upload(
     }
     if let Err(e) = remote_file.flush().await {
         drop(remote_file);
-        let cache = sftp_cache.lock().await;
-        if let Some(sftp) = cache.as_ref() {
-            let _ = sftp.remove_file(&temp_path).await;
-        }
+        cap.remove_best_effort(&temp_path).await;
         return Err(format!("刷新远程临时文件失败: {}", e));
     }
     drop(remote_file);
 
     if let Some(mtime_secs) = mtime {
-        let cache = sftp_cache.lock().await;
-        if let Some(sftp) = cache.as_ref() {
+        if let Ok(sftp) = cap.client().await {
             match sftp.metadata(&temp_path).await {
                 Ok(mut stat) => {
                     let ts = mtime_secs.min(u32::MAX as u64) as u32;
@@ -1009,32 +965,22 @@ pub async fn sftp_upload(
     }
 
     if is_cancelled(cancel) {
-        let cache = sftp_cache.lock().await;
-        if let Some(sftp) = cache.as_ref() {
-            let _ = sftp.remove_file(&temp_path).await;
-        }
+        cap.remove_best_effort(&temp_path).await;
         return Err(transfer_cancelled_error());
     }
 
     let commit_result = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        commit_remote_temp(sftp, &temp_path, &final_path, overwrite_policy).await
+        let sftp = cap.client().await?;
+        commit_remote_temp(&sftp, &temp_path, &final_path, overwrite_policy).await
     };
     let committed_path = match commit_result {
         Ok(Some(path)) => path,
         Ok(None) => {
-            let cache = sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                let _ = sftp.remove_file(&temp_path).await;
-            }
+            cap.remove_best_effort(&temp_path).await;
             return Ok(SftpWriteOutcome::Skipped { final_path });
         }
         Err(e) => {
-            let cache = sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                let _ = sftp.remove_file(&temp_path).await;
-            }
+            cap.remove_best_effort(&temp_path).await;
             return Err(e);
         }
     };
@@ -1052,14 +998,18 @@ pub async fn sftp_upload(
     })
 }
 
-pub async fn sftp_delete(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_path: &str,
-) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+pub async fn sftp_delete(cap: &SftpCapability, remote_path: &str) -> Result<(), SftpError> {
+    let result = sftp_delete_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_delete_inner(cap: &SftpCapability, remote_path: &str) -> Result<(), String> {
+    let sftp = cap.client().await?;
     let stat = sftp
         .symlink_metadata(remote_path)
         .await
@@ -1085,14 +1035,25 @@ pub async fn sftp_delete(
 }
 
 pub async fn sftp_rename(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    from_path: &str,
+    to_path: &str,
+) -> Result<(), SftpError> {
+    let result = sftp_rename_inner(cap, from_path, to_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_rename_inner(
+    cap: &SftpCapability,
     from_path: &str,
     to_path: &str,
 ) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
     sftp.rename(from_path, to_path)
         .await
         .map_err(|e| format!("重命名 '{}' -> '{}' 失败: {}", from_path, to_path, e))?;
@@ -1100,14 +1061,18 @@ pub async fn sftp_rename(
     Ok(())
 }
 
-pub async fn sftp_mkdir(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_path: &str,
-) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+pub async fn sftp_mkdir(cap: &SftpCapability, remote_path: &str) -> Result<(), SftpError> {
+    let result = sftp_mkdir_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_mkdir_inner(cap: &SftpCapability, remote_path: &str) -> Result<(), String> {
+    let sftp = cap.client().await?;
     sftp.create_dir(remote_path)
         .await
         .map_err(|e| format!("创建目录 '{}' 失败: {}", remote_path, e))?;
@@ -1146,18 +1111,29 @@ async fn try_create_remote_directory(
 }
 
 pub async fn sftp_prepare_upload_directory(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    requested: &str,
+    policy: OverwritePolicy,
+) -> Result<Option<String>, SftpError> {
+    let result = sftp_prepare_upload_directory_inner(cap, requested, policy)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_prepare_upload_directory_inner(
+    cap: &SftpCapability,
     requested: &str,
     policy: OverwritePolicy,
 ) -> Result<Option<String>, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
 
     match policy {
         OverwritePolicy::Skip => {
-            if try_create_remote_directory(sftp, requested).await? {
+            if try_create_remote_directory(&sftp, requested).await? {
                 Ok(Some(requested.to_string()))
             } else {
                 Ok(None)
@@ -1171,7 +1147,7 @@ pub async fn sftp_prepare_upload_directory(
                     let (dir, name) = remote_parts(requested);
                     remote_join(dir, &format!("{} ({})", name, index))
                 };
-                if try_create_remote_directory(sftp, &candidate).await? {
+                if try_create_remote_directory(&sftp, &candidate).await? {
                     return Ok(Some(candidate));
                 }
             }
@@ -1188,7 +1164,7 @@ pub async fn sftp_prepare_upload_directory(
                     requested
                 ));
             }
-            if try_create_remote_directory(sftp, requested).await? {
+            if try_create_remote_directory(&sftp, requested).await? {
                 Ok(Some(requested.to_string()))
             } else {
                 Err(format!("远程目录 '{}' 在提交时被其他操作占用", requested))
@@ -1198,13 +1174,23 @@ pub async fn sftp_prepare_upload_directory(
 }
 
 pub async fn sftp_ensure_directory(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<(), SftpError> {
+    let result = sftp_ensure_directory_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_ensure_directory_inner(
+    cap: &SftpCapability,
     remote_path: &str,
 ) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
 
     if sftp
         .try_exists(remote_path)
@@ -1222,7 +1208,7 @@ pub async fn sftp_ensure_directory(
         return Err(format!("远程路径 '{}' 已存在且不是目录", remote_path));
     }
 
-    if try_create_remote_directory(sftp, remote_path).await? {
+    if try_create_remote_directory(&sftp, remote_path).await? {
         Ok(())
     } else {
         let meta = sftp
@@ -1238,14 +1224,18 @@ pub async fn sftp_ensure_directory(
     }
 }
 
-pub async fn sftp_new_file(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_path: &str,
-) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+pub async fn sftp_new_file(cap: &SftpCapability, remote_path: &str) -> Result<(), SftpError> {
+    let result = sftp_new_file_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_new_file_inner(cap: &SftpCapability, remote_path: &str) -> Result<(), String> {
+    let sftp = cap.client().await?;
     let mut file = sftp
         .open_with_flags(
             remote_path,
@@ -1261,14 +1251,25 @@ pub async fn sftp_new_file(
 }
 
 pub async fn sftp_chmod(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+    mode: u32,
+) -> Result<(), SftpError> {
+    let result = sftp_chmod_inner(cap, remote_path, mode)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_chmod_inner(
+    cap: &SftpCapability,
     remote_path: &str,
     mode: u32,
 ) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
 
     let mut stat = sftp
         .symlink_metadata(remote_path)
@@ -1291,19 +1292,30 @@ pub async fn sftp_chmod(
 }
 
 pub async fn sftp_delete_batch(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    paths: &[String],
+) -> Result<Vec<String>, SftpError> {
+    let result = sftp_delete_batch_inner(cap, paths)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_delete_batch_inner(
+    cap: &SftpCapability,
     paths: &[String],
 ) -> Result<Vec<String>, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
     let mut failed: Vec<String> = Vec::new();
 
     for remote_path in paths {
         let result = {
-            let cache = sftp_cache.lock().await;
-            let sftp = match cache.as_ref() {
-                Some(s) => s,
-                None => {
+            let sftp = match cap.client().await {
+                Ok(session) => session,
+                Err(error) => {
+                    log::warn!("批量删除: SFTP 会话不可用: {}", error);
                     failed.push(remote_path.clone());
                     continue;
                 }
@@ -1338,18 +1350,29 @@ pub async fn sftp_delete_batch(
 }
 
 pub async fn sftp_delete_recursive(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<(), SftpError> {
+    let result = sftp_delete_recursive_inner(cap, remote_path)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_delete_recursive_inner(
+    cap: &SftpCapability,
     remote_path: &str,
 ) -> Result<(), String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-    delete_recursive_inner(sftp_cache, remote_path, 0).await
+    delete_recursive_inner(cap, remote_path, 0).await
 }
 
 type DeleteRecursiveFut<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 fn delete_recursive_inner<'a>(
-    sftp_cache: &'a Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &'a SftpCapability,
     path: &'a str,
     depth: u32,
 ) -> DeleteRecursiveFut<'a> {
@@ -1363,8 +1386,7 @@ fn delete_recursive_inner<'a>(
             ));
         }
         let (_is_dir, children) = {
-            let cache = sftp_cache.lock().await;
-            let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+            let sftp = cap.client().await?;
             let stat = sftp
                 .symlink_metadata(path)
                 .await
@@ -1400,11 +1422,10 @@ fn delete_recursive_inner<'a>(
         };
 
         for child_path in &children {
-            delete_recursive_inner(sftp_cache, child_path, depth + 1).await?;
+            delete_recursive_inner(cap, child_path, depth + 1).await?;
         }
         {
-            let cache = sftp_cache.lock().await;
-            let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+            let sftp = cap.client().await?;
             sftp.remove_dir(path)
                 .await
                 .map_err(|e| format!("删除目录 '{}' 失败: {}", path, e))?;
@@ -1412,46 +1433,6 @@ fn delete_recursive_inner<'a>(
         log::info!("SFTP 递归删除目录: {}", path);
         Ok(())
     })
-}
-
-fn permissions_to_string(perm: Option<u32>) -> String {
-    let p = perm.unwrap_or(0);
-    let mut s = String::with_capacity(10);
-    let type_char = match p & 0o170000 {
-        0o040000 => 'd',
-        0o120000 => 'l',
-        0o010000 => 'p',
-        0o140000 => 's',
-        0o060000 => 'b',
-        0o020000 => 'c',
-        _ => '-',
-    };
-    s.push(type_char);
-    s.push(if p & 0o400 != 0 { 'r' } else { '-' });
-    s.push(if p & 0o200 != 0 { 'w' } else { '-' });
-    s.push(match (p & 0o4000 != 0, p & 0o100 != 0) {
-        (true, true) => 's',
-        (true, false) => 'S',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    s.push(if p & 0o040 != 0 { 'r' } else { '-' });
-    s.push(if p & 0o020 != 0 { 'w' } else { '-' });
-    s.push(match (p & 0o2000 != 0, p & 0o010 != 0) {
-        (true, true) => 's',
-        (true, false) => 'S',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    s.push(if p & 0o004 != 0 { 'r' } else { '-' });
-    s.push(if p & 0o002 != 0 { 'w' } else { '-' });
-    s.push(match (p & 0o1000 != 0, p & 0o001 != 0) {
-        (true, true) => 't',
-        (true, false) => 'T',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    s
 }
 
 #[derive(Debug, Clone)]
@@ -1462,20 +1443,31 @@ pub struct SftpTreeEntry {
 }
 
 pub async fn sftp_list_tree_recursive(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
+    remote_dir: &str,
+) -> Result<Vec<SftpTreeEntry>, SftpError> {
+    let result = sftp_list_tree_recursive_inner(cap, remote_dir)
+        .await
+        .map_err(SftpError::from);
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_list_tree_recursive_inner(
+    cap: &SftpCapability,
     remote_dir: &str,
 ) -> Result<Vec<SftpTreeEntry>, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
     let mut result = Vec::new();
-    list_tree_recursive_inner(sftp_cache, remote_dir, 0, &mut result).await?;
+    list_tree_recursive_inner(cap, remote_dir, 0, &mut result).await?;
     Ok(result)
 }
 
 type ListRecursiveFut<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
 fn list_tree_recursive_inner<'a>(
-    sftp_cache: &'a Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &'a SftpCapability,
     path: &'a str,
     depth: u32,
     result: &'a mut Vec<SftpTreeEntry>,
@@ -1490,8 +1482,7 @@ fn list_tree_recursive_inner<'a>(
         }
 
         let children: Vec<SftpTreeEntry> = {
-            let cache = sftp_cache.lock().await;
-            let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+            let sftp = cap.client().await?;
             let read_dir = sftp
                 .read_dir(path)
                 .await
@@ -1524,7 +1515,7 @@ fn list_tree_recursive_inner<'a>(
             let child_path = child.path.clone();
             result.push(child);
             if is_dir {
-                list_tree_recursive_inner(sftp_cache, &child_path, depth + 1, result).await?;
+                list_tree_recursive_inner(cap, &child_path, depth + 1, result).await?;
             }
         }
         Ok(())

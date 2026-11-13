@@ -120,6 +120,14 @@
   opacity: 1;
 }
 
+/* 错误横幅右侧的“重试 + 关闭”操作组 */
+.errorActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 /* ── 上级目录 ─────────────────────────── */
 
 .parentDirRow {
@@ -172,6 +180,17 @@
   color: var(--text-tertiary);
   padding: var(--spacing-md) var(--spacing-sm);
   font-size: var(--text-sm);
+}
+
+/* SFTP 不可用时的内联状态：原因 + 重试入口 */
+.statusDetail {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.statusAction {
+  margin-top: var(--spacing-sm);
 }
 
 /* ── 响应式列隐藏（容器查询）── 文件名始终可见 ── */

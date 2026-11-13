@@ -1,8 +1,9 @@
 //! SSH journald data source.
 //!
-//! Owns journalctl command construction, bounded command execution, lossless
+//! Owns journalctl semantics: command construction and shell escaping, lossless
 //! record normalization, newest-to-oldest cursor paging, realtime batching,
-//! cancellation, and streaming export.
+//! cancellation, and streaming export. Exec channel mechanics (open, bounded
+//! output collection, timeouts) live in `plugins/ssh/exec.rs`.
 
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::sync::{
@@ -12,6 +13,8 @@ use std::sync::{
 use std::time::Duration;
 
 use russh::ChannelMsg;
+
+use crate::plugins::ssh::exec::{self, ExecLimits, ExecOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter};
@@ -404,88 +407,24 @@ fn build_command(command: &str, args: &[String]) -> String {
     }
 }
 
-struct JournalctlOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    exit_status: Option<u32>,
-}
-
 async fn run_journalctl(
     session: &Arc<russh::client::Handle<SshHandler>>,
     args: &[String],
-) -> Result<JournalctlOutput, String> {
+) -> Result<ExecOutput, String> {
     let command = build_command("journalctl", args);
     log::debug!("[journald] exec: {}", command);
-
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|error| format!("SSH channel open failed: {error}"))?;
-    channel
-        .exec(true, command.as_str())
-        .await
-        .map_err(|error| format!("journalctl exec failed: {error}"))?;
-
-    let collect = async {
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let mut exit_status = None;
-        loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    if stdout.len().saturating_add(data.len()) > MAX_QUERY_OUTPUT_BYTES {
-                        return Err("journalctl output exceeded bounded query buffer".to_string());
-                    }
-                    stdout.extend_from_slice(&data);
-                }
-                Some(ChannelMsg::ExtendedData { data, ext }) => {
-                    if ext == 1 && stderr.len() < MAX_STDERR_BYTES {
-                        let remaining = MAX_STDERR_BYTES - stderr.len();
-                        stderr.extend_from_slice(&data[..data.len().min(remaining)]);
-                    }
-                }
-                Some(ChannelMsg::ExitStatus {
-                    exit_status: status,
-                }) => {
-                    exit_status = Some(status);
-                }
-                Some(ChannelMsg::Eof) => {
-                    // Continue until close/None so an exit status arriving after EOF is observed.
-                }
-                Some(ChannelMsg::Close) | None => break,
-                Some(_) => {}
-            }
-        }
-        Ok(JournalctlOutput {
-            stdout,
-            stderr,
-            exit_status,
-        })
+    let limits = ExecLimits {
+        max_stdout: MAX_QUERY_OUTPUT_BYTES,
+        max_stderr: MAX_STDERR_BYTES,
+        timeout: QUERY_TIMEOUT,
     };
-
-    let output = tokio::time::timeout(QUERY_TIMEOUT, collect)
+    let output = exec::run(session, &command, &limits)
         .await
-        .map_err(|_| "journalctl query timed out".to_string())??;
+        .map_err(|error| error.to_string())?;
     if output.exit_status.unwrap_or(0) != 0 {
-        return Err(journalctl_failure_message(&output));
+        return Err(output.failure_message("journalctl"));
     }
     Ok(output)
-}
-
-fn journalctl_failure_message(output: &JournalctlOutput) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        format!(
-            "journalctl exited with status {}",
-            output.exit_status.unwrap_or(u32::MAX)
-        )
-    } else {
-        format!(
-            "journalctl exited with status {}: {}",
-            output.exit_status.unwrap_or(u32::MAX),
-            stderr
-        )
-    }
 }
 
 fn parse_output_entries(stdout: &[u8]) -> Vec<JournalEntry> {
@@ -556,17 +495,19 @@ pub async fn journald_query_page(
     ))
 }
 
-/// Adapter for the current Tauri command boundary. Paging semantics stay in
-/// `journald_query_page`; `next_cursor` is present only when look-ahead proved
-/// that another older page exists.
+/// Query one history page.
+///
+/// Paging semantics stay in `journald_query_page`; `next_cursor` is present only
+/// when look-ahead proved that another older page exists, and `has_more` is
+/// derived there. Callers consume the response as-is, never recompute it from
+/// page size.
 pub async fn journald_query(
     session: &Arc<russh::client::Handle<SshHandler>>,
     filters: &JournaldQueryFilters,
     cursor: Option<&str>,
     limit: usize,
-) -> Result<(Vec<JournalEntry>, Option<String>), String> {
-    let page = journald_query_page(session, filters, cursor, limit).await?;
-    Ok((page.entries, page.next_cursor))
+) -> Result<JournaldQueryResponse, String> {
+    journald_query_page(session, filters, cursor, limit).await
 }
 
 // ── Realtime stream ──────────────────────────────────────────────────
@@ -663,26 +604,25 @@ pub async fn start_journald_stream(
         .map_err(|error| format!("journald stream: {error}"))?;
     let operation = guard.state();
 
-    let mut channel = match session.channel_open_session().await {
+    let command = build_command("journalctl", &build_stream_args(filters));
+    let mut channel = match exec::open_channel(session).await {
         Ok(channel) => channel,
         Err(error) => {
             drop(guard);
-            return Err(format!("SSH channel open failed: {error}"));
+            return Err(error.to_string());
         }
     };
-    if operation.is_cancelled() {
-        let _ = channel.close().await;
-        return Err("journald stream cancelled".into());
-    }
-    let command = build_command("journalctl", &build_stream_args(filters));
-    if let Err(error) = channel.exec(true, command.as_str()).await {
-        drop(guard);
-        return Err(format!("journalctl follow exec failed: {error}"));
-    }
 
+    // Stop 可能发生在通道已打开、命令尚未启动的窗口内：此时不能再 exec，
+    // 否则远端会多跑一条 `journalctl -f`。
     if operation.is_cancelled() {
         let _ = channel.close().await;
         return Err("journald stream cancelled".into());
+    }
+    if let Err(error) = exec::start(&mut channel, &command).await {
+        let _ = channel.close().await;
+        drop(guard);
+        return Err(error.to_string());
     }
     let sid = identity;
     tokio::spawn(async move {
@@ -743,7 +683,7 @@ pub async fn start_journald_stream(
                             flush_partial_line(&mut line_buffer, &mut batch, &sid.session_id);
                             emit_stream_batch(&app_handle, &sid, &mut batch);
                             if exit_status.unwrap_or(0) != 0 {
-                                let output = JournalctlOutput {
+                                let output = ExecOutput {
                                     stdout: Vec::new(),
                                     stderr,
                                     exit_status,
@@ -751,7 +691,7 @@ pub async fn start_journald_stream(
                                 emit_stream_error(
                                     &app_handle,
                                     &sid,
-                                    journalctl_failure_message(&output),
+                                    output.failure_message("journalctl"),
                                 );
                                 emit_stream_ended(&app_handle, &sid, "error");
                             } else {

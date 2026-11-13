@@ -68,8 +68,8 @@ Use this map to decide which design document must change.
 | Pane/Workspace layout and restoration | `docs/modules/WORKSPACE.md` |
 | Serial and virtual serial integration | `docs/modules/SERIAL.md` |
 | shared Stream/DataPlane transport runtime and Serial/TCP/UDP transport adapters | `docs/modules/TRANSPORT_RUNTIME.md` |
-| shared file transfer abstraction, X/Y/ZModem and SFTP orchestration | `docs/modules/TRANSFER.md` |
-| SSH, remote terminal/channel model, file-manager integration and journald | `docs/modules/SSH.md` |
+| shared file transfer abstraction, X/Y/ZModem, transfer orchestration/scheduler, and SFTP transfer semantics | `docs/modules/TRANSFER.md` |
+| SSH, remote terminal/channel model, SFTP transport/channel capability and file-manager integration, journald | `docs/modules/SSH.md` |
 | Local Shell, PTY/ConPTY, per-child elevation | `docs/modules/LOCAL_SHELL.md` |
 | TCP/UDP Network Debug, TFTP, Telnet, iperf | `docs/modules/NETWORK.md` |
 | Modbus RTU/ASCII/TCP client/server, codec, watch and data model | `docs/modules/MODBUS.md` |

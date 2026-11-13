@@ -26,6 +26,7 @@ import type { FileStatInfo } from "./FilePropertiesModal";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
 import { useToast } from "../../context/ToastContext";
+import { sftpErrorMessage } from "../../services/sftpErrors";
 import styles from "./FileManager.module.css";
 
 const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog"));
@@ -108,6 +109,21 @@ export default function FileManagerPanel({
 
   // ── Core file manager state ────────────────────────
   const fm = useFileManager(sessionId, isConnected);
+  // 后端 SFTP 能力探测为 available=false（或命令以 unsupported 拒绝）时，
+  // 面板显示“不可用 + 原因 + 重试”，而不是把原始传输错误抛给用户。
+  const sftpUnavailable = fm.sftpAvailability !== null && !fm.sftpAvailability.available;
+  const sftpUnavailableReason = sftpUnavailable
+    ? (fm.sftpAvailability?.reason ?? null)
+    : null;
+  // 错误横幅与不可用态共用的“重试”：只重跑当前操作。closed/timeout 由后端在
+  // 下次调用时重建缓存会话；available=false 时强制后端刷新探测并重新打开起始目录。
+  const handleRetrySftp = useCallback(() => {
+    if (sftpUnavailable) {
+      fm.retrySftp();
+      return;
+    }
+    void fm.refresh();
+  }, [fm, sftpUnavailable]);
 
   // ── Multi-select ────────────────────────────────────
   const ms = useMultiSelect(fm.entries);
@@ -244,12 +260,17 @@ export default function FileManagerPanel({
       showToast("warning", t("fileManager.sessionDisconnected"));
       return;
     }
+    // 起始目录尚未从后端解析出来时没有合法远端目标，不做 "/" 之类的猜测。
+    if (fm.currentPath === null) {
+      showToast("warning", t("fileManager.startDirectoryUnavailable"));
+      return;
+    }
     try {
       const selected = await open({ multiple: true });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected as string];
       if (paths.length === 0) return;
-      const remoteDir = fm.currentPath ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`) : "/";
+      const remoteDir = fm.currentPath === "/" ? "/" : `${fm.currentPath}/`;
 
       const existingNames = new Set(fm.entries.map((entry) => entry.name));
       const conflictCount = paths
@@ -268,7 +289,7 @@ export default function FileManagerPanel({
       await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (e) {
       console.error("上传失败:", e);
-      showToast("error", t("fileManager.uploadFailed", { error: String(e) }));
+      showToast("error", t("fileManager.uploadFailed", { error: sftpErrorMessage(e) }));
     }
   }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
@@ -277,15 +298,17 @@ export default function FileManagerPanel({
       showToast("warning", t("fileManager.sessionDisconnected"));
       return;
     }
+    if (fm.currentPath === null) {
+      showToast("warning", t("fileManager.startDirectoryUnavailable"));
+      return;
+    }
 
     try {
       const selected = await open({ directory: true, multiple: false });
       if (!selected) return;
       const localPath = typeof selected === "string" ? selected : selected;
       const folderName = localPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || localPath;
-      const remoteDir = fm.currentPath
-        ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
-        : "/";
+      const remoteDir = fm.currentPath === "/" ? "/" : `${fm.currentPath}/`;
 
       let overwritePolicy: OverwritePolicy = "keep-both";
       if (fm.entries.some((entry) => entry.name === folderName)) {
@@ -297,16 +320,18 @@ export default function FileManagerPanel({
       await fm.uploadFiles([localPath], remoteDir, overwritePolicy);
     } catch (error) {
       console.error("目录上传失败:", error);
-      showToast("error", t("fileManager.uploadFailed", { error: String(error) }));
+      showToast("error", t("fileManager.uploadFailed", { error: sftpErrorMessage(error) }));
     }
   }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
   const handleDroppedPaths = useCallback(async (paths: string[]) => {
     if (!isConnected || paths.length === 0) return;
+    if (fm.currentPath === null) {
+      showToast("warning", t("fileManager.startDirectoryUnavailable"));
+      return;
+    }
 
-    const remoteDir = fm.currentPath
-      ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
-      : "/";
+    const remoteDir = fm.currentPath === "/" ? "/" : `${fm.currentPath}/`;
     const existingNames = new Set(fm.entries.map((entry) => entry.name));
     const conflictCount = paths
       .map((path) => path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || path)
@@ -326,7 +351,7 @@ export default function FileManagerPanel({
       await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (error) {
       console.error("拖放上传失败:", error);
-      showToast("error", t("fileManager.uploadFailed", { error: String(error) }));
+      showToast("error", t("fileManager.uploadFailed", { error: sftpErrorMessage(error) }));
     }
   }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
@@ -530,7 +555,7 @@ export default function FileManagerPanel({
       }
       ms.clearSelection();
     } catch (error) {
-      showToast("error", String(error));
+      showToast("error", sftpErrorMessage(error));
     }
   }, [fm, ms, pendingDeleteTargets, showToast, t]);
 
@@ -576,12 +601,12 @@ export default function FileManagerPanel({
       setPropsInfo({
         name: target.name,
         path: target.path,
-        isDir: target.is_dir,
+        is_dir: target.is_dir,
         size: target.size,
         accessed: target.accessed,
         modified: target.modified,
         permissions: target.permissions,
-        entryType: target.entry_type,
+        entry_type: target.entry_type,
       });
     } finally {
       if (generation === propsRequestGenerationRef.current) {
@@ -633,7 +658,7 @@ export default function FileManagerPanel({
           await fm.renameEntry(fm.promptTarget, name);
         }
       } catch (error) {
-        showToast("error", String(error));
+        showToast("error", sftpErrorMessage(error));
         return;
       }
 
@@ -713,12 +738,12 @@ export default function FileManagerPanel({
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     if (ctxTarget === null) {
       return [
-        { id: "upload", label: t("fileManager.upload"), disabled: !isConnected },
-        { id: "uploadFolder", label: t("fileManager.uploadFolder"), disabled: !isConnected },
-        { id: "newFile", label: t("fileManager.newFile"), disabled: !isConnected },
-        { id: "newFolder", label: t("fileManager.newFolder"), disabled: !isConnected },
+        { id: "upload", label: t("fileManager.upload"), disabled: !isConnected || sftpUnavailable || fm.currentPath === null },
+        { id: "uploadFolder", label: t("fileManager.uploadFolder"), disabled: !isConnected || sftpUnavailable || fm.currentPath === null },
+        { id: "newFile", label: t("fileManager.newFile"), disabled: !isConnected || sftpUnavailable || fm.currentPath === null },
+        { id: "newFolder", label: t("fileManager.newFolder"), disabled: !isConnected || sftpUnavailable || fm.currentPath === null },
         { id: "sep1", label: "", type: "separator" },
-        { id: "refresh", label: t("fileManager.refresh"), disabled: !isConnected },
+        { id: "refresh", label: t("fileManager.refresh"), disabled: !isConnected || sftpUnavailable },
       ];
     }
 
@@ -770,7 +795,7 @@ export default function FileManagerPanel({
         danger: true,
       },
     ];
-  }, [ctxTarget, contextMenuSelectedCount, isConnected, t]);
+  }, [ctxTarget, contextMenuSelectedCount, fm.currentPath, isConnected, sftpUnavailable, t]);
 
   const handleContextMenuSelect = useCallback(
     (id: string) => {
@@ -829,7 +854,7 @@ export default function FileManagerPanel({
             type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleRefresh}
-            disabled={!isConnected}
+            disabled={!isConnected || sftpUnavailable}
             title={t("fileManager.refresh")}
             aria-label={t("fileManager.refresh")}
           >
@@ -839,7 +864,7 @@ export default function FileManagerPanel({
             type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFile}
-            disabled={!isConnected}
+            disabled={!isConnected || sftpUnavailable || fm.currentPath === null}
             title={t("fileManager.newFile")}
             aria-label={t("fileManager.newFile")}
           >
@@ -849,7 +874,7 @@ export default function FileManagerPanel({
             type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFolder}
-            disabled={!isConnected}
+            disabled={!isConnected || sftpUnavailable || fm.currentPath === null}
             title={t("fileManager.newFolder")}
             aria-label={t("fileManager.newFolder")}
           >
@@ -859,7 +884,7 @@ export default function FileManagerPanel({
             type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleUpload}
-            disabled={!isConnected}
+            disabled={!isConnected || sftpUnavailable || fm.currentPath === null}
             title={t("fileManager.upload")}
             aria-label={t("fileManager.upload")}
           >
@@ -909,6 +934,9 @@ export default function FileManagerPanel({
           parentSelected={ms.parentSelected}
           onParentClick={handleParentClick}
           showProgress={progress.visible}
+          unavailable={sftpUnavailable}
+          unavailableReason={sftpUnavailableReason}
+          onRetry={handleRetrySftp}
         />
       ) : (
         <FileGrid
@@ -925,6 +953,9 @@ export default function FileManagerPanel({
           parentSelected={ms.parentSelected}
           onParentClick={handleParentClick}
           showProgress={progress.visible}
+          unavailable={sftpUnavailable}
+          unavailableReason={sftpUnavailableReason}
+          onRetry={handleRetrySftp}
         />
       )}
 
@@ -1030,7 +1061,7 @@ export default function FileManagerPanel({
                 })
                 .catch((error) => {
                   if (generation === propsRequestGenerationRef.current) {
-                    showToast("error", String(error));
+                    showToast("error", sftpErrorMessage(error));
                   }
                 });
             }}

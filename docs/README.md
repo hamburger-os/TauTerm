@@ -53,8 +53,8 @@ Transport 只拥有底层资源和 I/O；Protocol 解释协议语义；Session R
 | [UI_FOUNDATION.md](modules/UI_FOUNDATION.md) | 应用壳、renderer、Settings、i18n、快捷键与共享前端结构 |
 | [WORKSPACE.md](modules/WORKSPACE.md) | Pane/Workspace、选择上下文、布局持久化与恢复 |
 | [SERIAL.md](modules/SERIAL.md) | 串口、虚拟串口与 DataPlane 集成 |
-| [TRANSFER.md](modules/TRANSFER.md) | 公共文件传输、ExclusiveIo、X/Y/ZModem、SFTP、进度/取消/清理 |
-| [SSH.md](modules/SSH.md) | SSH、多终端、远端文件管理集成与 journald |
+| [TRANSFER.md](modules/TRANSFER.md) | 公共文件传输抽象、ExclusiveIo、X/Y/ZModem、传输编排与进度/取消/清理 |
+| [SSH.md](modules/SSH.md) | SSH、多终端、SFTP 侧通道能力、远端文件管理与 journald |
 | [LOCAL_SHELL.md](modules/LOCAL_SHELL.md) | 本地 PTY/ConPTY、多终端与单 child 提权 |
 | [NETWORK.md](modules/NETWORK.md) | TCP/UDP Network Debug、TFTP、Telnet 与 iperf |
 | [MODBUS.md](modules/MODBUS.md) | Modbus RTU/ASCII/TCP Client、Monitor、Transactions、Raw 与 Server Simulator |

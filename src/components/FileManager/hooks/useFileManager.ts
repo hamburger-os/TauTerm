@@ -15,15 +15,20 @@ import {
   PromptMode,
   SortField,
   SortDirection,
+  type SftpAvailability,
+  type SftpListing,
   type TransferStartAck,
   type OverwritePolicy,
 } from '../types';
+import { sftpErrorCode, sftpErrorMessage } from '../../../services/sftpErrors';
 
 export interface UseFileManagerReturn {
   currentPath: string | null;
   entries: SftpEntry[];
   loading: boolean;
   error: string | null;
+  /** 后端 SFTP 能力探测结果；null 表示正在探测。 */
+  sftpAvailability: SftpAvailability | null;
   breadcrumbSegments: { name: string; path: string }[];
   promptMode: PromptMode | null;
   promptValue: string;
@@ -35,6 +40,8 @@ export interface UseFileManagerReturn {
   navigateTo: (path: string) => void;
   goUp: () => void;
   refresh: () => Promise<void>;
+  /** 重新探测 SFTP 能力并从后端解析的起始目录重新打开（不可用态的“重试”）。 */
+  retrySftp: () => void;
   uploadFile: (localPath: string, remotePath: string) => Promise<TransferStartAck>;
   uploadFiles: (
     localPaths: string[],
@@ -105,6 +112,7 @@ export function useFileManager(
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sftpAvailability, setSftpAvailability] = useState<SftpAvailability | null>(null);
   const [rawEntries, setRawEntries] = useState<SftpEntry[]>([]);
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -112,23 +120,11 @@ export function useFileManager(
   const [promptValue, setPromptValue] = useState('');
   const [promptTarget, setPromptTarget] = useState<SftpEntry | null>(null);
   const directoryGenerationRef = useRef(0);
+  const availabilityGenerationRef = useRef(0);
+  const loadedPathRef = useRef<string | null>(null);
   const currentPathRef = useRef(currentPath);
   const refreshedTransferIdRef = useRef<string | null>(null);
   currentPathRef.current = currentPath;
-
-  const connectedRef = useRef(isConnected);
-  connectedRef.current = isConnected;
-
-  useEffect(() => {
-    if (!isConnected) return;
-    invoke<string>('get_ssh_home_dir', { sessionId })
-      .then(homeDir => {
-        if (connectedRef.current) setCurrentPath(homeDir);
-      })
-      .catch(() => {
-        if (connectedRef.current) setCurrentPath('/');
-      });
-  }, [isConnected, sessionId]);
 
   const entries = useMemo(
     () => sortEntries(rawEntries, sortField, sortDirection),
@@ -152,23 +148,81 @@ export function useFileManager(
     ];
   }, [currentPath]);
 
-  const loadDirectory = useCallback(
-    async (path: string) => {
-      if (!isConnected) return;
+  // 能力探测：后端缓存确定性结果（可用 / 服务端不支持子系统），`refresh` 会丢弃
+  // 后端缓存重新探测；前端只缓存展示结果。
+  const probeSftpAvailability = useCallback(
+    async (targetSessionId: string, refresh = false): Promise<boolean> => {
+      const generation = ++availabilityGenerationRef.current;
+      setLoading(true);
+      try {
+        const availability = await invoke<SftpAvailability>('ssh_sftp_availability_cmd', {
+          sessionId: targetSessionId,
+          refresh,
+        });
+        if (generation !== availabilityGenerationRef.current) return false;
+        setSftpAvailability(availability);
+        if (!availability.available) {
+          setRawEntries([]);
+          setLoading(false);
+        }
+        return availability.available;
+      } catch (probeError) {
+        if (generation !== availabilityGenerationRef.current) return false;
+        setSftpAvailability({ available: false, reason: sftpErrorMessage(probeError) });
+        setRawEntries([]);
+        setLoading(false);
+        return false;
+      }
+    },
+    [],
+  );
+
+  // 打开目录：`remotePath` 省略时由后端通过 SFTP realpath 解析起始目录；
+  // 返回的 `path` 是规范化后的当前目录，前端必须采用它，不得猜测（例如回退到 "/"）。
+  const loadListing = useCallback(
+    async (remotePath?: string): Promise<boolean> => {
+      if (!isConnected) return false;
       const generation = ++directoryGenerationRef.current;
       setLoading(true);
       setError(null);
       try {
-        const list = await invoke<SftpEntry[]>('sftp_list_dir_cmd', {
-          sessionId,
-          remotePath: path,
-        });
-        if (generation !== directoryGenerationRef.current) return;
-        setRawEntries(list);
+        const listing = await invoke<SftpListing>(
+          'sftp_list_dir_cmd',
+          remotePath ? { sessionId, remotePath } : { sessionId },
+        );
+        if (generation !== directoryGenerationRef.current) return false;
+        loadedPathRef.current = listing.path;
+        setRawEntries(listing.entries);
+        setCurrentPath(listing.path);
+        return true;
       } catch (requestError) {
-        if (generation !== directoryGenerationRef.current) return;
-        setError(String(requestError));
+        if (generation !== directoryGenerationRef.current) return false;
+        const code = sftpErrorCode(requestError);
+        setError(sftpErrorMessage(requestError));
+        // unsupported 与 available=false 等价：服务端不提供 sftp 子系统。
+        if (code === 'unsupported') {
+          setSftpAvailability({ available: false, reason: sftpErrorMessage(requestError) });
+          loadedPathRef.current = null;
+          setCurrentPath(null);
+          setRawEntries([]);
+          // 原因已经进入不可用态，避免错误横幅重复展示同一段文本。
+          setError(null);
+          return false;
+        }
+        // 导航目标已在远端消失：回到最后一次成功打开的目录并保留错误提示，
+        // 避免面板停留在已不存在的路径上。
+        if (code === 'not_found' && remotePath !== undefined) {
+          const lastGoodPath = loadedPathRef.current;
+          if (lastGoodPath !== null && lastGoodPath !== remotePath) {
+            setCurrentPath(lastGoodPath);
+            return false;
+          }
+        }
+        // 列表清空后必须让当前路径重新可加载：否则导航回上一次成功目录时，
+        // `loadedPathRef === currentPath` 会让 effect 提前返回，出现空列表 + 旧错误横幅。
+        loadedPathRef.current = null;
         setRawEntries([]);
+        return false;
       } finally {
         if (generation === directoryGenerationRef.current) {
           setLoading(false);
@@ -178,24 +232,40 @@ export function useFileManager(
     [isConnected, sessionId],
   );
 
+  const loadDirectory = useCallback(
+    async (path: string) => {
+      await loadListing(path);
+    },
+    [loadListing],
+  );
+
+  // 连接/会话变化时清空状态；连接建立后先探测能力，再以“无路径”方式打开起始目录。
   useEffect(() => {
-    if (!isConnected) {
-      directoryGenerationRef.current += 1;
-      refreshedTransferIdRef.current = null;
-      setCurrentPath(null);
-      setRawEntries([]);
-      setLoading(false);
-      setError(null);
-      setPromptMode(null);
-      setPromptTarget(null);
-      return;
-    }
+    availabilityGenerationRef.current += 1;
+    directoryGenerationRef.current += 1;
+    refreshedTransferIdRef.current = null;
+    loadedPathRef.current = null;
+    setCurrentPath(null);
+    setRawEntries([]);
+    setLoading(false);
+    setError(null);
+    setSftpAvailability(null);
+    setPromptMode(null);
+    setPromptTarget(null);
+    if (!isConnected) return;
+    void probeSftpAvailability(sessionId);
+  }, [isConnected, probeSftpAvailability, sessionId]);
+
+  // 能力可用后才加载目录：起始目录由后端解析；导航时传入目标路径并采用返回的规范化路径。
+  useEffect(() => {
+    if (!isConnected || !sftpAvailability?.available) return;
     if (currentPath === null) {
-      setLoading(true);
+      void loadListing();
       return;
     }
-    loadDirectory(currentPath);
-  }, [currentPath, isConnected, loadDirectory]);
+    if (loadedPathRef.current === currentPath) return;
+    void loadListing(currentPath);
+  }, [currentPath, isConnected, loadListing, sftpAvailability]);
 
   const navigateTo = useCallback((path: string) => {
     setCurrentPath(path);
@@ -210,9 +280,22 @@ export function useFileManager(
   }, [currentPath]);
 
   const refresh = useCallback(async () => {
-    if (currentPath === null) return;
-    await loadDirectory(currentPath);
-  }, [currentPath, loadDirectory]);
+    if (!isConnected || !sftpAvailability?.available) return;
+    await loadListing(currentPath ?? undefined);
+  }, [currentPath, isConnected, loadListing, sftpAvailability]);
+
+  // 不可用态的“重试”：强制后端重新探测能力（丢弃缓存），再从起始目录重新打开。
+  const retrySftp = useCallback(() => {
+    availabilityGenerationRef.current += 1;
+    directoryGenerationRef.current += 1;
+    loadedPathRef.current = null;
+    setCurrentPath(null);
+    setRawEntries([]);
+    setError(null);
+    setSftpAvailability(null);
+    if (!isConnected) return;
+    void probeSftpAvailability(sessionId, true);
+  }, [isConnected, probeSftpAvailability, sessionId]);
 
   // 文件管理器只表达“启动 SFTP”的用户意图；命令名、ack 和等待竞态集中在 TransferService。
   const uploadFiles = useCallback(
@@ -284,7 +367,7 @@ export function useFileManager(
           'sftp',
         );
       } catch (downloadError) {
-        setError(`Download failed: ${downloadError}`);
+        setError(`Download failed: ${sftpErrorMessage(downloadError)}`);
       }
     },
     [sessionId, requireRuntimeId],
@@ -307,7 +390,7 @@ export function useFileManager(
           'sftp',
         );
       } catch (downloadError) {
-        setError(`Download failed: ${downloadError}`);
+        setError(`Download failed: ${sftpErrorMessage(downloadError)}`);
         throw downloadError;
       }
     },
@@ -361,30 +444,31 @@ export function useFileManager(
     }
     refreshedTransferIdRef.current = transferTask.transferId;
     const path = currentPathRef.current;
-    if (!path || !isConnected) return;
+    if (!path || !isConnected || !sftpAvailability?.available) return;
 
     const generation = ++directoryGenerationRef.current;
-    invoke<SftpEntry[]>('sftp_list_dir_cmd', {
+    invoke<SftpListing>('sftp_list_dir_cmd', {
       sessionId,
       remotePath: path,
-    }).then(list => {
+    }).then(listing => {
       if (
         generation === directoryGenerationRef.current
         && currentPathRef.current === path
       ) {
-        setRawEntries(list);
+        setRawEntries(listing.entries);
       }
     }).catch(refreshError => {
       if (
         generation === directoryGenerationRef.current
         && currentPathRef.current === path
       ) {
-        setError(String(refreshError));
+        setError(sftpErrorMessage(refreshError));
       }
     });
   }, [
     isConnected,
     sessionId,
+    sftpAvailability,
     transferTask?.phase,
     transferTask?.protocol,
     transferTask?.transferId,
@@ -494,6 +578,7 @@ export function useFileManager(
       entries,
       loading,
       error,
+      sftpAvailability,
       breadcrumbSegments,
       promptMode,
       promptValue,
@@ -504,6 +589,7 @@ export function useFileManager(
       navigateTo,
       goUp,
       refresh,
+      retrySftp,
       uploadFile,
       uploadFiles,
       downloadFiles,
@@ -540,9 +626,11 @@ export function useFileManager(
       promptValue,
       refresh,
       renameEntry,
+      retrySftp,
       setSort,
       sortDirection,
       sortField,
+      sftpAvailability,
       uploadFile,
       uploadFiles,
     ],

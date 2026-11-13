@@ -11,11 +11,13 @@ pub(crate) mod commands;
 
 pub(crate) mod application;
 mod driver;
+pub mod exec;
 pub mod handler;
 pub mod journald;
 mod known_hosts;
+pub mod sftp;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,11 +35,10 @@ use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
 use driver::SshDriver;
 use handler::SshHandler;
 use known_hosts::{HostTrustDecision, KnownHostStore};
+use sftp::capability::SftpCapability;
 
 const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
 const HOST_KEY_USER_DECISION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const SSH_HOME_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
-const SSH_HOME_MAX_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -415,9 +416,8 @@ impl SshAdapter {
             build_connection_with_config(config, app_handle, &self.host_key_verifier).await?;
         let shared = Arc::new(SshRuntime::new(result.session, result.host_key_fingerprint));
         let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
-        let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
-            shared.session.clone(),
-            shared.sftp.clone(),
+        let file_transfer = Arc::new(crate::plugins::ssh::sftp::transfer::SftpFileTransfer::new(
+            shared.sftp(),
         ));
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),
@@ -717,25 +717,33 @@ impl Drop for PendingRequestGuard<'_> {
     }
 }
 
-/// 供 SFTP 文件服务使用的类型化运行时资源。
+/// 供 SFTP / journald / 后续侧通道使用的类型化运行时资源。
 ///
 /// SessionStore 的 service/file-transfer/channel-factory capability 持有强引用并负责资源
 /// 生命周期；按 session_id 的 SSH registry 只保存 Weak 索引，不能额外延长连接生命。
 ///
-/// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
-/// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商
+/// session / sftp 句柄只能通过方法访问，调用方不接触缓存、锁或通道打开细节；
+/// `host_key_fingerprint` 是连接产物，`journald` 是插件内部侧通道运行态，二者属于
+/// SSH 命令层的直接契约。
 pub struct SshRuntime {
-    /// russh Handle（内部线程安全，与 SshChannel 共享）
-    pub session: Arc<russh::client::Handle<SshHandler>>,
-    /// 缓存的 SFTP 对象，首次 SFTP 操作时惰性创建。
-    /// 使用 `tokio::sync::Mutex` 以便多个 SFTP 命令并发访问时共享缓存。
-    pub sftp: Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    /// russh Handle（内部线程安全，与 SshChannel 共享同一认证连接）。
+    session: Arc<russh::client::Handle<SshHandler>>,
+    /// SFTP 子系统能力：一个连接恰好一个会话，惰性打开、失效可重建。
+    sftp: Arc<SftpCapability>,
     /// 主机密钥 SHA256 指纹（首次连接时由 check_server_key 产生）。
     /// 由 connect_session_ssh 通过 session-connected 事件传递到前端。
     pub host_key_fingerprint: Option<String>,
-    /// 远程 home 目录按需解析；基础 SSH 建连不执行额外远端命令。
-    home_dir: Mutex<Option<String>>,
     pub journald: journald::JournaldRuntime,
+    /// SFTP 能力探测结果的缓存：只缓存确定性结果，见 `sftp_availability`。
+    sftp_availability: Mutex<Option<SftpAvailability>>,
+}
+
+/// 单个 SSH 侧通道能力的可用性。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpAvailability {
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 struct RuntimeAttach {
@@ -756,12 +764,13 @@ impl SshRuntime {
         session: Arc<russh::client::Handle<SshHandler>>,
         host_key_fingerprint: Option<String>,
     ) -> Self {
+        let sftp = SftpCapability::new(session.clone());
         Self {
             session,
-            sftp: Arc::new(Mutex::new(None)),
+            sftp,
             host_key_fingerprint,
-            home_dir: Mutex::new(None),
             journald: journald::JournaldRuntime::new(),
+            sftp_availability: Mutex::new(None),
         }
     }
 
@@ -770,17 +779,41 @@ impl SshRuntime {
         self.session.clone()
     }
 
-    pub async fn resolve_home_dir(&self) -> Option<String> {
-        let mut cached = self.home_dir.lock().await;
-        if let Some(home) = cached.as_ref() {
-            return Some(home.clone());
+    /// SFTP 侧通道能力对象（同一连接只有一个会话）。
+    pub fn sftp(&self) -> Arc<SftpCapability> {
+        self.sftp.clone()
+    }
+
+    /// SFTP 能力探测。
+    ///
+    /// 只有“可用”结果按连接缓存；失败结果不缓存——通道/传输瞬时错误与“服务端确实
+    /// 没有 `sftp` 子系统”无法可靠区分，缓存失败会把一次瞬时错误固定成整连接的不可用。
+    /// `refresh = true` 丢弃已有缓存重新探测，供前端“重试”使用。
+    pub async fn sftp_availability(&self, refresh: bool) -> SftpAvailability {
+        let mut cached = self.sftp_availability.lock().await;
+        if !refresh {
+            if let Some(availability) = cached.as_ref() {
+                return availability.clone();
+            }
         }
 
-        let resolved = query_home_dir(self.session.clone()).await;
-        if let Some(home) = resolved.as_ref() {
-            *cached = Some(home.clone());
+        match self.sftp.probe().await {
+            Ok(()) => {
+                let availability = SftpAvailability {
+                    available: true,
+                    reason: None,
+                };
+                *cached = Some(availability.clone());
+                availability
+            }
+            Err(error) => {
+                *cached = None;
+                SftpAvailability {
+                    available: false,
+                    reason: Some(error.to_string()),
+                }
+            }
         }
-        resolved
     }
 }
 
@@ -875,55 +908,6 @@ async fn wait_for_host_trust(
             false
         }
     }
-}
-
-async fn query_home_dir(handle: Arc<russh::client::Handle<SshHandler>>) -> Option<String> {
-    tokio::time::timeout(SSH_HOME_QUERY_TIMEOUT, async move {
-        let mut exec_chan = match handle.channel_open_session().await {
-            Ok(channel) => channel,
-            Err(error) => {
-                log::warn!("打开 SSH exec 通道失败 (home dir): {error}");
-                return None;
-            }
-        };
-
-        if exec_chan.exec(true, "printf %s \"$HOME\"").await.is_err() {
-            let _ = exec_chan.close().await;
-            return None;
-        }
-
-        let mut output = Vec::new();
-        loop {
-            match exec_chan.wait().await {
-                Some(russh::ChannelMsg::Data { data }) => {
-                    if output.len().saturating_add(data.len()) > SSH_HOME_MAX_BYTES {
-                        log::warn!(
-                            "SSH home_dir 输出超过 {} bytes，放弃解析",
-                            SSH_HOME_MAX_BYTES
-                        );
-                        let _ = exec_chan.close().await;
-                        return None;
-                    }
-                    output.extend_from_slice(data.as_ref());
-                }
-                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => break,
-                _ => continue,
-            }
-        }
-        let _ = exec_chan.close().await;
-        String::from_utf8(output)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    })
-    .await
-    .unwrap_or_else(|_| {
-        log::warn!(
-            "SSH home_dir exec 超时（{}s），回退到默认路径",
-            SSH_HOME_QUERY_TIMEOUT.as_secs()
-        );
-        None
-    })
 }
 
 async fn build_connection_with_config(

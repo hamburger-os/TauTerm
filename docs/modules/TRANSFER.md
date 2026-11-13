@@ -9,9 +9,11 @@
 后端存在统一 `FileTransfer` 抽象和统一进度模型。Kernel 中的 `TransferProtocolType` 只保存规范化后的不透明协议 ID，不知道 X/Y/ZModem、SFTP 等具体 provider，也不保存执行模式或 provider 能力。具体协议 ID 到资源策略的解析只存在于 `transfer/orchestrator.rs::create_orchestrator`：
 
 - **Inline**：X/Y/ZModem 通过 `SessionIo::acquire_exclusive` 获取当前 Session DataPlane 的独占 lease；
-- **Auxiliary**：SFTP 复用 Session 已提供的独立 `FileTransfer` capability，不占用主终端字节流。
+- **Auxiliary**：SFTP 复用 Session 已提供的独立 `FileTransfer` capability，不占用主终端字节流（通道/能力语义见 [SSH.md](SSH.md)）。
 
 未实现的协议 ID在 transfer provider 路由入口直接失败，不在 Kernel、公共命令层或 UI 建立兜底映射。目录、覆盖、批量等 provider 专属约束由对应传输实现负责；例如 Inline provider 自己拒绝目录发送，公共 IPC 不通过识别 X/Y/ZModem 名称来推导能力。插件 canonical manifest 只负责声明该插件对外支持哪些传输协议 ID，不与 Kernel 再维护一份能力 descriptor。
+
+SFTP 是 Auxiliary provider，但它的通道、能力探测、错误分类与起始目录解析属于 SSH 侧通道，由 [SSH.md](SSH.md) 拥有。本文只定义协议无关的传输生命周期，以及 SFTP 传输语义（覆盖事务、冲突策略、递归目录规则、进度采样）。
 
 Inline 传输不会取得具体 `serialport::SerialPort` 或做协议层 downcast。DataPlane 仍是底层资源的唯一生命周期 owner，但 Exclusive lease 会把当前通用 `Box<dyn BlockingByteStream>` 从共享 actor 临时移动到协议 worker：独占期间普通 Session write/resize 被拒绝，actor 不再持有或读取该 driver，X/Y/ZModem 通过 `TransferIo = Read + Write + Send` 直接执行同一个 driver 的 read/write/flush；任务结束、失败或取消后 drop lease 把 driver 归还 actor，再恢复共享模式。
 
@@ -25,7 +27,7 @@ Exclusive acquire 是无损所有权交接：申请开始后 actor 不再启动�
 
 启动 ACK 与事件走不同返回通道，不能假设 ACK 先抵达，快速任务甚至可能先完成。前端先完成监听注册再启动任务；started 是建任务的唯一事件，ACK 只补充已登记任务的初始文件清单。终态任务拒绝迟到 progress；已清理任务也不能被旧 ACK/progress 重建。任务完成只释放原实例的调度槽，不把已断开的连接恢复为 Connected。
 
-辅助传输命令只负责接受并注册后台任务，不能等待整个 SFTP 传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
+辅助传输命令只负责接受并注册后台任务，不能等待整个传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
 
 前端 `TransferContext` 是 started/progress/finished 的唯一监听者，纯任务 reducer 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。ACK 补充用户本次选择的完整文件清单，协议 progress 逐项覆盖真实状态；ACK 晚于 finished 时直接按终态解释尚未执行的文件，不能留下 pending。批量 UI 因此不能依赖“协议已经走到第几个文件”推断用户最初选择了多少文件。任务活动只有在所属实例仍连接时才投影到终端和状态栏。
 
@@ -98,6 +100,7 @@ flowchart LR
 - `src-tauri/src/transfer/protocol.rs`
 - `src-tauri/src/transfer/serial_transfer.rs`
 - `src-tauri/src/transfer/scheduler.rs`
+- `src-tauri/src/plugins/ssh/sftp/transfer.rs`（SFTP `FileTransfer` 实现；通道/能力语义归 [SSH.md](SSH.md)）
 - `src-tauri/src/session/io.rs`
 - `src-tauri/src/transport/runtime.rs`
 - `src/context/TransferContext.tsx`
@@ -107,7 +110,7 @@ flowchart LR
 
 ## 何时更新本文
 
-修改传输 provider 路由、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP/串口编排或传输状态与 Session 生命周期的关系时，必须同步更新本文。
+修改传输 provider 路由、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP 传输语义（覆盖/冲突/递归）或传输状态与 Session 生命周期的关系时，必须同步更新本文。SFTP 通道/能力模型、远端文档与 journald 见 [SSH.md](SSH.md)。
 
 
 ## Modem 角色感知配置
