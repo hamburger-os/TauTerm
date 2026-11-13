@@ -83,11 +83,19 @@ const pasteDialogCss = await readFile(
 assert.match(pasteDialogCss, /font-size:\s*var\(--text-xs\)/);
 assert.match(pasteDialogCss, /overflow:\s*auto/);
 
+// Clipboard interaction is owned by the shared terminal surface; the PTY adapter
+// must stay free of clipboard logic so every terminal surface keeps one owner.
 const terminalSource = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "TerminalSurface.tsx"),
+  "utf8",
+);
+const ptyAdapterSource = await readFile(
   path.join(ROOT, "src", "components", "Terminal", "Terminal.tsx"),
   "utf8",
 );
-assert.match(terminalSource, /onPasteCapture=\{handlePaste\}/);
+assert.doesNotMatch(ptyAdapterSource, /readClipboardText|copyToClipboard|resolvePastedText/);
+assert.match(ptyAdapterSource, /convertEol=\{convertEol\}/);
+assert.match(terminalSource, /onPasteCapture=\{handlePasteCapture\}/);
 assert.match(terminalSource, /term\.paste\(text\)/);
 assert.match(terminalSource, /bracketedPasteMode/);
 assert.match(terminalSource, /shouldWarnForLineBreak/);
@@ -95,7 +103,12 @@ assert.match(terminalSource, /pasteAnalysis\.isLargePaste/);
 assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
 assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
 assert.doesNotMatch(terminalSource, /clipboardHasText/);
-assert.match(terminalSource, /\(!isConnected \|\| !isActive\) && pendingPaste !== null/);
+assert.match(terminalSource, /\(!inputEnabled \|\| !isActive\) && pendingPaste !== null/);
+assert.match(
+  terminalSource,
+  /\[inputEnabled, isActive, pendingPaste\]/,
+  "pending paste cancellation must depend on reactive input availability, not a stable source closure",
+);
 assert.match(terminalSource, /剪贴板访问必须由明确的 Paste 动作触发/);
 assert.match(terminalSource, /Ctrl\+Insert/);
 assert.match(terminalSource, /Shift\+Insert/);
@@ -110,7 +123,7 @@ assert.doesNotMatch(
 assert.match(terminalSource, /id: "inspectProtocol"/);
 assert.match(
   terminalSource,
-  /case "inspectProtocol":[\s\S]{0,520}new CustomEvent\("tauterm:protocol-inspect"[\s\S]{0,220}detail: \{ sessionId, input: selection \}/,
+  /case "inspectProtocol":[\s\S]{0,520}new CustomEvent\("tauterm:protocol-inspect"[\s\S]{0,260}detail: \{ sessionId: sessionIdRef\.current, input: selection \}/,
   "terminal selection handoff must be explicit and session-scoped",
 );
 

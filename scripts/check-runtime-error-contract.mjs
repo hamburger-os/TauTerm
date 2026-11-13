@@ -45,7 +45,10 @@ for (const file of ["scripts/assemble-release.js", "scripts/verify-published-upd
 }
 
 const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
-const rttTerminal = fs.readFileSync("src/plugins/rtt/RttTerminalView.tsx", "utf8");
+const terminalSurface = fs.readFileSync("src/components/Terminal/TerminalSurface.tsx", "utf8");
+if (!terminalSurface.includes("onMeasurable: (measurable) => setHostMeasurable(measurable)")) {
+  fail("Terminal surface must track real display state through the shared host's measurable callback.");
+}
 const terminalHost = fs.readFileSync("src/components/Terminal/xtermHostLifecycle.ts", "utf8");
 
 for (const required of [
@@ -53,8 +56,11 @@ for (const required of [
   "host.clientWidth > 0",
   "host.clientHeight > 0",
   "const scheduleInitialize = () =>",
-  "bootstrapObserver = new ResizeObserver(scheduleInitialize)",
-  "resizeObserver = new ResizeObserver(scheduleFit)",
+  "bootstrapObserver = new ResizeObserver(() =>",
+  "resizeObserver = new ResizeObserver(() =>",
+  "reportMeasurable();",
+  "scheduleInitialize();",
+  "scheduleFit();",
   "cancelAnimationFrame(initRaf)",
   "cancelAnimationFrame(fitRaf)",
   "current.onDispose?.()",
@@ -81,8 +87,7 @@ if (
   fail("Shared xterm cleanup must disconnect observers and cancel fit RAF before dispose.");
 }
 for (const [name, source] of [
-  ["Terminal", terminal],
-  ["RTT Terminal", rttTerminal],
+  ["Terminal surface", terminalSurface],
 ]) {
   if (!source.includes("mountXtermHost(")) {
     fail(name + " must use the shared xterm host lifecycle.");
@@ -94,8 +99,11 @@ for (const [name, source] of [
     fail(name + " must not call FitAddon.fit outside the shared host lifecycle.");
   }
 }
-if (!terminal.includes("onCleanupRef.current?.(sessionId)")) {
-  fail("Terminal must preserve parent cleanup after a real shared-host instance existed.");
+if (!terminal.includes("onCleanupRef.current?.(sessionIdRef.current)")) {
+  fail("Terminal adapter must preserve parent cleanup after a real shared-host instance existed.");
+}
+if (!terminalSurface.includes("detachSource?.()")) {
+  fail("Terminal surface must detach its data source before disposing the xterm instance.");
 }
 
 const windowsDriver = fs.readFileSync("src-tauri/src/virtual_port/windows_driver.rs", "utf8");
