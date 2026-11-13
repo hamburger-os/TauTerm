@@ -36,7 +36,7 @@ rg 'theme-(shell|panel|content|card|float|control).*veil|performance-(shell|pane
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
 rg 'content-divider|scrollbar-(button|corner)|container-name' src/styles src/components/Layout
 rg '@container\s+session-pane|@media\s*\(max-width' src/components src/plugins --glob '*.module.css'
-rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
+rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx' --glob '*.ts'
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
 
@@ -46,7 +46,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 
 优先人工审查：
 
-1. TerminalView / Terminal.module.css
+1. TerminalView / TerminalSurface / terminalTheme.ts / terminalSurface.module.css / Terminal.module.css
 2. SplitView
 3. SpectrumAmbientBackground / ThemeContext motion
 4. Structural Panel ownership（左右 Sidebar / SendBar / TargetBar）与重复 glass

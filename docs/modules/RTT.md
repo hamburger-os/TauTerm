@@ -131,6 +131,8 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 历史缓存具有 per-channel 与 per-session 总预算；超限只淘汰最老历史并累计 history eviction，这属于回放保留窗口前移，不属于采集丢失，因此不作为持续黄色告警展示。AutomationRx 队列过载只累计 automation loss，presentation queue 过载只累计 presentation loss；两者都不能被描述为原始 RTT 丢失或日志丢失。Session Data Log 自身的队列/磁盘损失继续由 LogEngine 健康状态负责。
 
+两个历史预算必须使用不同名称，不能当成同一个常量：**Rust host history** 是采集与回放的权威，按 Up Channel 保留 256 KiB、全会话保留 2 MiB，超限淘汰最老 chunk；数值只由 Rust Runtime 的 `HISTORY_PER_CHANNEL_BYTES` / `HISTORY_PER_SESSION_BYTES` 拥有，并通过 snapshot 的 `history_limits`（`per_channel_bytes` / `per_session_bytes`）暴露给 WebView，前端不得在 TypeScript 中复制这些数字。**WebView presentation window** 是视图重挂载时的可见回放窗口，按 Channel 保留 512 KiB、全会话保留 2 MiB，只影响前端缓存，不替代 Rust 历史、日志或采集。两者用途与所有权不同，数值也不必一致；不能用前端窗口大小推断 host 历史容量。
+
 canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition loss、history eviction、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
 ## 前端运行态与后台生命周期
@@ -153,7 +155,7 @@ Saved Session 遵循统一两行 presentation：第一行默认名称只在创�
 
 连接页使用统一控件高度/矩阵布局。常用项只展示连接方式、probe、target、wire protocol、固件符号文件和 RTT 定位；speed/core 收入高级设置。工作区复用 Workspace Content surface，不再拥有第二套发送框或额外玻璃 Card。
 
-宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。普通 RTT Terminal 与公共 Terminal renderer 共用 `src/components/Terminal/xtermHostLifecycle.ts` 的 DOM 生命周期：宿主可测量后再 open、ResizeObserver 只请求 RAF 合并 fit、cleanup 先取消 RAF/observer 再 dispose xterm，避免快速切换 Terminal/SysView 或 React StrictMode 探测触碰已销毁 renderer。语义观察器视图不显示普通 SendBar；Trace 的 START/STOP 等协议动作由 observer 自己的紧凑工具栏负责。RTOS Trace 主视图包含采集控制、分层 loss、timestamp clock、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，并在已知 SysFreq 时换算成相对时间，不把 host acquisition timestamp 或 CPUFreq 冒充时间戳时钟。时间线从有界事件历史中先重建可见窗口左边界的 Task/Idle/ISR 状态，再绘制窗口内区间，ISR 进入/退出会正确截断并恢复 Idle；Task terminate 也会结束对应活动区间。任务 lane 优先保留当前/近期活跃与高运行时间任务，再以稳定 task id 排列；高 DPI Canvas 依据真实 Pane 尺寸重建 backing store，首尾时间刻度按测量宽度夹在画布范围内。存在数据缺口时运行时间仍展示已观察下界；目标端已知丢失量超过已解析事件量时不再给出容易误读的 CPU 百分比，只明确显示“已观察运行时间”。
+宽 Pane 使用左侧 Channel rail + viewer；窄 Pane 使用 `session-pane` container query 把 Channel 列表调整为顶部横向区域。普通 RTT Channel 使用 Terminal / Log / HEX；SystemView 观察器 Channel 使用 RTOS Trace / Events / Raw，Raw 只保留原始二进制诊断，不再把 SystemView payload 当 UTF-8 日志渲染。普通 RTT Terminal 通过数据源适配器复用共享终端 surface，渲染呈现、主题、渲染器策略、搜索/粘贴/右键菜单与 DOM 生命周期契约由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 的终端渲染所有权一节单一拥有；RTT 不再维护自己的 xterm 实例或主题，`src/plugins/rtt/RttTerminalView.tsx` 因此删除。RTT 视图被 `display: none` 隐藏时必须由 surface 自身识别为不可见（渲染器降级、浮层取消），不能依赖 Pane 传参。语义观察器视图不显示普通 SendBar；Trace 的 START/STOP 等协议动作由 observer 自己的紧凑工具栏负责。RTOS Trace 主视图包含采集控制、分层 loss、timestamp clock、CPU clock、任务时间线和任务统计；时间线使用目标端 SystemView timestamp delta，并在已知 SysFreq 时换算成相对时间，不把 host acquisition timestamp 或 CPUFreq 冒充时间戳时钟。时间线从有界事件历史中先重建可见窗口左边界的 Task/Idle/ISR 状态，再绘制窗口内区间，ISR 进入/退出会正确截断并恢复 Idle；Task terminate 也会结束对应活动区间。任务 lane 优先保留当前/近期活跃与高运行时间任务，再以稳定 task id 排列；高 DPI Canvas 依据真实 Pane 尺寸重建 backing store，首尾时间刻度按测量宽度夹在画布范围内。存在数据缺口时运行时间仍展示已观察下界；目标端已知丢失量超过已解析事件量时不再给出容易误读的 CPU 百分比，只明确显示“已观察运行时间”。
 
 ## SystemView / RTOS Trace
 
@@ -190,6 +192,6 @@ SuperWatch/实时变量和 SystemView/RTOS Trace 共享“probe/target 所有权
 
 ## 何时更新本文
 
-修改 RTT backend、probe 所有权、固件符号/Control Block 定位、Channel/source/target 模型、canonical frame、调度、历史/丢失语义、Session Data Log、后台生命周期或工作区时必须同步更新本文。
+修改 RTT backend、probe 所有权、固件符号/Control Block 定位、Channel/source/target 模型、canonical frame、调度、历史/丢失语义与预算、Session Data Log、后台生命周期、工作区或 RTT 终端接入共享 Terminal surface 的方式时必须同步更新本文。
 
 外部语义与上游接口依据见 [嵌入式调试权威索引](../knowledge/EMBEDDED_DEBUG.md)。

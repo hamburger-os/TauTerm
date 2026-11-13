@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Single terminal surface** — every terminal now renders through one shared `TerminalSurface` and one theme/option builder (`terminalTheme.ts`). The PTY path is a thin adapter and the RTT Terminal no longer owns a private xterm instance, so renderer policy (WebGL / `customGlyphs` / DOM fallback), cell-grid alignment, search, paste safety, context menu, scroll-to-bottom and links are structurally identical instead of re-derived per view. `npm run check:terminal-surface` rejects any second xterm construction and the invalid `background: "transparent"` theme keyword; `npm run test:terminal-theme` pins the three-theme palette and the transparent glass background. Custom-content sessions no longer instantiate an unused hidden terminal in the terminal pool.
+- **Shared hex and byte formatting** — the streaming terminal, RTT HEX view and remote document editor share `src/core/hex-dump.ts`; `formatBytes` has one owner in `src/utils/format.ts` (RTT and iperf no longer keep local copies).
+- **RTT history budgets named** — the Rust host history budget (256 KiB/channel, 2 MiB/session, exposed to the WebView as `history_limits`) and the separate WebView presentation window (512 KiB/channel, 2 MiB/session) are documented and named as different budgets instead of looking like one duplicated constant.
+
+### Fixed
+- **RTT Terminal rendered as an opaque black block** — RTT built its own xterm theme with `background: "transparent"`, a keyword xterm cannot parse: its theme service fell back to opaque `#000000`, and the RTT stylesheet only neutralized the xterm 5 scroll surface while xterm 6 writes that inline background onto `.xterm-scrollable-element`. The same private copy also bypassed the four-color terminal palette, live font-size/scrollback settings and the shared glass surface. RTT now renders through the shared terminal surface and inherits the same Content glass as PTY sessions.
+
+
 ## [0.6.8] — 2026-11-12
 
 ### Added

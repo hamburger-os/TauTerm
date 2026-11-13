@@ -44,6 +44,8 @@
 | `npm run check:conpty` | 检查随包 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`）的文件哈希、来源记录、驱动接线与 Windows 打包映射 |
 | `npm run check:terminal-cell-grid` | 检查终端行高设备像素对齐算法：所有支持缩放/字体组合都得到整数 CSS 行高，100% 等已对齐场景不被改写 |
 | `npm run check:terminal-screen` | 检查终端「字节 → 单元格」契约：用与宿主一致的 xterm 选项回放抓取到的半块像素画输出，锁定字符、行首缩进与逐格 24 位前景/背景色 |
+| `npm run check:terminal-surface` | 检查终端呈现单一来源：只有 `TerminalSurface` 可以构造 xterm 与主题，禁止第二套终端皮肤和非法 `transparent` 背景关键字 |
+| `npm run test:terminal-theme` | 单元测试终端主题构造器：三主题背景恒为 `rgba(0, 0, 0, 0)`、16 色 ANSI 完整、缺失四色 token 必须抛错 |
 | `npm run check:i18n-usage` | 检查核心 UI 静态 i18n key 是否同时存在于 en-US / zh-CN（插件与运行时合并命名空间除外） |
 | `npm run check:engineering-tools` | 检查 CRC 标准向量、严格数值/位运算转换以及 Modbus/AT 协议解析合同 |
 | `npm run check:sendbar` | 检查发送 payload、循环发送背压、SendBar 会话态/工程资产边界、运行快照与统一确认弹窗合同 |
