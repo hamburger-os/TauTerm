@@ -181,8 +181,14 @@ assert.match(
 const terminalSource = readFileSync(resolve(ROOT, "src", "components", "Terminal", "Terminal.tsx"), "utf8");
 assert.match(
   terminalSource,
-  /convertEol: convertEolRef\.current \?\? true/,
-  "TerminalInstance must read the convertEol prop when it creates the xterm surface",
+  /convertEol=\{convertEol\}/,
+  "the PTY adapter must forward the convertEol prop to the shared terminal surface",
+);
+const surfaceSource = readFileSync(resolve(ROOT, "src", "components", "Terminal", "TerminalSurface.tsx"), "utf8");
+assert.match(
+  surfaceSource,
+  /createTerminalOptions\(\{[^}]*convertEol,/s,
+  "TerminalSurface must pass convertEol into the shared xterm option builder",
 );
 
 console.log(`terminal-screen: pinned ${ART_ROWS.length} logo rows, their 24-bit half-block colours and the PTY convertEol wiring`);

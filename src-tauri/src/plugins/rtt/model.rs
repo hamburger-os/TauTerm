@@ -71,6 +71,16 @@ pub struct RttObserverInfo {
     pub control_channel_index: Option<u32>,
 }
 
+/// Host-retained RTT history budget published in every snapshot. Values always come from the
+/// runtime history constants; this is not the WebView presentation cache budget.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RttHistoryLimits {
+    /// Maximum retained bytes for one Up Channel history.
+    pub per_channel_bytes: u64,
+    /// Maximum retained bytes across every channel of one session.
+    pub per_session_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RttSnapshot {
     /// Monotonic process-local runtime identity. Every reconnect gets a new generation.
@@ -86,6 +96,9 @@ pub struct RttSnapshot {
     pub observers: Vec<RttObserverInfo>,
     /// Protocol-owned Down Channels are excluded from generic terminal/SendBar writes.
     pub channel_claims: Vec<RttChannelClaim>,
+    /// Authoritative host history budget. The WebView presentation window is a separate budget
+    /// and must not be assumed equal to these values.
+    pub history_limits: RttHistoryLimits,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub evicted_history_bytes: u64,
@@ -112,6 +125,7 @@ impl Default for RttSnapshot {
             send_channel: None,
             observers: Vec::new(),
             channel_claims: Vec::new(),
+            history_limits: RttHistoryLimits::default(),
             rx_bytes: 0,
             tx_bytes: 0,
             evicted_history_bytes: 0,

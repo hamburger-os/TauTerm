@@ -1,8 +1,8 @@
 use super::config::RttConfig;
 use super::error::{RttError, RttErrorCode};
 use super::model::{
-    RttChannelClaim, RttChunkDto, RttHistoryResponse, RttObserverInfo, RttPhase, RttSnapshot,
-    StoredRttChunk,
+    RttChannelClaim, RttChunkDto, RttHistoryLimits, RttHistoryResponse, RttObserverInfo, RttPhase,
+    RttSnapshot, StoredRttChunk,
 };
 use super::systemview::{
     SystemViewControl, SystemViewHistoryResponse, SystemViewRuntime, SystemViewSnapshot,
@@ -29,6 +29,15 @@ const COMMAND_QUEUE_CAPACITY: usize = 64;
 const RAW_OBSERVATION_SUBSCRIPTION_CAPACITY: usize = 1024;
 const CHANNEL_REFRESH_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_REPLY_GRACE: Duration = Duration::from_secs(3);
+
+/// Snapshot projection of the retained-history budget. The `HISTORY_*` constants stay the single
+/// source of truth; the WebView presentation window owns its own, independent budget.
+fn history_limits() -> RttHistoryLimits {
+    RttHistoryLimits {
+        per_channel_bytes: HISTORY_PER_CHANNEL_BYTES as u64,
+        per_session_bytes: HISTORY_PER_SESSION_BYTES as u64,
+    }
+}
 
 #[derive(Default)]
 struct ChannelHistory {
@@ -165,6 +174,7 @@ impl RttShared {
         Self {
             snapshot: Mutex::new(RttSnapshot {
                 generation,
+                history_limits: history_limits(),
                 ..RttSnapshot::default()
             }),
             history: Mutex::new(HistoryStore::default()),
@@ -1481,5 +1491,18 @@ mod tests {
         let a = RttRuntime::new(config.clone(), Arc::clone(&manager));
         let b = RttRuntime::new(config, manager);
         assert_ne!(a.snapshot().generation, b.snapshot().generation);
+    }
+
+    #[test]
+    fn snapshot_reports_authoritative_host_history_limits() {
+        let snapshot = RttShared::new().snapshot();
+
+        assert_eq!(
+            snapshot.history_limits,
+            RttHistoryLimits {
+                per_channel_bytes: HISTORY_PER_CHANNEL_BYTES as u64,
+                per_session_bytes: HISTORY_PER_SESSION_BYTES as u64,
+            }
+        );
     }
 }

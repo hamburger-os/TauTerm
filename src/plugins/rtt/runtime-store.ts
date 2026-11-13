@@ -16,8 +16,11 @@ import {
   type SystemViewSnapshot,
 } from "./model";
 
-const CLIENT_HISTORY_BYTES_PER_CHANNEL = 512 * 1024;
-const CLIENT_HISTORY_BYTES_PER_SESSION = 2 * 1024 * 1024;
+// WebView presentation window: how much live history a remounted view can replay.
+// This is deliberately not the Rust host history budget (exposed by the snapshot as
+// `history_limits`); the two serve different purposes and need not match.
+const PRESENTATION_WINDOW_BYTES_PER_CHANNEL = 512 * 1024;
+const PRESENTATION_WINDOW_BYTES_PER_SESSION = 2 * 1024 * 1024;
 const CLIENT_SYSTEMVIEW_EVENTS_PER_CHANNEL = 8_192;
 
 export type SystemViewMetadataSyncPhase = "idle" | "syncing" | "incomplete" | "unavailable";
@@ -170,7 +173,7 @@ function base64ByteLength(value: string): number {
 function trimChunks(chunks: RttChunk[]): RttChunk[] {
   let total = chunks.reduce((sum, chunk) => sum + base64ByteLength(chunk.data_b64), 0);
   let start = 0;
-  while (total > CLIENT_HISTORY_BYTES_PER_CHANNEL && start < chunks.length) {
+  while (total > PRESENTATION_WINDOW_BYTES_PER_CHANNEL && start < chunks.length) {
     total -= base64ByteLength(chunks[start].data_b64);
     start += 1;
   }
@@ -188,7 +191,7 @@ function trimBuffers(
     0,
   );
 
-  while (total > CLIENT_HISTORY_BYTES_PER_SESSION) {
+  while (total > PRESENTATION_WINDOW_BYTES_PER_SESSION) {
     let oldestChannel: number | null = null;
     let oldestSequence = Number.POSITIVE_INFINITY;
     const candidates = Object.entries(next).filter(([rawChannel, chunks]) => {

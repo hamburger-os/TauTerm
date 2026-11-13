@@ -17,6 +17,13 @@ export interface XtermHostLifecycle {
 interface XtermHostLifecycleOptions {
   create: () => XtermHostInstance;
   onFit?: (terminal: Terminal) => void;
+  /**
+   * Reports whether the host is currently measurable (connected, non-zero size).
+   * Surfaces that are kept mounted but hidden (`display: none` in the non-terminal
+   * Session pool) use this to stop being treated as displayed without owning a
+   * second ResizeObserver.
+   */
+  onMeasurable?: (measurable: boolean) => void;
 }
 
 /**
@@ -41,12 +48,21 @@ export function mountXtermHost(
   let bootstrapObserver: ResizeObserver | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let instance: XtermHostInstance | null = null;
+  let lastMeasurable: boolean | null = null;
 
   const measurable = () => (
     host.isConnected
     && host.clientWidth > 0
     && host.clientHeight > 0
   );
+
+  const reportMeasurable = () => {
+    if (disposed) return;
+    const next = measurable();
+    if (lastMeasurable === next) return;
+    lastMeasurable = next;
+    options.onMeasurable?.(next);
+  };
 
   const scheduleFit = () => {
     if (disposed || !instance) return;
@@ -79,10 +95,14 @@ export function mountXtermHost(
     instance = next;
     next.onOpened?.();
 
-    resizeObserver = new ResizeObserver(scheduleFit);
+    resizeObserver = new ResizeObserver(() => {
+      reportMeasurable();
+      scheduleFit();
+    });
     resizeObserver.observe(host);
     bootstrapObserver?.disconnect();
     bootstrapObserver = null;
+    reportMeasurable();
     scheduleFit();
   };
 
@@ -91,8 +111,12 @@ export function mountXtermHost(
     initRaf = requestAnimationFrame(initialize);
   };
 
-  bootstrapObserver = new ResizeObserver(scheduleInitialize);
+  bootstrapObserver = new ResizeObserver(() => {
+    reportMeasurable();
+    scheduleInitialize();
+  });
   bootstrapObserver.observe(host);
+  reportMeasurable();
   scheduleInitialize();
 
   return {

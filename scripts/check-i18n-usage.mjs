@@ -9,7 +9,7 @@
  * This guards the class of regression where a new UI action renders a raw key or
  * an English defaultValue in one language only (for example a "Saving..." button).
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 
@@ -49,7 +49,9 @@ const pluginIds = new Set(
 const staticKeyPattern = /(?:\bt|i18n\.t)\(\s*(?:"([A-Za-z0-9_.-]+)"|'([A-Za-z0-9_.-]+)')/g;
 const sourceFiles = execSync("git ls-files src", { encoding: "utf8", cwd: ROOT })
   .split("\n")
-  .filter(file => /\.(ts|tsx)$/.test(file) && !file.startsWith("src/i18n/"));
+  // A tracked file may already be deleted in the working tree (a refactor that
+  // removes a view must not crash the scan before it reaches the new files).
+  .filter(file => /\.(ts|tsx)$/.test(file) && !file.startsWith("src/i18n/") && existsSync(path.join(ROOT, file)));
 
 const missing = [];
 for (const file of sourceFiles) {

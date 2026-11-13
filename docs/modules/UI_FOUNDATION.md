@@ -29,7 +29,8 @@ React 应用由全局上下文和通用组件组成：
 - i18next 维护 `en-US` / `zh-CN` 两套公共资源；协议插件可通过 `PluginRegistration.locales` 注册自己的双语资源，Plugin Registry 在注册时把资源注入同一个 i18n 实例，协议专属文案因此不需要堆进全局 locale；
 - Shortcut Registry 和 Command Palette 共享稳定 action id；
 - Terminal renderer 明确拥有剪贴板交互：默认 `Ctrl+Shift+C / Ctrl+Shift+V` 进入可配置 action，`Ctrl+C / Ctrl+V` 保留给 PTY；兼容 `Ctrl+Insert / Shift+Insert` 与 macOS `Meta+C / Meta+V`；
-- 所有 xterm surface 共用 `src/components/Terminal/xtermHostLifecycle.ts` 的 DOM 生命周期，包括公共 Terminal renderer 与 RTT Terminal。xterm 只在宿主节点仍连接到文档且具有非零可测量尺寸后创建；`open` 后的初始 fit、Pane/窗口 resize、字体变化、Pane 重新激活和 imperative `fit()` 全部进入同一个 RAF 合并调度器；ResizeObserver 只负责请求调度，不直接同步调用 FitAddon。cleanup 统一先取消待执行 init/fit RAF、断开 observer，再执行实例级 listener/timer cleanup 并释放 xterm，确保 React StrictMode 的开发期 effect 探测、隐藏 Pane、RTT 视图切换和快速卸载不会让已销毁 renderer 继续读取 dimensions；
+- 所有 xterm surface 共用 `src/components/Terminal/xtermHostLifecycle.ts` 的 DOM 生命周期；公共 Terminal renderer 与 RTT Terminal 都只通过唯一的 `TerminalSurface` 接入，不各自创建 xterm 实例。xterm 只在宿主节点仍连接到文档且具有非零可测量尺寸后创建；`open` 后的初始 fit、Pane/窗口 resize、字体变化、Pane 重新激活和 imperative `fit()` 全部进入同一个 RAF 合并调度器；ResizeObserver 只负责请求调度，不直接同步调用 FitAddon。cleanup 统一先取消待执行 init/fit RAF、断开 observer，再执行实例级 listener/timer cleanup 并释放 xterm，确保 React StrictMode 的开发期 effect 探测、隐藏 Pane、RTT 视图切换和快速卸载不会让已销毁 renderer 继续读取 dimensions；
+- `TerminalSurface` 是终端渲染的唯一代码所有者：`src/components/Terminal/TerminalSurface.tsx` 是唯一允许构造 xterm 实例的位置，`src/components/Terminal/terminalTheme.ts` 单一生成主题与透明背景常量；渲染器策略（可见时 WebGL、回退 DOM）、`customGlyphs`、cell-grid 对齐、搜索、粘贴安全、右键菜单、滚动到底部与超链接都由该 surface 统一实现。公共 `Terminal.tsx` 只是基于它的 PTY 适配层，协议终端（例如 RTT Terminal）通过数据源适配器复用同一 surface，禁止出现第二套 xterm 构造、局部主题或另一份透明背景常量。玻璃透明仍由 `allowTransparency` 与主题背景 `rgba(0, 0, 0, 0)` 共同保持。该所有权契约由 `npm run check:terminal-surface` 门禁锁定：它拒绝 `TerminalSurface` 之外对 xterm runtime/addon 的值导入与实例构造，禁止把 `background: "transparent"` 当作 xterm 主题关键字，断言透明背景常量 `TERMINAL_SURFACE_BACKGROUND`（`rgba(0, 0, 0, 0)`）与 `createTerminalTheme` 由 `terminalTheme.ts` 提供并被 surface 使用，并要求 `RttTerminalView.tsx` 保持删除；它与 `check:terminal-screen` 的分工是——后者验证“字节 → 单元格”的解析结果，前者验证“只有一个渲染宿主”。主题颜色规则仍只在 `.agents/skills/tauterm-theme/SKILL.md` 维护；
 - xterm.js 是终端语义的唯一所有者。除 [LOCAL_SHELL.md](LOCAL_SHELL.md) 记录的 ConPTY 启动握手外，TauTerm 不解析、不重写 PTY 输出，也不向 PTY 注入清屏/复位序列；宿主只通过 `Terminal.modes`（鼠标上报协议、Bracketed Paste 等）与 `buffer.active.type`（普通/备用屏幕）读取只读呈现状态，只在终端右键菜单显示模式摘要（全屏应用、鼠标上报协议）并支撑恢复入口，不用常驻浮层遮挡内容。全屏应用异常或未清理状态时只提供显式的“重置终端”（xterm `reset()`，RIS），不自动触发，避免打断仍在运行的交互式程序。xterm 6 的备用屏幕、输入法合成层与内部滚动容器属于 renderer 私有 DOM：宿主只通过主题/CSS 维持透明材质与裁剪边界（例如用 `overflow: clip` 防止输入法合成把宿主滚动容器顶偏），不解析其文本或改写模式状态。xterm 与官方 addon 版本由 `package.json` 单一维护。
 - 所有终端粘贴入口统一经 xterm `paste()`；终端剪贴板读写统一经 Tauri 原生 clipboard 插件（capability 只授予读写文本），不使用 `navigator.clipboard`：Tauri 窗口不响应 WebView2 的 `CLIPBOARD_READ` 权限询问，`readText()` 会静默失败并让粘贴表现为“没反应”。读取结果必须区分“空”和“不可用”，不可用时必须用 i18n toast 告知用户；当内容包含换行且当前终端未启用 Bracketed Paste Mode（DECSET 2004），或粘贴内容超过 5 KiB 字符时，先进入安全确认预览；右键复制/粘贴/全选/清屏完成后恢复终端焦点；
 - 会话字节路由只有一层权威：SessionContext 只把实时数据交给当前终端消费者（消费者卸载时必须传 `null` 取消订阅，不能安装空回调），挂载前的有界缓冲由 `src/core/pending-session-data.ts` 在 TerminalView 内统一负责，禁止在上下文层再保留第二份无上限副本；
@@ -136,6 +137,8 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 - `src/components/Layout/sessionPresentation.ts`
 - `src/hooks/useSessionTrafficRate.ts`
 - `src/components/Terminal/Terminal.tsx`
+- `src/components/Terminal/TerminalSurface.tsx`
+- `src/components/Terminal/terminalTheme.ts`
 - `src/core/plugin-registry.ts`
 - `src/components/Settings/`
 - `src/components/CommandPalette/`
@@ -147,4 +150,4 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 
 ## 何时更新本文
 
-修改应用壳、内容适配模型、renderer 类型/实例身份、Terminal/xterm 生命周期、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar/session-presentation 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。
+修改应用壳、内容适配模型、renderer 类型/实例身份、Terminal/xterm 生命周期与 TerminalSurface 渲染所有权、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar/session-presentation 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。

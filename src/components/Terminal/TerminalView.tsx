@@ -13,11 +13,9 @@ import Icon from "../common/Icon";
 import TerminalInstance from "./Terminal";
 import DualPane from "./DualPane";
 import type { DualLine } from "./DualPane";
-import SearchBar from "./SearchBar";
+import { formatHexLine, HEX_BYTES_PER_ROW } from "../../core/hex-dump";
 import styles from "./Terminal.module.css";
 
-const BYTES_PER_LINE = 16;
-const HEX_HALF_WIDTH = 8 * 3 - 1; // 8 字节 hex 列最大宽度 (8×2 位 + 7 个空格 = 23)
 const FULL_DOCKED_RECT: PaneRect = { left: 0, top: 0, width: 1, height: 1 };
 
 /** Dual 模式帧超时默认值：50ms 内未收到新数据则视为一帧结束，可在连接配置中覆盖 */
@@ -50,42 +48,6 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-/**
- * 格式化单行 Hex Dump（最多 16 字节）
- *
- * 固定宽度 78 字符，保证多次输出 `\r` 覆盖对齐。
- * 格式：8位偏移量 + 2空格 + 左8字节hex + 2空格 + 右8字节hex + 2空格 + |ASCII|
- */
-function formatHexLine(data: Uint8Array, offset: number): string {
-  const chunk = data.slice(0, BYTES_PER_LINE);
-  const offsetStr = offset.toString(16).padStart(8, "0");
-
-  const leftHexParts: string[] = [];
-  for (let j = 0; j < 8 && j < chunk.length; j++) {
-    leftHexParts.push(chunk[j].toString(16).padStart(2, "0"));
-  }
-  const leftHex = leftHexParts.join(" ").padEnd(HEX_HALF_WIDTH, " ");
-
-  const rightHexParts: string[] = [];
-  for (let j = 8; j < BYTES_PER_LINE && j < chunk.length; j++) {
-    rightHexParts.push(chunk[j].toString(16).padStart(2, "0"));
-  }
-  const rightHex = rightHexParts.join(" ").padEnd(HEX_HALF_WIDTH, " ");
-  const hex = `${leftHex}  ${rightHex}`;
-
-  const asciiParts: string[] = [];
-  for (let j = 0; j < BYTES_PER_LINE; j++) {
-    if (j < chunk.length) {
-      const b = chunk[j];
-      asciiParts.push((b >= 32 && b <= 126) ? String.fromCharCode(b) : ".");
-    } else {
-      asciiParts.push(" ");
-    }
-  }
-  const ascii = asciiParts.join("");
-
-  return `${offsetStr}  ${hex}  |${ascii}|`;
-}
 
 /** 将原始字节数据转换为 DualLine 基础结构（id 由调用方分配以保证单调递增） */
 function dataToDualLine(data: Uint8Array, direction: "RX" | "TX"): Omit<DualLine, "id"> {
@@ -164,23 +126,7 @@ export default function TerminalView({
   const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
   const terminalRefs = useRef<Map<string, any>>(new Map());
-  const terminalViewportRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastDockedRectsRef = useRef<Map<string, PaneRect>>(new Map());
-  const dockedViewportRef = useRef<HTMLDivElement | null>(null);
-  const [searchVisible, setSearchVisible] = useState(false);
-  const searchStateRef = useRef<Map<string, { query: string; caseSensitive: boolean }>>(new Map());
-  const currentSearchState = state.activeTabId ? (searchStateRef.current.get(state.activeTabId) ?? { query: "", caseSensitive: false }) : { query: "", caseSensitive: false };
-
-  const handleSearchClose = useCallback(() => {
-    setSearchVisible(false);
-    setTimeout(() => {
-      activeTermRef.current?.terminal?.focus();
-    }, 0);
-  }, []);
-
-  const handleSearchSaveState = useCallback((query: string, caseSensitive: boolean) => {
-    if (state.activeTabId) searchStateRef.current.set(state.activeTabId, { query, caseSensitive });
-  }, [state.activeTabId]);
   const activeTermRef = useRef<any>(null);
   const hexOffsetsRef = useRef<Map<string, number>>(new Map());
   const hexPendingRef = useRef<Map<string, { offset: number; data: Uint8Array }>>(new Map());
@@ -201,8 +147,12 @@ export default function TerminalView({
   const viewportRef = useRef<HTMLDivElement>(null);
   tabsRef.current = state.tabs;
 
+  // Only terminal-content sessions own an xterm instance. Custom plugin views
+  // (RTT, TRDP, ...) render their own content and used to get a hidden second
+  // terminal instantiated in this pool.
   const terminalTabs = state.tabs.filter(
-    t => t.state === "connected" || t.disconnectInfo?.retain_terminal
+    t => (t.state === "connected" || t.disconnectInfo?.retain_terminal)
+      && (pluginRegistry.get(t.pluginId)?.manifest.content_type ?? "terminal") === "terminal"
   );
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
 
@@ -220,9 +170,6 @@ export default function TerminalView({
     activeTermRef.current = state.activeTabId
       ? terminalRefs.current.get(state.activeTabId) ?? null
       : null;
-    dockedViewportRef.current = state.activeTabId
-      ? terminalViewportRefs.current.get(state.activeTabId) ?? null
-      : null;
   }, [state.activeTabId, dockedPlacements]);
 
   useEffect(() => {
@@ -232,15 +179,11 @@ export default function TerminalView({
     registerAction(ACTION_IDS.TERMINAL_PASTE, () => {
       void activeTermRef.current?.requestPaste?.();
     });
-    registerAction(ACTION_IDS.TERMINAL_SEARCH, () => setSearchVisible(v => !v));
+    registerAction(ACTION_IDS.TERMINAL_SEARCH, () => activeTermRef.current?.toggleSearch?.());
     registerAction(ACTION_IDS.TERMINAL_SELECT_ALL, () => {
       activeTermRef.current?.terminal?.selectAll();
     });
   }, [registerAction]);
-
-  useEffect(() => {
-    setSearchVisible(false);
-  }, [state.activeTabId]);
 
   useEffect(() => {
     return () => {
@@ -399,18 +342,18 @@ export default function TerminalView({
         let curOffset = baseOffset;
         const w = writeFn!;
 
-        while (pos + BYTES_PER_LINE <= combined.length) {
-          const line = formatHexLine(combined.slice(pos, pos + BYTES_PER_LINE), curOffset);
+        while (pos + HEX_BYTES_PER_ROW <= combined.length) {
+          const line = formatHexLine(combined.slice(pos, pos + HEX_BYTES_PER_ROW), curOffset, { splitHalf: true, padAscii: true });
           if (pos === 0 && prevHadPending) w("\r" + line + "\r\n");
           else w(line + "\r\n");
-          pos += BYTES_PER_LINE;
-          curOffset += BYTES_PER_LINE;
+          pos += HEX_BYTES_PER_ROW;
+          curOffset += HEX_BYTES_PER_ROW;
         }
 
         hexOffsetsRef.current.set(sessionId, curOffset);
         const remainder = combined.slice(pos);
         if (remainder.length > 0) {
-          const line = formatHexLine(remainder, curOffset);
+          const line = formatHexLine(remainder, curOffset, { splitHalf: true, padAscii: true });
           w("\r" + line);
           hexPendingRef.current.set(sessionId, { offset: curOffset, data: remainder });
         } else {
@@ -503,7 +446,6 @@ export default function TerminalView({
     for (const id of toRemove) {
       writeRefs.current.delete(id);
       terminalRefs.current.delete(id);
-      terminalViewportRefs.current.delete(id);
       lastDockedRectsRef.current.delete(id);
       hexOffsetsRef.current.delete(id);
       hexPendingRef.current.delete(id);
@@ -515,7 +457,6 @@ export default function TerminalView({
       flushSessionDecoder(id);
     }
     for (const id of dualDisconnected) {
-      terminalViewportRefs.current.delete(id);
       lastDockedRectsRef.current.delete(id);
       const fb = frameBufRef.current.get(id);
       if (fb?.timer) clearTimeout(fb.timer);
@@ -544,7 +485,6 @@ export default function TerminalView({
 
   const handleTermCleanup = useCallback((sessionId: string) => {
     writeRefs.current.delete(sessionId);
-    terminalViewportRefs.current.delete(sessionId);
     lastDockedRectsRef.current.delete(sessionId);
     hexOffsetsRef.current.delete(sessionId);
     hexPendingRef.current.delete(sessionId);
@@ -587,9 +527,6 @@ export default function TerminalView({
         isVisible={isVisible}
         onTermReady={(writeFn) => handleTermReady(tab.id, writeFn)}
         onCleanup={handleTermCleanup}
-        fontSize={fontSize}
-        bufferLines={bufferLines}
-        onShowSearch={() => setSearchVisible(true)}
         onDisconnectSession={() => {
           if (tab.parentId) {
             void closeChannel(tab.id, tab.parentId);
@@ -631,10 +568,6 @@ export default function TerminalView({
           return (
             <div
               key={tab.id}
-              ref={(node) => {
-                if (node) terminalViewportRefs.current.set(tab.id, node);
-                else terminalViewportRefs.current.delete(tab.id);
-              }}
               className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} ${paneMaterial}`}
               style={{
                 ...dockedRectStyle(rect),
@@ -672,15 +605,6 @@ export default function TerminalView({
           );
         })}
 
-        <SearchBar
-          isOpen={searchVisible}
-          onClose={handleSearchClose}
-          terminal={activeTermRef.current?.terminal ?? null}
-          savedQuery={currentSearchState.query}
-          savedCaseSensitive={currentSearchState.caseSensitive}
-          onSaveState={handleSearchSaveState}
-          viewportRef={dockedViewportRef}
-        />
       </div>
     );
   }
@@ -746,15 +670,6 @@ export default function TerminalView({
         </div>
       </div>
 
-      <SearchBar
-        isOpen={searchVisible}
-        onClose={handleSearchClose}
-        terminal={activeTermRef.current?.terminal ?? null}
-        savedQuery={currentSearchState.query}
-        savedCaseSensitive={currentSearchState.caseSensitive}
-        onSaveState={handleSearchSaveState}
-        viewportRef={viewportRef}
-      />
     </div>
   );
 }
