@@ -44,7 +44,17 @@ RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端�
 
 `SshRuntime` 的强引用只由 SessionStore 持有的 service / file-transfer / channel-factory capability graph 管理。注册到 `PluginRuntime` 的 `SshAdapter` 自己持有 `SessionRuntimeRegistry<SshRuntime>` 弱索引；该索引不拥有连接、不能延长连接生命周期，失效 weak entry 会被视为运行时不可用并清理。SSH 不使用模块级静态 runtime registry，因此插件实例与其私有运行态索引具有明确 ownership，SessionStore 仍是运行时资源生命周期的单一强 ownership source。
 
-SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理或日志读取伪装成终端字节流。远程 `$HOME` 也属于文件工作流的辅助元数据，不再阻塞基础 SSH 登录；第一次真正请求文件管理器 home 时才通过独立 exec channel 查询，并在 `SshRuntime` 中缓存。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
+SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过专用通道工作，不把文件管理或日志读取伪装成终端字节流；通道分工与能力模型见下节。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
+
+### 侧通道能力模型
+
+SSH 的三类通道分工固定：终端是 shell channel，文件工作是 `subsystem sftp` channel，远端命令输出是 exec channel。三者复用同一认证连接但互不越界：exec 通道不承载文件元数据，文件工作不要求远端 shell。
+
+- **SFTP 能力对象**：`SftpCapability` 是一个 SSH 连接内 SFTP 子系统会话的唯一 owner。SFTP 能力只通过 `SshRuntime::sftp()` 以 `Arc<SftpCapability>` 暴露，服务、传输和远程文档都不接触原始 session 或缓存锁。子系统通道在首次访问时惰性打开并缓存；观察到 `Closed|Timeout|Io` 时丢弃缓存，下一次访问自动重建。远端起始目录由 SFTP `realpath(".")`（`canonicalize(".")`）解析，失败时用 `expand_path("~")` 兜底，不回退到 `/`，也不占用 exec 通道。`probe()` 用于能力探测；清理临时产物走 best-effort，失败只记日志，不覆盖主错误。
+- **错误分类**：SFTP 公共入口返回 `SftpError { code, message }`，code 为 `not_found | permission_denied | conflict | closed | timeout | unsupported | io | protocol`。code 在 `sftp/error.rs` 边界统一归类：capability 层使用结构化 `from_client` 映射，服务包装层对既有“操作 + 上下文 + 底层错误”文案做一次关键词归类（文案关键词属于可判别契约，修改时必须保留）。IPC 直接把这个对象交给前端：`closed`/`timeout` 表示按连接失效处理（缓存失效、重连后重试），`conflict` 交给 UI 选择重新加载或覆盖，`unsupported` 表示该连接或服务端不支持此能力。前端按 code 分支，不解析错误文案。
+- **能力探测与降级**：`ssh_sftp_availability_cmd` 探测 SFTP 子系统并返回 `{ available, reason }`。只有“可用”结果按连接缓存；失败结果不缓存，因为通道/传输瞬时错误与“服务端确实没有 `sftp` 子系统”无法可靠区分，缓存失败会把一次瞬时错误固定成整连接不可用。`refresh=true` 丢弃缓存强制重探，供前端“不可用 + 重试”使用。文件功能最终可见性 = 用户偏好 AND 探测结果，不可用时 UI 禁用并标注原因，而不是在首次操作时抛原始传输错误。journald 不做预先探测，可用性在首次实际查询时判定。Session 参数 `journald_enabled` / `file_service_enabled` 只是用户偏好，不代表实际能力；`file_service_protocol` 已删除（它只可能取值 `sftp`）。
+- **打开文件管理器是一条状态机**：`sftp_list_dir_cmd` 接受可选路径，空路径表示起始目录，一次调用返回 `{ path, entries }`。不再有独立的 `get_ssh_home_dir` IPC，也不在前端拼接 home 与目录名；起始目录解析失败直接报错。
+- **exec 通道策略**：`plugins/ssh/exec.rs` 是 exec 通道构造、命令执行和有界输出收集的唯一实现；journald 是唯一消费者，`$HOME` 等文件工作不再借用 exec。
 
 ### 远程文档查看与编辑
 
@@ -63,7 +73,7 @@ SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SS
 
 远端日志的数据源只由 `src-tauri/src/plugins/ssh/journald.rs` 负责理解 `journalctl` 语义；前端不直接拼接 journalctl 参数，也不自行推断分页方向：
 
-- 历史查询统一使用 **newest → oldest** 顺序。后端以反向输出、inclusive cursor 和 look-ahead 生成页面；`next_cursor` 只有在已经证明存在更老一页时才返回，避免用“本页刚好等于 limit”猜测 `hasMore`。
+- 历史查询统一使用 **newest → oldest** 顺序。后端以反向输出、inclusive cursor 和 look-ahead 生成页面；`has_more` 与 `next_cursor` 由分页器 `finalize_page` 单一产出（只有 look-ahead 证明存在更老一页且 cursor 有效时才成立），IPC 命令直接返回该分页响应，不再重算 `hasMore`。
 - 全量导出复用同一分页器，从首次页面向更老 cursor 遍历；导出过程逐页写同目录临时文件，完成后再提交目标文件，不在内存中收集全部日志。
 - 实时追踪显式使用“点击开始后产生的新日志”语义，不继承 journalctl 的默认尾部记录；Rust 端先按时间/批大小聚合，再通过批量事件跨 IPC 发送，避免每条日志都触发一次 WebView 边界调用。
 - 查询执行器同时收集 stdout、stderr 和远端 exit status，并对响应大小、单条实时记录和查询时长设置上限；远端命令失败不会再被空结果吞掉。
@@ -105,10 +115,10 @@ flowchart TB
 - SSH connect future 必须受发起命令本身的 cancellation 生命周期约束，不创建脱离调用方的孤儿连接任务。
 - 多终端共享认证连接，但每个 child terminal 有独立 PTY/I/O 生命周期；远端 EOF 是方向性半关闭，真正 Close 与本端 EOF/Close 握手必须区分。
 - SessionStore capability graph 是 SSH 运行时资源的强 owner；任何按协议维护的 session-id lookup 只能是非持有索引，不能形成第二套资源 ownership。
-- 文件传输、远程文档和远端日志都通过 side-channel/专用服务实现，不侵入终端流；Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。文件服务辅助元数据必须 lazy 获取，不能让未使用的 side capability 增加基础 SSH 建连步骤。
+- 文件传输、远程文档和远端日志都通过各自的侧通道实现，不侵入终端流：终端=shell channel，文件=`subsystem sftp`，远端命令输出=exec channel；exec 不承载文件元数据，文件工作不要求 shell。Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。SFTP 能力探测和起始目录解析必须 lazy，不能让未使用的 side capability 增加基础 SSH 建连步骤。
 - journald 的 cursor、排序方向、stderr/exit status 与 command-line 参数属于后端数据源实现细节；React 只消费规范化页面/批量事件。
 - journald 实时任务的停止必须等后端 operation 完成后才允许同一 Session 重新启动；不要恢复基于固定间隔 polling 或“已在运行中”字符串补偿的旧模型。
-- SFTP 浏览/属性/Remote Document 使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。文档读取只打开普通文件，并在取得远端 handle 后释放 SFTP cache mutex，避免小文件编辑阻塞目录浏览。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
+- SFTP 浏览/属性/Remote Document 使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。SFTP 子系统会话只由 `SftpCapability` 持有，服务、传输和文档层只消费 `Arc<SftpCapability>`，不维护第二份 session/cache；文档读取只打开普通文件。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
 - Remote Document 的 truncated snapshot、working text、save format、expected version 与 dirty/conflict 状态必须由文档会话统一拥有；FileManager 只表达 Open 意图，不能重新维护 Preview 专用数据状态。
 - Remote Document 保存必须在后端完成严格序列化、expected-version 校验和临时文件 commit/rollback；partial snapshot、编码失败、远端版本冲突或目标类型变化都必须 fail-closed。
 - 文件管理器的新建/重命名交互只接受单一文件名，不能把 `/`、`.` 或 `..` 偷渡成移动/跨目录操作；真正的 move 应作为独立操作语义。新建文件使用排他创建，同名对象存在时返回冲突而不是清空原文件。
@@ -123,15 +133,14 @@ flowchart TB
 
 - `src/plugins/ssh/`
 - `src-tauri/src/plugins/ssh/`
-- `src-tauri/src/transfer/sftp_transfer.rs`
-- `src-tauri/src/transfer/ssh_file_service.rs`
-- `src-tauri/src/transfer/sftp_document.rs`
+- `src-tauri/src/plugins/ssh/exec.rs`
+- `src-tauri/src/plugins/ssh/sftp/`
 - `src/components/FileManager/`
 - `src/components/FileEditor/`
 - `src/components/JournaldViewer/`
 
 ## 何时更新本文
 
-修改 SSH 父子会话、认证连接复用、SFTP/远端文档/远端日志与 SSH 的资源关系、Workspace 恢复语义时，必须同步更新本文。
+修改 SSH 父子会话、认证连接复用、侧通道能力模型（SFTP/远端文档/远端日志）、Workspace 恢复语义时，必须同步更新本文。
 
-SFTP 的公共传输生命周期见 [TRANSFER.md](TRANSFER.md)，SSH/SFTP 的 RFC/上游依据见 [网络协议知识索引](../knowledge/NETWORK_PROTOCOLS.md)。
+SFTP 传输的公共生命周期与传输语义见 [TRANSFER.md](TRANSFER.md)，SSH/SFTP 的 RFC/上游依据见 [网络协议知识索引](../knowledge/NETWORK_PROTOCOLS.md)。

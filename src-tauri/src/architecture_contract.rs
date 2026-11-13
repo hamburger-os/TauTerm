@@ -600,6 +600,116 @@ fn process_crash_diagnostics_are_local_bounded_and_non_intrusive() {
 }
 
 #[test]
+fn transfer_module_is_protocol_agnostic() {
+    let transfer_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transfer");
+    for entry in std::fs::read_dir(&transfer_dir).expect("transfer directory") {
+        let entry = entry.expect("transfer entry");
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("transfer source");
+        assert!(
+            !source.contains("plugins::ssh"),
+            "generic transfer module {} must not depend on the SSH plugin; SFTP lives in plugins/ssh/sftp",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn ssh_side_channels_have_one_owner() {
+    let sftp = read_source("plugins/ssh/sftp/capability.rs");
+    assert!(
+        sftp.contains("pub struct SftpCapability"),
+        "SFTP subsystem session must have exactly one owning capability object"
+    );
+    assert_eq!(
+        sftp.matches("request_subsystem(true, \"sftp\")").count(),
+        1,
+        "the sftp subsystem must be requested in exactly one place"
+    );
+    assert!(
+        sftp.contains("pub async fn invalidate(") && sftp.contains("pub async fn home_dir("),
+        "SFTP capability must own cache invalidation and home resolution"
+    );
+
+    for relative in [
+        "plugins/ssh/sftp/service.rs",
+        "plugins/ssh/sftp/document.rs",
+        "plugins/ssh/sftp/transfer.rs",
+    ] {
+        let source = read_source(relative);
+        assert!(
+            !source.contains("SftpSession>>>") && !source.contains("sftp_cache"),
+            "{relative} must consume SftpCapability instead of the raw SFTP cache"
+        );
+    }
+
+    let runtime = read_source("plugins/ssh/mod.rs");
+    assert!(
+        runtime.contains("pub fn sftp(&self) -> Arc<SftpCapability>"),
+        "SshRuntime must expose the SFTP capability behind a method, not a public cache field"
+    );
+    assert!(
+        !runtime.contains("query_home_dir") && !runtime.contains("$HOME"),
+        "remote home must be resolved through SFTP realpath, not an exec shell query"
+    );
+
+    let exec = read_source("plugins/ssh/exec.rs");
+    assert!(
+        exec.contains("pub async fn open(") && exec.contains("pub async fn run("),
+        "exec channel construction must stay centralized in plugins/ssh/exec.rs"
+    );
+    assert!(
+        exec.contains("pub async fn open_channel(") && exec.contains("pub async fn start("),
+        "exec must expose open/start separately so callers can keep a cancel checkpoint before launching the remote command"
+    );
+    let journald = read_source("plugins/ssh/journald.rs");
+    assert!(
+        journald.contains("exec::open_channel(") && journald.contains("exec::start("),
+        "journald stream must check cancellation between opening the channel and starting journalctl"
+    );
+}
+
+#[test]
+fn ssh_home_resolution_has_no_silent_root_fallback() {
+    let commands = read_source("plugins/ssh/commands.rs");
+    assert!(
+        !commands.contains("get_ssh_home_dir"),
+        "file manager home resolution belongs to the listing command, not a separate IPC round-trip"
+    );
+    assert!(
+        !commands.contains("unwrap_or_else(|| \"/\".to_string())"),
+        "SSH home resolution must not silently fall back to /"
+    );
+    assert!(
+        commands.contains("sftp_open_directory"),
+        "opening the file manager must resolve start directory and list in one backend operation"
+    );
+}
+
+#[test]
+fn journald_has_more_has_a_single_source() {
+    let commands = read_source("plugins/ssh/commands.rs");
+    assert!(
+        !commands.contains("entries.len() >= limit")
+            && !commands.contains("has_more = next_cursor"),
+        "journald has_more must come from finalize_page, never recomputed at the command layer"
+    );
+    let journald = read_source("plugins/ssh/journald.rs");
+    assert!(
+        journald.contains("fn finalize_page(")
+            && journald.contains("let has_more = has_more && next_cursor.is_some();"),
+        "journald paging must keep next_cursor and has_more consistent"
+    );
+    assert!(
+        journald.contains("-> Result<JournaldQueryResponse, String>"),
+        "the query boundary must return the pager response as-is"
+    );
+}
+
+#[test]
 fn virtual_port_backend_hides_platform_elevation_mechanics() {
     let backend = read_source("virtual_port/backend.rs");
     for forbidden in [

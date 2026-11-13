@@ -9,6 +9,18 @@ export interface SftpEntry {
   permissions: string | null;
 }
 
+/** `sftp_list_dir_cmd` 的结果：后端规范化后的路径 + 目录项。 */
+export interface SftpListing {
+  path: string;
+  entries: SftpEntry[];
+}
+
+/** `ssh_sftp_availability_cmd` 的结果（每个 SSH 连接探测一次并缓存）。 */
+export interface SftpAvailability {
+  available: boolean;
+  reason: string | null;
+}
+
 export type PromptMode = 'newFile' | 'newFolder' | 'rename';
 
 export type SortField = 'name' | 'size' | 'modified';

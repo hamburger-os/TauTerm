@@ -14,14 +14,15 @@ import { formatTime } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import { formatBytes } from "../../utils/format";
 import { copyToClipboard } from "../../utils/clipboard";
+import { sftpErrorMessage } from "../../services/sftpErrors";
 import { getEntryIcon } from "./entryIcon";
 import styles from "./FilePropertiesModal.module.css";
 
 export interface FileStatInfo {
   name: string;
   path: string;
-  isDir: boolean;
-  entryType?: SftpEntry["entry_type"];
+  is_dir: boolean;
+  entry_type?: SftpEntry["entry_type"];
   size: number;
   accessed: number | null;
   modified: number | null;
@@ -129,7 +130,7 @@ export default function FilePropertiesModal({
       onChmodComplete?.();
     } catch (error) {
       if (!activeRef.current) return;
-      setChmodError(String(error));
+      setChmodError(sftpErrorMessage(error));
     }
   }, [chmodValue, sessionId, statInfo, t, onChmodComplete]);
 
@@ -199,8 +200,8 @@ export default function FilePropertiesModal({
 
   if (!visible || !entry) return null;
 
-  const isDir = statInfo?.isDir ?? entry.is_dir;
-  const entryType = statInfo?.entryType ?? entry.entry_type ?? (isDir ? "directory" : "file");
+  const isDir = statInfo?.is_dir ?? entry.is_dir;
+  const entryType = statInfo?.entry_type ?? entry.entry_type ?? (isDir ? "directory" : "file");
   const typeLabel =
     entryType === "directory"
       ? t("fileManager.typeDir")

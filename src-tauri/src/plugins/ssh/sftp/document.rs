@@ -8,16 +8,12 @@ use crc32fast::hash as crc32;
 use encoding_rs::{BIG5, EUC_JP, EUC_KR, GB18030, SHIFT_JIS, WINDOWS_1252};
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tauri::State;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 
-use crate::kernel::session_store::SessionState;
-use crate::plugins::ssh::handler::SshHandler;
-use crate::plugins::ssh::{SshAdapter, SshRuntime, PLUGIN_ID};
-use crate::transfer::ssh_file_service::sftp_read_head;
-use crate::AppState;
+use super::attrs::{is_regular_file, permissions_to_string};
+use super::capability::SftpCapability;
+use super::paths::sibling_artifact as remote_sibling_artifact;
+use super::service::sftp_read_head;
 
 pub const DOCUMENT_PREVIEW_LIMIT: u64 = 1_048_576;
 pub const DOCUMENT_EDIT_LIMIT: u64 = 4 * 1_048_576;
@@ -108,113 +104,13 @@ enum CommitDocumentOutcome {
     Conflict(RemoteDocumentVersion),
 }
 
-fn get_ssh_runtime(
-    state: &State<'_, AppState>,
-    session_id: &str,
-) -> Result<Arc<SshRuntime>, String> {
-    let parent_id = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let parent_id = store
-            .resolve_parent_id(session_id)
-            .ok_or_else(|| store.session_not_found(session_id))?;
-        if store
-            .get_session(&parent_id)
-            .is_some_and(|handle| handle.state == SessionState::Disconnected)
-        {
-            return Err("会话已断开".to_string());
-        }
-        parent_id
-    };
-
-    state
-        .plugin::<SshAdapter>(PLUGIN_ID)
-        .runtime(&parent_id)
-        .ok_or_else(|| format!("会话 {} 不包含 SSH runtime（可能不是 SSH 连接）", parent_id))
-}
-
-async fn ensure_sftp(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-) -> Result<(), String> {
-    let mut cache = sftp_cache.lock().await;
-    if cache.is_some() {
-        return Ok(());
-    }
-
-    let channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("打开 SFTP 通道失败: {}", e))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("请求 SFTP 子系统失败: {}", e))?;
-    let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| format!("初始化 SFTP 会话失败: {}", e))?;
-    *cache = Some(sftp);
-    log::info!("SFTP 子系统通道已建立并缓存");
-    Ok(())
-}
-
-fn is_regular_file(permissions: Option<u32>, fallback_is_dir: bool) -> bool {
-    match permissions.map(|value| value & 0o170000) {
-        Some(0o100000) => true,
-        Some(0) | None => !fallback_is_dir,
-        _ => false,
-    }
-}
-
-fn permissions_to_string(permissions: Option<u32>) -> String {
-    let p = permissions.unwrap_or(0);
-    let mut value = String::with_capacity(10);
-    value.push(match p & 0o170000 {
-        0o040000 => 'd',
-        0o120000 => 'l',
-        0o010000 => 'p',
-        0o140000 => 's',
-        0o060000 => 'b',
-        0o020000 => 'c',
-        _ => '-',
-    });
-    value.push(if p & 0o400 != 0 { 'r' } else { '-' });
-    value.push(if p & 0o200 != 0 { 'w' } else { '-' });
-    value.push(match (p & 0o4000 != 0, p & 0o100 != 0) {
-        (true, true) => 's',
-        (true, false) => 'S',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    value.push(if p & 0o040 != 0 { 'r' } else { '-' });
-    value.push(if p & 0o020 != 0 { 'w' } else { '-' });
-    value.push(match (p & 0o2000 != 0, p & 0o010 != 0) {
-        (true, true) => 's',
-        (true, false) => 'S',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    value.push(if p & 0o004 != 0 { 'r' } else { '-' });
-    value.push(if p & 0o002 != 0 { 'w' } else { '-' });
-    value.push(match (p & 0o1000 != 0, p & 0o001 != 0) {
-        (true, true) => 't',
-        (true, false) => 'T',
-        (false, true) => 'x',
-        (false, false) => '-',
-    });
-    value
-}
-
 async fn read_snapshot(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
     remote_path: &str,
     max_bytes: u64,
 ) -> Result<RemoteSnapshot, String> {
-    ensure_sftp(session, sftp_cache).await?;
-
     let (size, modified, permissions) = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         let stat = sftp
             .symlink_metadata(remote_path)
             .await
@@ -229,7 +125,7 @@ async fn read_snapshot(
         )
     };
 
-    let (data, observed_size) = sftp_read_head(session, sftp_cache, remote_path, max_bytes).await?;
+    let (data, observed_size) = sftp_read_head(cap, remote_path, max_bytes).await?;
     if observed_size != size {
         return Err(format!(
             "远程文件 '{}' 在读取期间发生变化，请重试",
@@ -239,8 +135,7 @@ async fn read_snapshot(
     let total_read = data.len() as u64;
 
     let unchanged = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         match sftp.symlink_metadata(remote_path).await {
             Ok(stat) => {
                 is_regular_file(stat.permissions, stat.is_dir())
@@ -266,11 +161,10 @@ async fn read_snapshot(
 }
 
 async fn read_complete_snapshot(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
     remote_path: &str,
 ) -> Result<RemoteSnapshot, String> {
-    let snapshot = read_snapshot(session, sftp_cache, remote_path, DOCUMENT_EDIT_LIMIT + 1).await?;
+    let snapshot = read_snapshot(cap, remote_path, DOCUMENT_EDIT_LIMIT + 1).await?;
     if snapshot.size > DOCUMENT_EDIT_LIMIT {
         return Err(format!(
             "远程文件超过可编辑上限（{} bytes > {} bytes）",
@@ -287,7 +181,7 @@ fn normalize_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-fn serialize_text(text: &str, format: &RemoteDocumentFormat) -> Result<Vec<u8>, String> {
+pub(crate) fn serialize_text(text: &str, format: &RemoteDocumentFormat) -> Result<Vec<u8>, String> {
     let normalized = normalize_line_endings(text);
     let normalized = match format.line_ending.as_str() {
         "lf" => normalized,
@@ -354,54 +248,11 @@ fn serialize_text(text: &str, format: &RemoteDocumentFormat) -> Result<Vec<u8>, 
     Ok(output)
 }
 
-fn remote_parts(path: &str) -> (&str, &str) {
-    match path.rsplit_once('/') {
-        Some((dir, name)) => (dir, name),
-        None => ("", path),
-    }
-}
-
-fn remote_join(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else if dir == "/" {
-        format!("/{}", name)
-    } else {
-        format!("{}/{}", dir.trim_end_matches('/'), name)
-    }
-}
-
-fn remote_sibling_artifact(path: &str, tag: &str) -> String {
-    let (dir, name) = remote_parts(path);
-    remote_join(
-        dir,
-        &format!(
-            ".{}.tauterm-document-{}-{}",
-            name,
-            tag,
-            uuid::Uuid::new_v4()
-        ),
-    )
-}
-
-async fn remove_remote_best_effort(
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    path: &str,
-) {
-    let cache = sftp_cache.lock().await;
-    if let Some(sftp) = cache.as_ref() {
-        if let Err(error) = sftp.remove_file(path).await {
-            log::warn!("清理远程文档临时文件 '{}' 失败: {}", path, error);
-        }
-    }
-}
-
 async fn current_regular_metadata(
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
     remote_path: &str,
 ) -> Result<Option<u32>, String> {
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
     let stat = sftp
         .symlink_metadata(remote_path)
         .await
@@ -413,12 +264,11 @@ async fn current_regular_metadata(
 }
 
 async fn restore_document_backup(
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
     backup_path: &str,
     final_path: &str,
 ) -> Result<(), String> {
-    let cache = sftp_cache.lock().await;
-    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+    let sftp = cap.client().await?;
     sftp.rename(backup_path, final_path).await.map_err(|error| {
         format!(
             "回滚远程原文件失败，原文件仍保留在 '{}': {}",
@@ -428,16 +278,14 @@ async fn restore_document_backup(
 }
 
 async fn commit_document_temp(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    cap: &SftpCapability,
     temp_path: &str,
     final_path: &str,
     expected_version: Option<&RemoteDocumentVersion>,
 ) -> Result<CommitDocumentOutcome, String> {
     let backup_path = remote_sibling_artifact(final_path, "backup");
     {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         let stat = sftp
             .symlink_metadata(final_path)
             .await
@@ -451,11 +299,11 @@ async fn commit_document_temp(
     }
 
     let backup_snapshot = if expected_version.is_some() {
-        match read_snapshot(session, sftp_cache, &backup_path, DOCUMENT_EDIT_LIMIT + 1).await {
+        match read_snapshot(cap, &backup_path, DOCUMENT_EDIT_LIMIT + 1).await {
             Ok(snapshot) => Some(snapshot),
             Err(error) => {
                 let reason = format!("提交前校验远程原文件失败: {}", error);
-                return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                return match restore_document_backup(cap, &backup_path, final_path).await {
                     Ok(()) => Err(reason),
                     Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
                 };
@@ -469,7 +317,7 @@ async fn commit_document_temp(
         let complete = snapshot.data.len() as u64 == snapshot.size;
         let current_version = snapshot.version(complete);
         if &current_version != expected {
-            return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+            return match restore_document_backup(cap, &backup_path, final_path).await {
                 Ok(()) => Ok(CommitDocumentOutcome::Conflict(current_version)),
                 Err(rollback_error) => {
                     Err(format!("提交前检测到远程文件并发修改；{}", rollback_error))
@@ -480,11 +328,11 @@ async fn commit_document_temp(
 
     let permissions = match backup_snapshot.as_ref() {
         Some(snapshot) => snapshot.permissions,
-        None => match current_regular_metadata(sftp_cache, &backup_path).await {
+        None => match current_regular_metadata(cap, &backup_path).await {
             Ok(permissions) => permissions,
             Err(error) => {
                 let reason = format!("读取远程原文件权限失败: {}", error);
-                return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+                return match restore_document_backup(cap, &backup_path, final_path).await {
                     Ok(()) => Err(reason),
                     Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
                 };
@@ -495,12 +343,10 @@ async fn commit_document_temp(
     if let Some(mode) = permissions {
         let mut attrs = FileAttributes::empty();
         attrs.permissions = Some(0o100000 | (mode & 0o7777));
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         if let Err(error) = sftp.set_metadata(temp_path, attrs).await {
-            drop(cache);
             let reason = format!("同步远程文档权限失败: {}", error);
-            return match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+            return match restore_document_backup(cap, &backup_path, final_path).await {
                 Ok(()) => Err(reason),
                 Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
             };
@@ -508,24 +354,18 @@ async fn commit_document_temp(
     }
 
     let commit_result = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         sftp.rename(temp_path, final_path).await
     };
 
     match commit_result {
         Ok(()) => {
-            let cache = sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                if let Err(error) = sftp.remove_file(&backup_path).await {
-                    log::warn!("删除远程文档提交备份 '{}' 失败: {}", backup_path, error);
-                }
-            }
+            cap.remove_best_effort(&backup_path).await;
             Ok(CommitDocumentOutcome::Committed)
         }
         Err(commit_error) => {
             let reason = format!("提交远程文档 '{}' 失败: {}", final_path, commit_error);
-            match restore_document_backup(sftp_cache, &backup_path, final_path).await {
+            match restore_document_backup(cap, &backup_path, final_path).await {
                 Ok(()) => Err(reason),
                 Err(rollback_error) => Err(format!("{}；{}", reason, rollback_error)),
             }
@@ -533,20 +373,21 @@ async fn commit_document_temp(
     }
 }
 
-#[tauri::command]
-pub async fn sftp_read_document_cmd(
-    state: State<'_, AppState>,
-    session_id: String,
-    remote_path: String,
+/// 读取远程文档。预览最多 1 MiB，完整打开最多 `DOCUMENT_EDIT_LIMIT`。
+///
+/// 截断快照永远只读；只有完整快照才允许保存，因此这里不提供 `truncated && editable`
+/// 的组合。
+pub(crate) async fn read_document(
+    cap: &SftpCapability,
+    remote_path: &str,
     full: bool,
 ) -> Result<RemoteDocumentReadResult, String> {
-    let runtime = get_ssh_runtime(&state, &session_id)?;
     let max_bytes = if full {
         DOCUMENT_EDIT_LIMIT + 1
     } else {
         DOCUMENT_PREVIEW_LIMIT
     };
-    let snapshot = read_snapshot(&runtime.session, &runtime.sftp, &remote_path, max_bytes).await?;
+    let snapshot = read_snapshot(cap, remote_path, max_bytes).await?;
 
     if full && snapshot.size > DOCUMENT_EDIT_LIMIT {
         return Err(format!(
@@ -556,7 +397,7 @@ pub async fn sftp_read_document_cmd(
     }
 
     let complete = snapshot.data.len() as u64 == snapshot.size;
-    let result = RemoteDocumentReadResult {
+    Ok(RemoteDocumentReadResult {
         total_size: snapshot.size,
         modified: snapshot.modified,
         permissions: permissions_to_string(snapshot.permissions),
@@ -564,37 +405,23 @@ pub async fn sftp_read_document_cmd(
         editable: complete && snapshot.size <= DOCUMENT_EDIT_LIMIT,
         version: snapshot.version(complete),
         data: snapshot.data,
-    };
-    Ok(result)
-}
-
-#[tauri::command]
-pub async fn remote_document_encode_preview_cmd(
-    request: RemoteDocumentEncodeRequest,
-) -> Result<RemoteDocumentEncodeResult, String> {
-    let bytes = serialize_text(&request.text, &request.format)?;
-    let total_size = bytes.len() as u64;
-    let visible = bytes.len().min(DOCUMENT_HEX_LIMIT);
-    Ok(RemoteDocumentEncodeResult {
-        data: bytes[..visible].to_vec(),
-        total_size,
-        truncated: visible < bytes.len(),
     })
 }
 
-#[tauri::command]
-pub async fn sftp_save_document_cmd(
-    state: State<'_, AppState>,
+/// 保存远程文档：严格序列化 → 同目录排他临时文件 → flush → commit/rollback。
+///
+/// 非强制保存会在写临时文件前和正式 commit 前各校验一次远端版本；并发修改返回
+/// `conflict`，绝不静默覆盖。
+pub(crate) async fn save_document(
+    cap: &SftpCapability,
     request: RemoteDocumentSaveRequest,
 ) -> Result<RemoteDocumentSaveResult, String> {
     if request.expected_version.content_crc32.is_none() && !request.force {
         return Err("保存前必须先完整加载文档，缺少内容版本".to_string());
     }
 
-    let runtime = get_ssh_runtime(&state, &request.session_id)?;
     let bytes = serialize_text(&request.text, &request.format)?;
-    let before =
-        read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
+    let before = read_complete_snapshot(cap, &request.remote_path).await?;
     let before_version = before.version(true);
 
     if !request.force && before_version != request.expected_version {
@@ -605,10 +432,9 @@ pub async fn sftp_save_document_cmd(
         });
     }
 
-    let temp_path = remote_sibling_artifact(&request.remote_path, "part");
+    let temp_path = remote_sibling_artifact(&request.remote_path, "document-part");
     let mut temp_file = {
-        let cache = runtime.sftp.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        let sftp = cap.client().await?;
         sftp.open_with_flags(
             &temp_path,
             OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
@@ -619,29 +445,21 @@ pub async fn sftp_save_document_cmd(
 
     if let Err(error) = temp_file.write_all(&bytes).await {
         drop(temp_file);
-        remove_remote_best_effort(&runtime.sftp, &temp_path).await;
+        cap.remove_best_effort(&temp_path).await;
         return Err(format!("写入远程文档临时文件失败: {}", error));
     }
     if let Err(error) = temp_file.flush().await {
         drop(temp_file);
-        remove_remote_best_effort(&runtime.sftp, &temp_path).await;
+        cap.remove_best_effort(&temp_path).await;
         return Err(format!("刷新远程文档临时文件失败: {}", error));
     }
     drop(temp_file);
 
     let expected_version = (!request.force).then_some(&request.expected_version);
-    match commit_document_temp(
-        &runtime.session,
-        &runtime.sftp,
-        &temp_path,
-        &request.remote_path,
-        expected_version,
-    )
-    .await
-    {
+    match commit_document_temp(cap, &temp_path, &request.remote_path, expected_version).await {
         Ok(CommitDocumentOutcome::Committed) => {}
         Ok(CommitDocumentOutcome::Conflict(current_version)) => {
-            remove_remote_best_effort(&runtime.sftp, &temp_path).await;
+            cap.remove_best_effort(&temp_path).await;
             return Ok(RemoteDocumentSaveResult {
                 status: "conflict",
                 version: None,
@@ -649,13 +467,12 @@ pub async fn sftp_save_document_cmd(
             });
         }
         Err(error) => {
-            remove_remote_best_effort(&runtime.sftp, &temp_path).await;
+            cap.remove_best_effort(&temp_path).await;
             return Err(error);
         }
     }
 
-    let saved =
-        read_complete_snapshot(&runtime.session, &runtime.sftp, &request.remote_path).await?;
+    let saved = read_complete_snapshot(cap, &request.remote_path).await?;
     let saved_version = saved.version(true);
     log::info!(
         "SFTP 远程文档保存完成: {} ({} bytes)",

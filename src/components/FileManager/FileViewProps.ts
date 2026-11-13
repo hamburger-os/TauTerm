@@ -26,4 +26,10 @@ export interface FileViewProps {
   onParentClick: () => void;
   /** 进度条可见时，容器底部预留空间避免遮挡列表/网格 */
   showProgress?: boolean;
+  /** SFTP 不可用（available=false 或 unsupported）：用内联状态替代空态。 */
+  unavailable?: boolean;
+  /** 不可用原因（后端 reason 或 typed 错误 message）。 */
+  unavailableReason?: string | null;
+  /** 不可用态的重试入口。 */
+  onRetry?: () => void;
 }

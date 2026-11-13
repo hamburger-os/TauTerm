@@ -15,9 +15,6 @@ export default function SshStatusItems({ activeTab }: StatusBarContext) {
     : "";
   const authMethod = activeTab.params.auth_method === "key" ? "key" : "password";
   const fileServiceEnabled = activeTab.params.file_service_enabled === true;
-  const fileServiceProtocol = typeof activeTab.params.file_service_protocol === "string"
-    ? activeTab.params.file_service_protocol.toUpperCase()
-    : "SFTP";
 
   return (
     <StatusBarGroup>
@@ -27,7 +24,7 @@ export default function SshStatusItems({ activeTab }: StatusBarContext) {
         {authMethod === "key" ? t("statusBar.authKey") : t("statusBar.authPassword")}
       </StatusBarBadge>
       {fileServiceEnabled ? (
-        <StatusBarBadge tone="success">{fileServiceProtocol}</StatusBarBadge>
+        <StatusBarBadge tone="success">SFTP</StatusBarBadge>
       ) : null}
     </StatusBarGroup>
   );

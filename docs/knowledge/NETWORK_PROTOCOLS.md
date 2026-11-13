@@ -30,13 +30,25 @@ TauTerm 的多终端 child channel 语义应以 SSH Connection Protocol 的 chan
 
 ## SFTP
 
-SFTP 没有最终发布为 IETF RFC。TauTerm 当前依赖 `russh-sftp`，其实现目标是 SFTP v3。
+SFTP 没有最终发布为 IETF RFC。TauTerm 当前依赖 `russh-sftp`，其实现目标是 SFTP v3；文档中不要把“SFTP v3”写成“RFC 标准”，需要实现扩展时应优先确认 `russh-sftp` 实际支持范围。
 
+### 权威来源
+
+- SSH 子系统请求（subsystem request）— RFC 4254 §6.5: https://www.rfc-editor.org/rfc/rfc4254#section-6.5
+- SFTP v3 草案（含 `SSH_FXP_REALPATH`、`SSH_FXP_EXTENDED` 等）: https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
 - `russh-sftp` 官方 crate 文档: https://docs.rs/russh-sftp/
-- Historical SFTP v3 draft: https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
-- OpenSSH protocol extensions: https://github.com/openssh/openssh-portable/blob/master/PROTOCOL
+- OpenSSH `sftp` 客户端（起始目录通过 `realpath(".")` 发现）: https://github.com/openssh/openssh-portable/blob/master/sftp.c
+- OpenSSH `PROTOCOL` 扩展清单: https://github.com/openssh/openssh-portable/blob/master/PROTOCOL
+  - `posix-rename@openssh.com`：原子 rename/覆盖语义
+  - `fsync@openssh.com`：提交前 flush/持久化
+  - `limits@openssh.com`：服务端限制查询
+  - `hardlink@openssh.com`：硬链接
+  - `expand-path@openssh.com`：`~` 展开
+- OpenSSH 9.0 发布说明（`scp` 默认改用 SFTP 协议）: https://www.openssh.com/txt/release-9.0
 
-因此文档中不要把“SFTP v3”写成“RFC 标准”。需要实现扩展时，应优先确认 `russh-sftp` 实际支持范围。文件管理实现必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为便利 `create()` 会 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。
+### TauTerm 适用范围
+
+文件管理实现必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为便利 `create()` 会 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。SFTP v3 草案未覆盖、需要扩展能力时（例如原子覆盖、fsync、`~` 展开），必须按 OpenSSH 扩展名称核对上游语义，并确认 `russh-sftp` 实际支持范围。
 
 内部设计：[SSH.md](../modules/SSH.md)、[TRANSFER.md](../modules/TRANSFER.md)。
 

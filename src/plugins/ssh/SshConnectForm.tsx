@@ -13,12 +13,12 @@ export const DEFAULT_SSH_PARAMS: Record<string, unknown> = {
   send_bar_enabled: false,
   transfer_enabled: false,
   file_service_enabled: true,
-  file_service_protocol: "sftp",
+
   journald_enabled: false,
 };
 
 export function normalizeSshParams(params: Record<string, unknown>): Record<string, unknown> {
-  return { ...DEFAULT_SSH_PARAMS, ...params, file_service_protocol: "sftp" };
+  return { ...DEFAULT_SSH_PARAMS, ...params };
 }
 
 export function isSshConnectionConfigValid(params: Record<string, unknown>): boolean {

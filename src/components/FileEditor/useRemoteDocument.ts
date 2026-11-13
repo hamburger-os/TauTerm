@@ -14,6 +14,7 @@ import {
   decodeInitialRemoteDocument,
   decodeRemoteDocumentAs,
 } from "./documentCodec";
+import { sftpErrorMessage } from "../../services/sftpErrors";
 
 export type RemoteDocumentMode = "text" | "hex";
 
@@ -122,7 +123,7 @@ export function useRemoteDocument(
       return true;
     } catch (loadError) {
       if (generation !== generationRef.current) return false;
-      setError(String(loadError));
+      setError(sftpErrorMessage(loadError));
       return false;
     } finally {
       if (generation === generationRef.current) setLoading(false);
@@ -165,7 +166,7 @@ export function useRemoteDocument(
       setError(null);
       return true;
     } catch (decodeError) {
-      setError(String(decodeError));
+      setError(sftpErrorMessage(decodeError));
       return false;
     }
   }, [applyReadResult, dirty, load, snapshot, sourceBytesStale]);
@@ -225,7 +226,7 @@ export function useRemoteDocument(
       onSaved?.();
       return true;
     } catch (saveError) {
-      setError(String(saveError));
+      setError(sftpErrorMessage(saveError));
       return false;
     } finally {
       setSaving(false);
@@ -267,7 +268,7 @@ export function useRemoteDocument(
         setHexTruncated(result.truncated);
       })
       .catch((hexError) => {
-        if (generation === hexGenerationRef.current) setError(String(hexError));
+        if (generation === hexGenerationRef.current) setError(sftpErrorMessage(hexError));
       })
       .finally(() => {
         if (generation === hexGenerationRef.current) setHexLoading(false);

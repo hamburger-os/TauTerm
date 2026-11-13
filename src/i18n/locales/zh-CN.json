@@ -1098,6 +1098,8 @@
   "fileManager": {
     "title": "文件管理器",
     "sessionDisconnected": "会话未连接",
+    "sftpUnavailable": "此会话无法使用 SFTP",
+    "startDirectoryUnavailable": "远端起始目录尚未就绪",
     "upload": "上传",
     "download": "下载",
     "delete": "删除",

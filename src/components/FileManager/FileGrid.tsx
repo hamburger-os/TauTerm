@@ -103,6 +103,9 @@ export default function FileGrid({
   parentSelected,
   onParentClick,
   showProgress = false,
+  unavailable = false,
+  unavailableReason = null,
+  onRetry,
 }: FileGridProps) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -286,14 +289,27 @@ export default function FileGrid({
       {error && (
         <div className={styles.errorBanner} role="alert">
           <span>{error}</span>
-          <button
-            type="button"
-            className={`${styles.errorClose} liquid-glass-ghost-button`}
-            onClick={onClearError}
-            aria-label={t("common.close")}
-          >
-            <Icon name="close" size="xs" />
-          </button>
+          <div className={styles.errorActions}>
+            {onRetry && (
+              <button
+                type="button"
+                className={`${styles.errorClose} liquid-glass-ghost-button`}
+                onClick={onRetry}
+                aria-label={t("common.retry")}
+                title={t("common.retry")}
+              >
+                <Icon name="refresh" size="xs" />
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${styles.errorClose} liquid-glass-ghost-button`}
+              onClick={onClearError}
+              aria-label={t("common.close")}
+            >
+              <Icon name="close" size="xs" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -309,7 +325,24 @@ export default function FileGrid({
         }}
       >
         {loading && <div className={styles.status}>{t("fileManager.loading")}</div>}
-        {!loading && entries.length === 0 && !error && !parentVisible && (
+        {!loading && unavailable && (
+          <div className={styles.status} role="alert">
+            <div>{t("fileManager.sftpUnavailable")}</div>
+            {unavailableReason && (
+              <div className={styles.statusDetail}>{unavailableReason}</div>
+            )}
+            {onRetry && (
+              <button
+                type="button"
+                className={`${styles.statusAction} liquid-glass-button`}
+                onClick={onRetry}
+              >
+                {t("common.retry")}
+              </button>
+            )}
+          </div>
+        )}
+        {!loading && !unavailable && entries.length === 0 && !error && !parentVisible && (
           <div className={styles.status}>{t("fileManager.empty")}</div>
         )}
 

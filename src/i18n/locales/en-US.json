@@ -1098,6 +1098,8 @@
   "fileManager": {
     "title": "File Manager",
     "sessionDisconnected": "Session is not connected",
+    "sftpUnavailable": "SFTP is not available for this session",
+    "startDirectoryUnavailable": "Remote start directory is not available yet",
     "upload": "Upload",
     "download": "Download",
     "delete": "Delete",
