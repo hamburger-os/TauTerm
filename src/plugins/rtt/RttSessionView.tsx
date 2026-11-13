@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import { usePluginRuntime } from "../../core/usePluginRuntime";
+import { formatHexLines } from "../../core/hex-dump";
+import { formatBytes } from "../../utils/format";
 import GlassButton from "../../components/common/GlassButton";
 import Icon from "../../components/common/Icon";
-import RttTerminalView from "./RttTerminalView";
+import TerminalSurface from "../../components/Terminal/TerminalSurface";
 import SystemViewTraceView from "./SystemViewTraceView";
 import {
   base64ToBytes,
-  formatBytes,
   hasRttChannelIssues,
   isUsableRttDirection,
   resolveRttViewMode,
@@ -33,26 +34,30 @@ import {
   setRttViewMode,
   type RttRuntimeSnapshot,
 } from "./runtime-store";
+import { createRttTerminalSource } from "./rttTerminalSource";
 import styles from "./RttSessionView.module.css";
 
 const HEX_VIEW_BYTES = 64 * 1024;
 const LOG_VIEW_MAX_CHUNKS = 2_000;
 
-function formatHex(chunks: readonly RttChunk[]): string {
+/**
+ * 最近 HEX_VIEW_BYTES 字节的十六进制行。窗口按 chunk 从新到旧取，再按
+ * channel offset 升序输出，避免把不同 Channel 的偏移混在一起。
+ */
+function visibleHexLines(chunks: readonly RttChunk[]): string[] {
   const rows: string[] = [];
   let remaining = HEX_VIEW_BYTES;
-  const visible: Array<{ chunk: RttChunk; bytes: Uint8Array; offset: number }> = [];
+  const visible: Array<{ bytes: Uint8Array; offset: number }> = [];
 
   for (let index = chunks.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const chunk = chunks[index];
     const bytes = base64ToBytes(chunk.data_b64);
     if (bytes.length <= remaining) {
-      visible.unshift({ chunk, bytes, offset: chunk.channel_offset });
+      visible.unshift({ bytes, offset: chunk.channel_offset });
       remaining -= bytes.length;
     } else {
       const keep = bytes.subarray(bytes.length - remaining);
       visible.unshift({
-        chunk,
         bytes: keep,
         offset: chunk.channel_offset + bytes.length - keep.length,
       });
@@ -61,14 +66,9 @@ function formatHex(chunks: readonly RttChunk[]): string {
   }
 
   for (const item of visible) {
-    for (let offset = 0; offset < item.bytes.length; offset += 16) {
-      const row = item.bytes.subarray(offset, offset + 16);
-      const hex = Array.from(row, value => value.toString(16).padStart(2, "0")).join(" ").padEnd(47, " ");
-      const ascii = Array.from(row, value => value >= 32 && value < 127 ? String.fromCharCode(value) : ".").join("");
-      rows.push(`${(item.offset + offset).toString(16).padStart(8, "0")}  ${hex}  ${ascii}`);
-    }
+    rows.push(...formatHexLines(item.bytes, item.offset));
   }
-  return rows.join("\n");
+  return rows;
 }
 
 function formatChunkTime(timestampMs: number): string {
@@ -91,7 +91,7 @@ function decodeLogChunks(chunks: readonly RttChunk[]): Array<{ chunk: RttChunk; 
 
 export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
-  const { state } = useSession();
+  const { state, disconnect } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const connected = tab?.state === "connected";
   const runtimeReadable = connected || tab?.disconnectInfo?.retain_terminal === true;
@@ -111,6 +111,29 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const systemViewState = selectedChannel == null ? undefined : runtime.systemview[selectedChannel];
   const configuredMode = selectedChannel == null ? undefined : runtime.viewModes[selectedChannel];
   const mode = resolveRttViewMode(snapshot, selectedChannel, configuredMode);
+  const historyLimits = snapshot?.history_limits;
+
+  // One data source per RTT session; the surface remounts on generation/channel
+  // change and replays the current Channel's bounded history through `attach`.
+  const chunksRef = useRef(chunks);
+  chunksRef.current = chunks;
+  const channelIndexRef = useRef<number | null>(selectedChannel);
+  channelIndexRef.current = selectedChannel;
+  const terminalSource = useMemo(
+    () => createRttTerminalSource({
+      getChunks: () => chunksRef.current,
+      send: (data) => {
+        const channelIndex = channelIndexRef.current;
+        if (channelIndex == null) return;
+        void sendRttTerminalData(sessionId, channelIndex, data);
+      },
+    }),
+    [sessionId],
+  );
+
+  useEffect(() => {
+    terminalSource.append(chunks);
+  }, [chunks, terminalSource]);
 
   useEffect(() => {
     if (!runtimeReadable) return;
@@ -127,7 +150,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
     void ensureSystemViewHistory(sessionId, selectedChannel);
   }, [observer, runtimeReadable, selectedChannel, sessionId, snapshot?.generation]);
 
-  const hex = useMemo(() => mode === "hex" || mode === "raw" ? formatHex(chunks) : "", [chunks, mode]);
+  const hexLines = useMemo(() => mode === "hex" || mode === "raw" ? visibleHexLines(chunks) : [], [chunks, mode]);
   const logRows = useMemo(
     () => mode === "log" ? decodeLogChunks(chunks.slice(-LOG_VIEW_MAX_CHUNKS)) : [],
     [chunks, mode],
@@ -138,6 +161,22 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
     await invoke<RttChannelInfo[]>("rtt_refresh_channels", { sessionId });
     await refreshRttRuntime(sessionId);
   }, [connected, sessionId, snapshot?.backend?.capabilities.enumerate_channels]);
+
+  const hostLimitsHint = historyLimits
+    ? t("rtt.historyLimitsHint", {
+        perChannel: formatBytes(historyLimits.per_channel_bytes),
+        perSession: formatBytes(historyLimits.per_session_bytes),
+      })
+    : undefined;
+  const historyTitle = historyLimits
+    ? `${t("rtt.historyRollingHint", {
+        chunks: snapshot?.evicted_history_chunks ?? 0,
+        bytes: formatBytes(snapshot?.evicted_history_bytes ?? 0),
+      })} · ${t("rtt.historyLimitsHint", {
+        perChannel: formatBytes(historyLimits.per_channel_bytes),
+        perSession: formatBytes(historyLimits.per_session_bytes),
+      })}`
+    : undefined;
 
   return (
     <div className={styles.root} data-testid="tauterm-rtt-session-view">
@@ -155,12 +194,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
           <span>RX {formatBytes(snapshot?.rx_bytes ?? 0)}</span>
           <span>TX {formatBytes(snapshot?.tx_bytes ?? 0)}</span>
           {(snapshot?.evicted_history_chunks ?? 0) > 0 && (
-            <span
-              title={t("rtt.historyRollingHint", {
-                chunks: snapshot?.evicted_history_chunks ?? 0,
-                bytes: formatBytes(snapshot?.evicted_history_bytes ?? 0),
-              })}
-            >
+            <span title={historyTitle}>
               {t("rtt.historyRolling")}
             </span>
           )}
@@ -203,7 +237,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
 
       <div className={styles.body}>
         <aside className={styles.channels}>
-          <div className={styles.sectionTitle}>{t("rtt.channels")}</div>
+          <div className={styles.sectionTitle} title={hostLimitsHint}>{t("rtt.channels")}</div>
           {channels.length === 0 && <div className={styles.empty}>{t("rtt.noChannels")}</div>}
           {channels.map(item => (
             <button
@@ -305,11 +339,13 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     onClear={() => void clearSystemView(sessionId, channel.index)}
                   />
                 ) : mode === "terminal" ? (
-                  <RttTerminalView
+                  <TerminalSurface
                     key={`${snapshot?.generation ?? 0}:${channel.index}`}
-                    chunks={chunks}
-                    connected={connected && usableDown}
-                    onData={data => void sendRttTerminalData(sessionId, channel.index, data)}
+                    sessionId={sessionId}
+                    source={terminalSource}
+                    inputEnabled={connected && usableDown}
+                    convertEol
+                    onDisconnectSession={connected ? () => void disconnect(sessionId) : undefined}
                   />
                 ) : mode === "log" ? (
                   <div className={styles.logView}>
@@ -325,7 +361,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     ))}
                   </div>
                 ) : (
-                  <pre className={styles.hexView}>{hex}</pre>
+                  <pre className={styles.hexView}>{hexLines.join("\n")}</pre>
                 )}
               </div>
             </>

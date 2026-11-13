@@ -121,9 +121,6 @@
 
 .modeTabs { flex: 0 0 auto; }
 .viewerContent { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
-.terminalHost { position: absolute; inset: 0; padding: 6px 8px; }
-.terminalHost :global(.xterm) { height: 100%; }
-.terminalHost :global(.xterm-viewport) { background: transparent !important; }
 
 .hexView {
   position: absolute;

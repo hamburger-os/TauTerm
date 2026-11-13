@@ -2,7 +2,8 @@
  * iperf 结构化汇总表（吞吐/抖动/丢包）
  */
 import { useTranslation } from "react-i18next";
-import { formatBytes, formatMbps } from "./iperf-utils";
+import { formatBytes } from "../../utils/format";
+import { formatMbps } from "./iperf-utils";
 import type { IperfRecord } from "./iperf-events";
 import styles from "./IperfSessionView.module.css";
 

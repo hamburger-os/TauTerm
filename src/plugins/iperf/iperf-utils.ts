@@ -34,14 +34,6 @@ export function formatMbps(
   return bps.toFixed(0) + " " + units.bps;
 }
 
-/** 字节 → 人类可读 */
-export function formatBytes(n: number): string {
-  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(2) + " GiB";
-  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(2) + " MiB";
-  if (n >= 1 << 10) return (n / (1 << 10)).toFixed(1) + " KiB";
-  return String(n) + " B";
-}
-
 /**
  * "-w" 窗口大小解析（**1024 进制**，对齐 iperf2 `byte_atoi`：
  * K/M/G 后缀为 1024 幂，无后缀 = 字节）。与 `parseBits` 的 1000 进制区分。

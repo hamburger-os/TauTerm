@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import GlassButton from "../../components/common/GlassButton";
-import { formatBytes, type SystemViewEvent, type SystemViewSnapshot } from "./model";
+import { formatBytes } from "../../utils/format";
+import type { SystemViewEvent, SystemViewSnapshot } from "./model";
 import type { RttSystemViewChannelState } from "./runtime-store";
 import styles from "./SystemViewTraceView.module.css";
 

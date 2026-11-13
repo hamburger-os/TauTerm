@@ -81,6 +81,13 @@ export interface RttErrorSnapshot {
   message: string;
 }
 
+export interface RttHistoryLimits {
+  /** Rust host history budget per channel (acquisition/replay authority). */
+  per_channel_bytes: number;
+  /** Rust host history budget per session. Not the WebView presentation window. */
+  per_session_bytes: number;
+}
+
 export interface RttSnapshot {
   generation: number;
   phase: "idle" | "opening_backend" | "running" | "faulted" | "stopping";
@@ -90,6 +97,7 @@ export interface RttSnapshot {
   send_channel: number | null;
   observers: RttObserverInfo[];
   channel_claims: RttChannelClaim[];
+  history_limits: RttHistoryLimits;
   rx_bytes: number;
   tx_bytes: number;
   evicted_history_bytes: number;
@@ -318,10 +326,4 @@ export function base64ToBytes(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
-}
-
-export function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
