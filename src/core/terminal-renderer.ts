@@ -8,8 +8,8 @@
  * therefore records the outcome instead of discarding it: a downgraded surface
  * has to be explainable, not look like a terminal-emulation defect.
  *
- * Renderer *selection* stays in `Terminal.tsx`; this module owns only the
- * vocabulary and the report helpers.
+ * Renderer *selection* stays in `TerminalSurface.tsx` (the single xterm owner);
+ * this module owns only the vocabulary and the report helpers.
  */
 
 export type TerminalRendererKind = "webgl" | "dom";

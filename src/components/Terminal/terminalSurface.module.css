@@ -1,0 +1,75 @@
+/*
+ * TerminalSurface — the single owner of xterm's private DOM skin.
+ *
+ * xterm.css paints `.xterm-viewport` and `.composition-view` opaque black, and the
+ * xterm 6 Viewport writes the theme background inline onto `.xterm-scrollable-element`.
+ * A surface that only neutralizes the legacy `.xterm-viewport` (as RTT's own copy did)
+ * renders an opaque black block under xterm 6. Every rule that keeps the glass surface
+ * transparent lives here so a second surface cannot re-derive a partially transparent
+ * terminal.
+ */
+
+.wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* 终端宿主背景透明以透出流光效果。
+ * overflow: clip（而非 hidden）阻止浏览器为了把输入法合成层滚动进可视区而
+ * 直接改写宿主的 scrollLeft，避免中文输入把整个终端内容水平顶偏。 */
+.host {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: clip;
+  padding: 4px;
+}
+
+/* 强制覆盖 xterm.css 默认黑色背景，实现玻璃透明效果 */
+.host :global(.xterm) {
+  height: 100%;
+  padding: 4px;
+  background-color: transparent !important;
+}
+
+.host :global(.xterm-screen) {
+  background-color: transparent !important;
+}
+
+/* xterm 6 的滚动视口位于 `.xterm-scrollable-element`，`.xterm-viewport` 只剩一个
+ * 空元素；但 xterm.css 仍给它 `overflow-y: scroll`，Chromium 对空的常显滚动容器
+ * 也会画出原生滚动条，于是在右侧 gutter 里叠出一条与终端无关的幽灵滚动条。
+ * 这里保持透明并禁止滚动，滚动条只由 xterm 自己的 scrollbar 和全局主题样式负责。 */
+.host :global(.xterm-viewport) {
+  background-color: transparent !important;
+  overflow: hidden !important;
+  scrollbar-width: none;
+}
+
+/* xterm 6 将滚动viewport拆成内部 scrollable 容器 + 自绘滚动条，并给滚动容器和
+ * 输入法合成层写入主题背景色。玻璃终端需要这两个 renderer 私有 DOM 保持透明：
+ * 它们只影响呈现，不允许改变宿主布局或参与主题材质。
+ * 这是 xterm 5 → 6 迁移时 RTT 终端变成黑块的直接原因：内联背景换到了这个节点。 */
+.host :global(.xterm-scrollable-element) {
+  background-color: transparent !important;
+}
+
+.host :global(.composition-view) {
+  background-color: transparent !important;
+  color: var(--text-primary) !important;
+}
+
+/* xterm 6 自绘滚动条默认 14px 宽（VS Code ScrollableElement 的默认值），在玻璃
+ * 终端里占位偏重。xterm 没有独立的滚动条宽度选项：scrollbar 与 slider 的尺寸都是
+ * 内联样式，但两者都右对齐到 right:0、slider left:0，所以只覆盖宽度不会破坏
+ * 滚动几何或拖拽命中。滑块颜色由终端主题的 scrollbarSlider* 变量控制。 */
+.host :global(.xterm .xterm-scrollable-element > .scrollbar.vertical) {
+  width: 4px !important;
+}
+
+.host :global(.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider) {
+  width: 4px !important;
+  left: 0 !important;
+  border-radius: var(--radius-xs);
+}
