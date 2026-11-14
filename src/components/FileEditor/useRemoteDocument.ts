@@ -191,12 +191,15 @@ export function useRemoteDocument(
     setError(null);
     setConflict(null);
     try {
+      // 保存固定读取时解析出的物理目标：符号链接在编辑期间被重新指向时后端会拒绝，
+      // 不会把本次内容写到另一个文件。
       const result = await saveRemoteDocument(
         sessionId,
         remotePath,
         text,
         format,
         snapshot.version,
+        snapshot.resolvedPath,
         force,
       );
       if (result.status === "conflict") {

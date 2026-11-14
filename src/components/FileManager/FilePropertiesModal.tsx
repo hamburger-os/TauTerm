@@ -10,29 +10,36 @@ import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
 import GlassButton from "../common/GlassButton";
 import { invoke } from "@tauri-apps/api/core";
-import { formatTime } from "../../utils/format";
-import type { SftpEntry } from "./types";
-import { formatBytes } from "../../utils/format";
+import { formatBytes, formatTime } from "../../utils/format";
+import type { SftpEntry, SftpEntryType } from "./types";
 import { copyToClipboard } from "../../utils/clipboard";
 import { sftpErrorMessage } from "../../services/sftpErrors";
 import { getEntryIcon } from "./entryIcon";
+import { isDirectory, isRegularFile, isSymlink } from "./entryKind";
+import type { ResolvedEntry } from "./entryActivation";
+import { resolutionStatusKey } from "./entryActivation";
 import styles from "./FilePropertiesModal.module.css";
 
-export interface FileStatInfo {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  entry_type?: SftpEntry["entry_type"];
-  size: number;
-  accessed: number | null;
-  modified: number | null;
-  permissions: string | null;
+/** 类型标签的 i18n key；仅用于属性展示，不参与任何类型判定。 */
+function entryTypeLabelKey(entryType: SftpEntryType): string {
+  switch (entryType) {
+    case "directory":
+      return "fileManager.typeDir";
+    case "file":
+      return "fileManager.typeFile";
+    case "symlink":
+      return "fileManager.typeSymlink";
+    default:
+      return "fileManager.typeOther";
+  }
 }
 
 interface FilePropertiesModalProps {
   visible: boolean;
   entry: SftpEntry | null;
-  statInfo: FileStatInfo | null;
+  statInfo: SftpEntry | null;
+  /** 符号链接的解析结果；非链接或尚未解析时为 null。 */
+  resolution: ResolvedEntry | null;
   loading: boolean;
   onClose: () => void;
   sessionId: string;
@@ -45,6 +52,7 @@ export default function FilePropertiesModal({
   visible,
   entry,
   statInfo,
+  resolution,
   loading,
   onClose,
   sessionId,
@@ -151,6 +159,15 @@ export default function FilePropertiesModal({
     }
   }, [statInfo]);
 
+  const copyLinkValue = useCallback(async (value: string | null | undefined) => {
+    if (!value) return;
+    try {
+      await copyToClipboard(value);
+    } catch {
+      // Clipboard API may not be available
+    }
+  }, []);
+
   // ── Modal keyboard boundary ──
   useEffect(() => {
     if (!visible) return;
@@ -200,22 +217,28 @@ export default function FilePropertiesModal({
 
   if (!visible || !entry) return null;
 
-  const isDir = statInfo?.is_dir ?? entry.is_dir;
-  const entryType = statInfo?.entry_type ?? entry.entry_type ?? (isDir ? "directory" : "file");
-  const typeLabel =
-    entryType === "directory"
-      ? t("fileManager.typeDir")
-      : entryType === "symlink"
-        ? t("fileManager.typeSymlink")
-        : entryType === "file"
+  // 类型唯一真源仍是 entry_type：stat 与列表项一致，stat 结果优先。
+  const entryType = statInfo?.entry_type ?? entry.entry_type;
+  const kindSource = { entry_type: entryType };
+  const isDir = isDirectory(kindSource);
+  const isLink = isSymlink(kindSource);
+  const isFile = isRegularFile(kindSource);
+  const typeLabel = t(entryTypeLabelKey(entryType));
+  const entryIcon = getEntryIcon({ ...entry, entry_type: entryType });
+  // SFTP v3 的 chmod 无法可靠地 no-follow，仅对普通文件/目录开放。
+  const canChmod = isFile || isDir;
+  const sizeUnavailable = isDir || isLink;
+  const linkStatusKey = resolution ? resolutionStatusKey(resolution) : null;
+  const linkTargetType = resolution?.target_type ?? null;
+  const linkStatusText = resolution === null
+    ? "—"
+    : linkStatusKey !== null
+      ? t(linkStatusKey)
+      : linkTargetType !== null && isDirectory({ entry_type: linkTargetType })
+        ? t("fileManager.typeDir")
+        : linkTargetType !== null && isRegularFile({ entry_type: linkTargetType })
           ? t("fileManager.typeFile")
           : t("fileManager.typeOther");
-  const entryIcon = getEntryIcon({
-    ...entry,
-    is_dir: isDir,
-    entry_type: entryType,
-  });
-  const canChmod = entryType === "file" || entryType === "directory";
   const name = statInfo?.name ?? entry.name;
 
   return createPortal(
@@ -271,17 +294,68 @@ export default function FilePropertiesModal({
                   </div>
                 </div>
 
+                {/* 符号链接：目标原文、真实路径与目标状态；两段路径都可单独复制 */}
+                {isLink && (
+                  <>
+                    <div className={styles.fieldRow}>
+                      <span className={styles.fieldLabel}>{t("fileManager.linkTarget")}</span>
+                      <div className={styles.fieldValueRow}>
+                        <code className={styles.fieldValueMono}>
+                          {resolution?.link_target ?? "—"}
+                        </code>
+                        <button
+                          type="button"
+                          className={`${styles.copyBtn} liquid-glass-ghost-button`}
+                          onClick={() => void copyLinkValue(resolution?.link_target)}
+                          disabled={!resolution?.link_target}
+                          title={t("fileManager.copyLinkTarget")}
+                          aria-label={t("fileManager.copyLinkTarget")}
+                        >
+                          <Icon name="clipboard" size="sm" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className={styles.fieldRow}>
+                      <span className={styles.fieldLabel}>{t("fileManager.linkTargetPath")}</span>
+                      <div className={styles.fieldValueRow}>
+                        <code className={styles.fieldValueMono}>
+                          {resolution?.target_path ?? "—"}
+                        </code>
+                        <button
+                          type="button"
+                          className={`${styles.copyBtn} liquid-glass-ghost-button`}
+                          onClick={() => void copyLinkValue(resolution?.target_path)}
+                          disabled={!resolution?.target_path}
+                          title={t("fileManager.copyPath")}
+                          aria-label={t("fileManager.copyPath")}
+                        >
+                          <Icon name="clipboard" size="sm" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className={styles.fieldRow}>
+                      <span className={styles.fieldLabel}>{t("fileManager.linkTargetStatus")}</span>
+                      <span
+                        className={styles.fieldValue}
+                        title={resolution?.resolution_error ?? undefined}
+                      >
+                        {linkStatusText}
+                      </span>
+                    </div>
+                  </>
+                )}
+
                 {/* 类型 */}
                 <div className={styles.fieldRow}>
                   <span className={styles.fieldLabel}>{t("fileManager.type")}</span>
                   <span className={styles.fieldValue}>{typeLabel}</span>
                 </div>
 
-                {/* 大小 */}
+                {/* 大小：目录与符号链接不展示条目大小 */}
                 <div className={styles.fieldRow}>
                   <span className={styles.fieldLabel}>{t("fileManager.size")}</span>
                   <span className={styles.fieldValue}>
-                    {isDir ? "-" : formatBytes(statInfo.size)}
+                    {sizeUnavailable ? "-" : formatBytes(statInfo.size)}
                   </span>
                 </div>
 

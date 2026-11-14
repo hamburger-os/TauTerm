@@ -39,8 +39,13 @@ export default function RemoteDocumentDialog({
   const [confirmClose, setConfirmClose] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorColumn, setCursorColumn] = useState(1);
+  // The document session pins the resolved target (snapshot.resolvedPath). Show it
+  // next to the logical path whenever it differs — that pinned path is exactly the
+  // object the save transaction writes, so the editor never hides what it writes.
   const doc = useRemoteDocument(sessionId, entry.path, isConnected, onSaved);
   const lineCount = useMemo(() => countTextLines(doc.text), [doc.text]);
+  const resolvedTarget = doc.snapshot?.resolvedPath ?? null;
+  const showResolvedTarget = resolvedTarget !== null && resolvedTarget !== entry.path;
 
   const requestClose = useCallback(() => {
     // The SFTP document save is a transactional backend operation. Keep the editor mounted until
@@ -162,6 +167,11 @@ export default function RemoteDocumentDialog({
               {doc.dirty && <span className={styles.dirtyDot} aria-label={t("fileManager.unsavedChanges")}>●</span>}
             </div>
             <div className={styles.path} title={entry.path}>{entry.path}</div>
+            {showResolvedTarget && (
+              <div className={styles.path} title={resolvedTarget ?? undefined}>
+                {`→ ${resolvedTarget}`}
+              </div>
+            )}
           </div>
           <button
             type="button"

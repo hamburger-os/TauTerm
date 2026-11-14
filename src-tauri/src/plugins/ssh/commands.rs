@@ -378,7 +378,7 @@ pub struct JournaldExportRequest {
 
 // ── 命令：SSH 文件服务（SFTP）────────────────────
 
-use crate::plugins::ssh::sftp::attrs::SftpEntry;
+use crate::plugins::ssh::sftp::attrs::{ResolvedEntry, SftpEntry};
 use crate::plugins::ssh::sftp::document::{
     RemoteDocumentEncodeRequest, RemoteDocumentEncodeResult, RemoteDocumentReadResult,
     RemoteDocumentSaveRequest, RemoteDocumentSaveResult, DOCUMENT_HEX_LIMIT,
@@ -386,7 +386,7 @@ use crate::plugins::ssh::sftp::document::{
 use crate::plugins::ssh::sftp::error::SftpError;
 use crate::plugins::ssh::sftp::service::{
     sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_mkdir, sftp_new_file,
-    sftp_rename, sftp_stat,
+    sftp_rename, sftp_resolve_entry, sftp_stat,
 };
 use crate::plugins::ssh::SshRuntime;
 
@@ -454,6 +454,19 @@ pub async fn sftp_stat_cmd(
 ) -> Result<SftpEntry, SftpError> {
     let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     sftp_stat(&ssh_runtime.sftp(), &remote_path).await
+}
+
+/// SFTP 解析目录项的跟随信息（符号链接目标原文 / 真实路径 / 目标类型）。
+///
+/// 文件管理器只在用户显式激活或查询链接时调用，列表浏览保持单次往返。
+#[tauri::command]
+pub async fn sftp_resolve_entry_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<ResolvedEntry, SftpError> {
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_resolve_entry(&ssh_runtime.sftp(), &remote_path).await
 }
 
 /// SFTP 修改文件权限

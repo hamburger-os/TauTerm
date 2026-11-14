@@ -207,6 +207,9 @@ jobs:
       - name: File-transfer lifecycle and responsive UI contract
         run: npm run check:file-transfer
 
+      - name: File-manager symlink contract
+        run: npm run check:file-manager
+
       - name: Journald viewer paging and lifecycle contract
         run: npm run check:journald
 

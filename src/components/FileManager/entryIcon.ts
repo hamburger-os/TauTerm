@@ -1,10 +1,11 @@
 /**
  * 文件条目图标映射
  *
- * 按 is_dir + 扩展名返回 emoji 图标与分类。
+ * 按 entry_type + 扩展名返回 emoji 图标与分类。
  * 列表视图（FileRow）与网格视图（FileGrid）共用，保证图标永不漂移。
  */
 import type { SftpEntry } from "./types";
+import { isDirectory, isSpecial, isSymlink } from "./entryKind";
 
 export type EntryCategory =
   | "folder"
@@ -71,15 +72,9 @@ export const CATEGORY_LABEL_KEYS: Record<EntryCategory, string> = {
 };
 
 export function getEntryCategory(entry: SftpEntry): EntryCategory {
-  if (entry.entry_type === "symlink") return "symlink";
-  if (
-    entry.entry_type
-    && entry.entry_type !== "file"
-    && entry.entry_type !== "directory"
-  ) {
-    return "special";
-  }
-  if (entry.is_dir) return "folder";
+  if (isSymlink(entry)) return "symlink";
+  if (isSpecial(entry)) return "special";
+  if (isDirectory(entry)) return "folder";
   const dot = entry.name.lastIndexOf(".");
   if (dot === -1) return "generic";
   return EXT_CATEGORY[entry.name.slice(dot).toLowerCase()] ?? "generic";

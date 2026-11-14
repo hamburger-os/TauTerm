@@ -2,7 +2,9 @@
 //!
 //! russh-sftp 的传输错误与高层上下文在这里被归类为可判别的 `SftpErrorCode`；
 //! 上层（文件服务、传输、远程文档、IPC 边界）只消费 code，不解析错误字符串。
-//! 唯一例外是模块边界：服务包装函数把内部 `String` 错误经 `From<String>` 归类一次。
+//! 已知状态码由 `from_client` 直接映射；服务端把细分错误塞进通用 `Failure` 时
+//! （例如 ELOOP 只体现在文案里），`from_client` 与服务包装层的 `From<String>`
+//! 共用同一次关键词归类，保证同一种错误在两条路径上得到同一个 code。
 
 use serde::Serialize;
 
@@ -22,6 +24,8 @@ pub enum SftpErrorCode {
     Timeout,
     /// 服务端不支持该操作（例如缺少某个协议扩展）。
     Unsupported,
+    /// 符号链接解析出现循环或层数过深（服务端 ELOOP / “too many levels”）。
+    Loop,
     /// 其它 I/O 错误。
     Io,
     /// 协议/数据格式错误。
@@ -99,7 +103,7 @@ impl SftpError {
                 StatusCode::BadMessage => {
                     Self::new(SftpErrorCode::Protocol, status.error_message.clone())
                 }
-                _ => Self::new(SftpErrorCode::Io, status.error_message.clone()),
+                _ => Self::from(status.error_message.clone()),
             },
             ClientError::Timeout => Self::new(SftpErrorCode::Timeout, "SFTP 请求超时"),
             ClientError::IO(message) => Self::new(SftpErrorCode::Io, message.clone()),
@@ -132,8 +136,10 @@ impl From<SftpError> for String {
 ///
 /// 服务公共入口是 `*_inner(...) -> Result<_, String>` 的薄包装，内部辅助函数在拼接
 /// “操作 + 上下文 + 底层错误”时仍是文本；这里按 russh-sftp 的英文状态描述（以及本项目
-/// 固定中文文案的关键词）归类一次。`from_client` 用于 capability / 结构化路径。
-/// 修改错误文案时不得移除这些可判别关键词，否则 `closed` / `unsupported` 会退化成 `io`。
+/// 固定中文文案的关键词）归类一次。`from_client` 用于 capability / 结构化路径：已知
+/// 状态码直接映射，通用 `Failure` 复用同一关键词归类（服务端不把 ELOOP 等细分错误
+/// 暴露成独立状态码，只能从文案判别）。修改错误文案时不得移除这些可判别关键词，
+/// 否则 `closed` / `unsupported` / `loop` 会退化成 `io`。
 impl From<String> for SftpError {
     fn from(message: String) -> Self {
         Self {
@@ -148,6 +154,12 @@ fn classify_message(message: &str) -> SftpErrorCode {
     if lower.contains("no such file") || lower.contains("not found") || message.contains("不存在")
     {
         SftpErrorCode::NotFound
+    } else if lower.contains("too many levels of symbolic links")
+        || lower.contains("too many symbolic links")
+        || message.contains("层数过深")
+        || message.contains("链接循环")
+    {
+        SftpErrorCode::Loop
     } else if lower.contains("permission denied") || message.contains("权限") {
         SftpErrorCode::PermissionDenied
     } else if lower.contains("already exists")
@@ -214,5 +226,48 @@ mod tests {
             serde_json::to_value(SftpError::new(SftpErrorCode::Conflict, "已存在")).unwrap();
         assert_eq!(payload["code"], "conflict");
         assert_eq!(payload["message"], "已存在");
+    }
+
+    #[test]
+    fn symlink_loops_are_classified_as_loop_not_io() {
+        assert_eq!(
+            SftpError::from(
+                "获取文件信息 '/a' 失败: Too many levels of symbolic links".to_string()
+            )
+            .code,
+            SftpErrorCode::Loop
+        );
+        assert_eq!(
+            SftpError::new(SftpErrorCode::Loop, "链接层数过深").code,
+            SftpErrorCode::Loop
+        );
+    }
+
+    #[test]
+    fn generic_failure_status_keeps_actionable_classification() {
+        use russh_sftp::client::error::Error as ClientError;
+        use russh_sftp::protocol::{Status, StatusCode};
+
+        let loop_status = Status {
+            id: 0,
+            status_code: StatusCode::Failure,
+            error_message: "Too many levels of symbolic links".to_string(),
+            language_tag: String::new(),
+        };
+        assert_eq!(
+            SftpError::from_client(&ClientError::Status(loop_status)).code,
+            SftpErrorCode::Loop
+        );
+
+        let missing_status = Status {
+            id: 0,
+            status_code: StatusCode::Failure,
+            error_message: "No such file".to_string(),
+            language_tag: String::new(),
+        };
+        assert_eq!(
+            SftpError::from_client(&ClientError::Status(missing_status)).code,
+            SftpErrorCode::NotFound
+        );
     }
 }

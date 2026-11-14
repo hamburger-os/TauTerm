@@ -59,6 +59,7 @@ macro_rules! tauterm_invoke_handler {
             $crate::plugins::ssh::commands::sftp_list_dir_cmd,
             $crate::plugins::ssh::commands::ssh_sftp_availability_cmd,
             $crate::plugins::ssh::commands::sftp_stat_cmd,
+            $crate::plugins::ssh::commands::sftp_resolve_entry_cmd,
             $crate::plugins::ssh::commands::sftp_read_document_cmd,
             $crate::plugins::ssh::commands::sftp_save_document_cmd,
             $crate::plugins::ssh::commands::remote_document_encode_preview_cmd,

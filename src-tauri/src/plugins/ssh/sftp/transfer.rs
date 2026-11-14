@@ -633,13 +633,53 @@ impl FileTransfer for SftpFileTransfer {
                 .await
                 .map_err(|e| FileTransferError::Other(e.to_string()))?;
 
+            // 顶层条目是用户显式选中的对象：这里的符号链接跟随一次，得到目标内容
+            // 或目标目录树。递归树内部的链接仍然不跟随，避免穿出所选目录。
+            let (root_type, root_size) = match stat.entry_type {
+                SftpEntryType::Symlink => {
+                    let resolved = super::service::sftp_resolve_entry(&self.cap, remote_path)
+                        .await
+                        .map_err(|e| FileTransferError::Other(e.to_string()))?;
+                    if !resolved.target_exists {
+                        results.push(BatchFileResult {
+                            file_name: remote_basename(remote_path),
+                            status: "skipped".into(),
+                            size: 0,
+                            error: Some(format!(
+                                "符号链接目标不可用，已跳过: {}",
+                                resolved
+                                    .resolution_error
+                                    .unwrap_or_else(|| "无法解析链接目标".to_string())
+                            )),
+                        });
+                        continue;
+                    }
+                    match resolved.target_type.unwrap_or(SftpEntryType::Symlink) {
+                        SftpEntryType::File => {
+                            (SftpEntryType::File, resolved.target_size.unwrap_or(0))
+                        }
+                        SftpEntryType::Directory => (SftpEntryType::Directory, 0),
+                        _ => {
+                            results.push(BatchFileResult {
+                                file_name: remote_basename(remote_path),
+                                status: "skipped".into(),
+                                size: 0,
+                                error: Some("符号链接指向特殊文件，已跳过".into()),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                other => (other, stat.size),
+            };
+
             let explicit_destination = options
                 .destination_paths
                 .get(root_index)
                 .filter(|path| !path.trim().is_empty())
                 .cloned();
 
-            match stat.entry_type {
+            match root_type {
                 SftpEntryType::File => {
                     let local_path = match explicit_destination {
                         Some(path) => path,
@@ -651,7 +691,7 @@ impl FileTransfer for SftpFileTransfer {
                     plans.push(ReceiveFilePlan {
                         remote_path: remote_path.clone(),
                         local_path,
-                        size: stat.size,
+                        size: root_size,
                     });
                 }
                 SftpEntryType::Directory => {
