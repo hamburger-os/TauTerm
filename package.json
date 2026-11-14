@@ -44,6 +44,7 @@
     "test:terminal-theme": "node --experimental-strip-types scripts/test-terminal-theme.mjs",
     "check:engineering-tools": "node --experimental-strip-types scripts/test-engineering-tools.mjs",
     "check:file-transfer": "node scripts/test-file-transfer-lifecycle.mjs && node scripts/test-remote-document-editor-contract.mjs",
+    "check:file-manager": "node --experimental-strip-types scripts/test-file-manager-link-contract.mjs",
     "check:sendbar": "node --experimental-strip-types scripts/test-sendbar-contract.mjs",
     "check:status-bar": "node --experimental-strip-types scripts/test-status-bar-contract.mjs",
     "check:journald": "node scripts/test-journald-viewer.mjs",

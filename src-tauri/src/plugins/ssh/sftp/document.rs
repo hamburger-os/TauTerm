@@ -10,7 +10,9 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use super::attrs::{is_regular_file, permissions_to_string};
+use super::attrs::{
+    entry_type_from_permissions, is_regular_file, permissions_to_string, SftpEntryType,
+};
 use super::capability::SftpCapability;
 use super::paths::sibling_artifact as remote_sibling_artifact;
 use super::service::sftp_read_head;
@@ -37,6 +39,8 @@ pub struct RemoteDocumentReadResult {
     pub truncated: bool,
     pub editable: bool,
     pub version: RemoteDocumentVersion,
+    /// 本次文档会话绑定的真实目标路径（链接在打开时解析一次）。
+    pub resolved_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +61,9 @@ pub struct RemoteDocumentSaveRequest {
     pub expected_version: RemoteDocumentVersion,
     #[serde(default)]
     pub force: bool,
+    /// 打开时绑定的真实目标路径；提交前若链接已重指向，保存按冲突拒绝。
+    #[serde(default)]
+    pub expected_resolved_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -373,6 +380,44 @@ async fn commit_document_temp(
     }
 }
 
+/// 解析文档会话绑定的目标对象路径。
+///
+/// 打开文档时如果是符号链接，就解析一次并绑定真实目标；后续读取、版本校验、
+/// 临时文件提交都作用于目标对象，链接本身保持不变（write-through）。链接的
+/// 重指向在提交前由 `expected_resolved_path` 检出并按冲突拒绝。
+async fn resolve_document_target(
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<String, String> {
+    let kind = {
+        let sftp = cap.client().await?;
+        let stat = sftp
+            .symlink_metadata(remote_path)
+            .await
+            .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
+        entry_type_from_permissions(stat.permissions, stat.is_dir())
+    };
+    if kind != SftpEntryType::Symlink {
+        return Ok(remote_path.to_string());
+    }
+
+    let resolved = super::service::sftp_resolve_entry(cap, remote_path)
+        .await
+        .map_err(|error| error.message)?;
+    if !resolved.target_exists {
+        return Err(format!(
+            "符号链接目标不可用，无法打开文档: {} ({})",
+            remote_path,
+            resolved
+                .resolution_error
+                .unwrap_or_else(|| "无法解析链接目标".to_string())
+        ));
+    }
+    resolved
+        .target_path
+        .ok_or_else(|| format!("无法解析符号链接的真实目标路径: {}", remote_path))
+}
+
 /// 读取远程文档。预览最多 1 MiB，完整打开最多 `DOCUMENT_EDIT_LIMIT`。
 ///
 /// 截断快照永远只读；只有完整快照才允许保存，因此这里不提供 `truncated && editable`
@@ -387,7 +432,8 @@ pub(crate) async fn read_document(
     } else {
         DOCUMENT_PREVIEW_LIMIT
     };
-    let snapshot = read_snapshot(cap, remote_path, max_bytes).await?;
+    let target_path = resolve_document_target(cap, remote_path).await?;
+    let snapshot = read_snapshot(cap, &target_path, max_bytes).await?;
 
     if full && snapshot.size > DOCUMENT_EDIT_LIMIT {
         return Err(format!(
@@ -405,6 +451,7 @@ pub(crate) async fn read_document(
         editable: complete && snapshot.size <= DOCUMENT_EDIT_LIMIT,
         version: snapshot.version(complete),
         data: snapshot.data,
+        resolved_path: target_path,
     })
 }
 
@@ -420,8 +467,19 @@ pub(crate) async fn save_document(
         return Err("保存前必须先完整加载文档，缺少内容版本".to_string());
     }
 
+    // 链接在打开时绑定；提交前重新解析，链接被重指向时按冲突拒绝，绝不写到新目标。
+    let target_path = resolve_document_target(cap, &request.remote_path).await?;
+    if let Some(expected) = request.expected_resolved_path.as_deref() {
+        if expected != target_path {
+            return Err(format!(
+                "符号链接目标已改变，保存冲突：文档打开时绑定 '{}'，当前指向 '{}'，未写入",
+                expected, target_path
+            ));
+        }
+    }
+
     let bytes = serialize_text(&request.text, &request.format)?;
-    let before = read_complete_snapshot(cap, &request.remote_path).await?;
+    let before = read_complete_snapshot(cap, &target_path).await?;
     let before_version = before.version(true);
 
     if !request.force && before_version != request.expected_version {
@@ -432,7 +490,7 @@ pub(crate) async fn save_document(
         });
     }
 
-    let temp_path = remote_sibling_artifact(&request.remote_path, "document-part");
+    let temp_path = remote_sibling_artifact(&target_path, "document-part");
     let mut temp_file = {
         let sftp = cap.client().await?;
         sftp.open_with_flags(
@@ -456,7 +514,7 @@ pub(crate) async fn save_document(
     drop(temp_file);
 
     let expected_version = (!request.force).then_some(&request.expected_version);
-    match commit_document_temp(cap, &temp_path, &request.remote_path, expected_version).await {
+    match commit_document_temp(cap, &temp_path, &target_path, expected_version).await {
         Ok(CommitDocumentOutcome::Committed) => {}
         Ok(CommitDocumentOutcome::Conflict(current_version)) => {
             cap.remove_best_effort(&temp_path).await;
@@ -472,11 +530,12 @@ pub(crate) async fn save_document(
         }
     }
 
-    let saved = read_complete_snapshot(cap, &request.remote_path).await?;
+    let saved = read_complete_snapshot(cap, &target_path).await?;
     let saved_version = saved.version(true);
     log::info!(
-        "SFTP 远程文档保存完成: {} ({} bytes)",
+        "SFTP 远程文档保存完成: {} -> {} ({} bytes)",
         request.remote_path,
+        target_path,
         saved.size
     );
     Ok(RemoteDocumentSaveResult {

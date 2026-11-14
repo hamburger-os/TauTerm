@@ -1,8 +1,24 @@
+/** 远端目录项类型（与后端 `SftpEntryType` 的 snake_case 序列化对齐）。 */
+export type SftpEntryType =
+  | 'file'
+  | 'directory'
+  | 'symlink'
+  | 'fifo'
+  | 'socket'
+  | 'block_device'
+  | 'char_device'
+  | 'other';
+
+/**
+ * 远端目录项（`sftp_list_dir_cmd` / `sftp_stat_cmd` 的结果）。
+ *
+ * `entry_type` 是目录项类型的唯一真源，不再保留“是否目录”这类派生布尔字段。
+ * 类型判定统一走 `entryKind.ts`，不要在组件里直接比较该字段。
+ */
 export interface SftpEntry {
   name: string;
   path: string;
-  is_dir: boolean;
-  entry_type?: 'file' | 'directory' | 'symlink' | 'fifo' | 'socket' | 'block_device' | 'char_device' | 'other';
+  entry_type: SftpEntryType;
   size: number;
   accessed: number | null;
   modified: number | null;

@@ -11,6 +11,7 @@ import { formatBytes } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import type { FileViewProps } from "./FileViewProps";
 import { getEntryCategory, getEntryIcon, getFolderIcon, CATEGORY_LABEL_KEYS } from "./entryIcon";
+import { isDirectory, isSymlink } from "./entryKind";
 import styles from "./FileGrid.module.css";
 
 type FileGridProps = FileViewProps;
@@ -82,7 +83,9 @@ const FileTile = memo(function FileTile({
           {entry.name}
         </span>
         <span className={styles.tileSub}>
-          {entry.is_dir ? typeLabel : `${typeLabel} · ${formatBytes(entry.size)}`}
+          {isDirectory(entry) || isSymlink(entry)
+            ? typeLabel
+            : `${typeLabel} · ${formatBytes(entry.size)}`}
         </span>
       </div>
     </div>

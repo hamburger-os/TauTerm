@@ -9,6 +9,7 @@ import { memo, type CSSProperties, type KeyboardEventHandler } from "react";
 import type { SftpEntry } from "./types";
 import { formatBytes, formatTime } from "../../utils/format";
 import { getEntryIcon } from "./entryIcon";
+import { isDirectory, isSymlink } from "./entryKind";
 import styles from "./FileRow.module.css";
 
 // ── Component ──────────────────────────────────────────
@@ -75,7 +76,7 @@ const FileRow = memo(function FileRow({
       <span className={styles.icon} role="gridcell">{getEntryIcon(entry)}</span>
       <span className={styles.name} role="gridcell">{entry.name}</span>
       <span className={styles.size} role="gridcell">
-        {entry.is_dir ? "-" : formatBytes(entry.size)}
+        {isDirectory(entry) || isSymlink(entry) ? "-" : formatBytes(entry.size)}
       </span>
       <span className={styles.time} role="gridcell">{formatTime(entry.modified)}</span>
       <span className={styles.perms} role="gridcell">{entry.permissions || "-"}</span>

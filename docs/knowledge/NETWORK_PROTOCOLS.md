@@ -48,7 +48,7 @@ SFTP 没有最终发布为 IETF RFC。TauTerm 当前依赖 `russh-sftp`，其实
 
 ### TauTerm 适用范围
 
-文件管理实现必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为便利 `create()` 会 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。SFTP v3 草案未覆盖、需要扩展能力时（例如原子覆盖、fsync、`~` 展开），必须按 OpenSSH 扩展名称核对上游语义，并确认 `russh-sftp` 实际支持范围。
+文件管理实现必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。符号链接解析依赖 `SSH_FXP_READLINK`（链接目标原文）与 `SSH_FXP_REALPATH`（规范化路径），跟随后的类型由 `SSH_FXP_STAT` 判定；具体错误类别与操作语义由 [SSH.md](../modules/SSH.md) 的模块契约定义。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为便利 `create()` 会 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。SFTP v3 草案未覆盖、需要扩展能力时（例如原子覆盖、fsync、`~` 展开），必须按 OpenSSH 扩展名称核对上游语义，并确认 `russh-sftp` 实际支持范围。
 
 内部设计：[SSH.md](../modules/SSH.md)、[TRANSFER.md](../modules/TRANSFER.md)。
 

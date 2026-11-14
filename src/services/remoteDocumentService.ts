@@ -36,6 +36,8 @@ export interface RemoteDocumentReadResult {
   permissions: string;
   truncated: boolean;
   editable: boolean;
+  /** 后端实际打开的物理路径：符号链接被解析一次后的目标路径，用于保存时 pinning。 */
+  resolvedPath: string;
   version: RemoteDocumentVersion;
 }
 
@@ -63,12 +65,19 @@ export function openRemoteDocument(
   });
 }
 
+/**
+ * 保存远程文档。
+ *
+ * `expectedResolvedPath` 固定本次编辑读取到的物理目标：若符号链接在编辑期间被
+ * 重新指向，后端会以 conflict 拒绝保存，避免把内容写到另一个文件。
+ */
 export function saveRemoteDocument(
   sessionId: string,
   remotePath: string,
   text: string,
   format: RemoteDocumentFormat,
   expectedVersion: RemoteDocumentVersion,
+  expectedResolvedPath: string | null,
   force = false,
 ): Promise<RemoteDocumentSaveResult> {
   return invoke<RemoteDocumentSaveResult>("sftp_save_document_cmd", {
@@ -78,6 +87,7 @@ export function saveRemoteDocument(
       text,
       format,
       expectedVersion,
+      expectedResolvedPath,
       force,
     },
   });

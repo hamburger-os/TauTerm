@@ -4,6 +4,8 @@
 
 use serde::Serialize;
 
+use super::error::SftpErrorCode;
+
 /// 远端目录项类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -19,16 +21,47 @@ pub enum SftpEntryType {
 }
 
 /// 远端目录项 / 文件信息。
+///
+/// `entry_type` 是目录项类型的唯一真源；目录、普通文件、符号链接和特殊文件都由它
+/// 区分，不再维护 `is_dir` 这类派生布尔字段（两套真源是链接被漏判的根因）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SftpEntry {
     pub name: String,
     pub path: String,
-    pub is_dir: bool,
     pub entry_type: SftpEntryType,
     pub size: u64,
     pub accessed: Option<u64>,
     pub modified: Option<u64>,
     pub permissions: Option<String>,
+}
+
+/// 用户显式激活一条目录项时解析出的远端信息。
+///
+/// 分类（lstat）只是起点：符号链接的“跟随”属于用户操作语义，由本结构一次性
+/// 给出目标原文、目标真实路径、目标类型和目标可用性。目标不可用不是 IPC 错误，
+/// 而是 `target_exists == false` + `resolution_error_*`，这样 UI 能区分“链接断了”
+/// 和“通道坏了”。跟随后的类型判定使用 SFTP `STAT`（follow），展示用的目标文本
+/// 来自 `READLINK`，真实路径优先取 `REALPATH`。
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedEntry {
+    /// 传入的原始路径（保留逻辑路径身份）。
+    pub path: String,
+    /// 原始路径自身的 lstat 类型；输入是普通文件/目录时等于 `target_type`。
+    pub entry_type: SftpEntryType,
+    /// `READLINK` 返回的目标原文（可能是相对路径）；非链接或服务端不支持时为 None。
+    pub link_target: Option<String>,
+    /// 目标的绝对路径：优先 `REALPATH`，不可用时按链接目录拼接目标原文。
+    pub target_path: Option<String>,
+    /// 跟随后的目标类型；目标不可解析时为 None。
+    pub target_type: Option<SftpEntryType>,
+    /// 跟随 `STAT` 是否成功。
+    pub target_exists: bool,
+    /// 跟随后的目标大小（目录/特殊文件为 None）。
+    pub target_size: Option<u64>,
+    /// 目标不可解析时的错误类别（NotFound / PermissionDenied / Loop / ...）。
+    pub resolution_error_code: Option<SftpErrorCode>,
+    /// 目标不可解析时的用户可见说明。
+    pub resolution_error: Option<String>,
 }
 
 /// 由 POSIX mode 判断目录项类型；服务端不返回 mode 时退化为 is_dir 提示。

@@ -51,20 +51,21 @@ SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SS
 SSH 的三类通道分工固定：终端是 shell channel，文件工作是 `subsystem sftp` channel，远端命令输出是 exec channel。三者复用同一认证连接但互不越界：exec 通道不承载文件元数据，文件工作不要求远端 shell。
 
 - **SFTP 能力对象**：`SftpCapability` 是一个 SSH 连接内 SFTP 子系统会话的唯一 owner。SFTP 能力只通过 `SshRuntime::sftp()` 以 `Arc<SftpCapability>` 暴露，服务、传输和远程文档都不接触原始 session 或缓存锁。子系统通道在首次访问时惰性打开并缓存；观察到 `Closed|Timeout|Io` 时丢弃缓存，下一次访问自动重建。远端起始目录由 SFTP `realpath(".")`（`canonicalize(".")`）解析，失败时用 `expand_path("~")` 兜底，不回退到 `/`，也不占用 exec 通道。`probe()` 用于能力探测；清理临时产物走 best-effort，失败只记日志，不覆盖主错误。
-- **错误分类**：SFTP 公共入口返回 `SftpError { code, message }`，code 为 `not_found | permission_denied | conflict | closed | timeout | unsupported | io | protocol`。code 在 `sftp/error.rs` 边界统一归类：capability 层使用结构化 `from_client` 映射，服务包装层对既有“操作 + 上下文 + 底层错误”文案做一次关键词归类（文案关键词属于可判别契约，修改时必须保留）。IPC 直接把这个对象交给前端：`closed`/`timeout` 表示按连接失效处理（缓存失效、重连后重试），`conflict` 交给 UI 选择重新加载或覆盖，`unsupported` 表示该连接或服务端不支持此能力。前端按 code 分支，不解析错误文案。
+- **错误分类**：SFTP 公共入口返回 `SftpError { code, message }`，code 为 `not_found | permission_denied | conflict | closed | timeout | unsupported | loop | io | protocol`。code 在 `sftp/error.rs` 边界统一归类：capability 层用结构化 `from_client` 映射，已知状态码直接映射，服务端塞进通用 `Failure` 的细分错误（如 ELOOP）由 `from_client` 与服务包装层共用的关键词归类识别一次（文案关键词属于可判别契约，修改时必须保留）。IPC 直接把这个对象交给前端：`closed`/`timeout` 表示按连接失效处理（缓存失效、重连后重试），`conflict` 交给 UI 选择重新加载或覆盖，`unsupported` 表示该连接或服务端不支持此能力，`loop` 表示符号链接循环/层数过深。前端按 code 分支，不解析错误文案。
 - **能力探测与降级**：`ssh_sftp_availability_cmd` 探测 SFTP 子系统并返回 `{ available, reason }`。只有“可用”结果按连接缓存；失败结果不缓存，因为通道/传输瞬时错误与“服务端确实没有 `sftp` 子系统”无法可靠区分，缓存失败会把一次瞬时错误固定成整连接不可用。`refresh=true` 丢弃缓存强制重探，供前端“不可用 + 重试”使用。文件功能最终可见性 = 用户偏好 AND 探测结果，不可用时 UI 禁用并标注原因，而不是在首次操作时抛原始传输错误。journald 不做预先探测，可用性在首次实际查询时判定。Session 参数 `journald_enabled` / `file_service_enabled` 只是用户偏好，不代表实际能力；`file_service_protocol` 已删除（它只可能取值 `sftp`）。
 - **打开文件管理器是一条状态机**：`sftp_list_dir_cmd` 接受可选路径，空路径表示起始目录，一次调用返回 `{ path, entries }`。不再有独立的 `get_ssh_home_dir` IPC，也不在前端拼接 home 与目录名；起始目录解析失败直接报错。
+- **符号链接的“分类”与“跟随”分离**：目录项类型只由 lstat 得到的 `entry_type` 表达（不再有 `is_dir` 双真源）。列表浏览与属性按 lstat 分类，不做 N+1 stat；用户显式激活（双击/打开/下载顶层选中项）时由 `sftp_resolve_entry_cmd` 一次解析出目标原文（`READLINK`）、真实路径（`REALPATH` 优先，失败时按链接目录拼接目标原文）和目标类型（`STAT` follow）。目标悬空、无权限、循环层数过深或指向特殊文件是结构化结果而不是列表错误；进入链接目录保留逻辑路径（服务端自行解析），属性/右键提供“打开链接目标位置”和“复制链接目标”。
 - **exec 通道策略**：`plugins/ssh/exec.rs` 是 exec 通道构造、命令执行和有界输出收集的唯一实现；journald 是唯一消费者，`$HOME` 等文件工作不再借用 exec。
 
 ### 远程文档查看与编辑
 
-文件管理器把普通文件的“预览”和“编辑”统一为 **Remote Document** 工作流，而不是维护两套弹窗和两套字节/编码状态。双击普通文件或选择“打开”会建立一个前端文档会话；目录继续进入目录，符号链接和特殊文件不进入文档系统。
+文件管理器把普通文件的“预览”和“编辑”统一为 **Remote Document** 工作流，而不是维护两套弹窗和两套字节/编码状态。双击普通文件或选择“打开”会建立一个前端文档会话；目录继续进入目录；指向普通文件的符号链接在打开时解析一次并绑定真实目标（write-through，链接本身保留），特殊文件与悬空链接不进入文档系统。
 
 - 文档以远端原始字节快照为读取真相源。Text/HEX 是同一快照的不同视图；文本工作区进入可编辑状态后，文本 buffer 是唯一可变内容，HEX 视图显示该工作内容按当前保存格式序列化后的真实字节，不维护第二份可变 byte buffer。
 - 首次打开最多读取 1 MiB；完整文档上限为 4 MiB。截断快照永远只读，只有显式加载完整文档成功后才允许保存；超过完整文档上限的文件保持有界查看，不允许用前缀覆盖原文件。HEX 为保证渲染成本最多显示 128 KiB。
 - 编码自动判断只信任 BOM 与严格 UTF-8；无法严格识别的区域编码不伪造自动识别结果。用户可以显式“重新按某编码打开”，保存编码则是独立格式属性。默认保存保留读取时的 encoding、BOM 与主导 EOL；改变这些属性属于文档修改。
 - UTF-8 / UTF-16LE / UTF-16BE 由文档格式显式处理 BOM 与字节序；GB18030、Big5、Shift-JIS、EUC-JP/KR、Windows-1252 使用严格编码，遇到不可映射字符时拒绝保存，不以 `?` 静默替换工程文件内容。
-- 文档保存是专用的 SFTP document transaction，不伪装成下载/上传 Transfer 任务，也不占用 `TransferScheduler`。后端先把文本严格序列化到同目录排他临时文件，再完成 flush、权限同步与 commit/rollback。
+- 文档保存是专用的 SFTP document transaction，不伪装成下载/上传 Transfer 任务，也不占用 `TransferScheduler`。后端先把文本严格序列化到同目录排他临时文件，再完成 flush、权限同步与 commit/rollback。首次读取会返回 `resolvedPath`：打开路径是符号链接时它就是解析后的真实目标，保存前后端重新解析，链接已重指向时按冲突拒绝，绝不写入新目标。
 - 完整打开后版本 token 由 `size + mtime + CRC32(content)` 组成。非强制保存会在写临时文件前和正式 commit 前各验证一次 expected version；远端文件被其他工具修改时返回 conflict，由 UI 明确选择重新加载或覆盖，禁止 silent lost update。
 - SSH 断开不会销毁已经打开的 dirty 文档；编辑内容仍留在当前 UI 生命周期中，但保存被禁用。重连后保存仍重新校验远端版本，不因“本地还有编辑内容”绕过并发保护。
 - 关闭 dirty 文档统一走共享的二元确认流程：明确询问是否保存，确认只在保存成功后关闭，取消返回编辑器；不再维护“关闭 / 保存 / 取消”三项并列的私有确认卡片。
@@ -118,10 +119,10 @@ flowchart TB
 - 文件传输、远程文档和远端日志都通过各自的侧通道实现，不侵入终端流：终端=shell channel，文件=`subsystem sftp`，远端命令输出=exec channel；exec 不承载文件元数据，文件工作不要求 shell。Remote Document 保存有自己的小文件事务语义，不复用批量 Transfer 状态机。SFTP 能力探测和起始目录解析必须 lazy，不能让未使用的 side capability 增加基础 SSH 建连步骤。
 - journald 的 cursor、排序方向、stderr/exit status 与 command-line 参数属于后端数据源实现细节；React 只消费规范化页面/批量事件。
 - journald 实时任务的停止必须等后端 operation 完成后才允许同一 Session 重新启动；不要恢复基于固定间隔 polling 或“已在运行中”字符串补偿的旧模型。
-- SFTP 浏览/属性/Remote Document 使用 lstat/no-follow 语义识别符号链接；递归下载默认不跟随链接。SFTP 子系统会话只由 `SftpCapability` 持有，服务、传输和文档层只消费 `Arc<SftpCapability>`，不维护第二份 session/cache；文档读取只打开普通文件。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
+- SFTP 浏览/属性/Remote Document 使用 lstat 分类；跟随只发生在用户显式操作上（激活、打开、下载顶层选中项），递归传输和批量 Replace 不跟随、也不替换链接本身。SFTP 子系统会话只由 `SftpCapability` 持有，服务、传输和文档层只消费 `Arc<SftpCapability>`，不维护第二份 session/cache；文档读取只打开普通文件，链接在打开时绑定真实目标并在提交前重新校验。chmod 只对普通文件/目录开放，避免通过符号链接意外修改目标对象。
 - Remote Document 的 truncated snapshot、working text、save format、expected version 与 dirty/conflict 状态必须由文档会话统一拥有；FileManager 只表达 Open 意图，不能重新维护 Preview 专用数据状态。
 - Remote Document 保存必须在后端完成严格序列化、expected-version 校验和临时文件 commit/rollback；partial snapshot、编码失败、远端版本冲突或目标类型变化都必须 fail-closed。
-- 文件管理器的新建/重命名交互只接受单一文件名，不能把 `/`、`.` 或 `..` 偷渡成移动/跨目录操作；真正的 move 应作为独立操作语义。新建文件使用排他创建，同名对象存在时返回冲突而不是清空原文件。
+- 文件管理器的新建/重命名交互只接受单一文件名，不能把 `/`、`.` 或 `..` 偷渡成移动/跨目录操作；真正的 move 应作为独立操作语义。新建文件使用排他创建，同名对象存在时返回冲突而不是清空原文件。重命名提交前检查目标是否存在，已存在时返回冲突而不是依赖 POSIX rename 的静默覆盖；大小写不敏感服务端上的“仅大小写改名”因两个真实路径指向同一对象而放行（SFTP v3 没有 rename-noreplace，检查与 rename 之间仍有并发窗口）。
 - Keep Both/Skip 的冲突语义必须在最终 commit 时再次成立；目录 Keep Both 必须创建独立根目录，不允许静默合并到已有目录。文件管理器支持文件与目录上传；目录上传保留空目录并默认跳过本地符号链接/特殊文件。
 - 桌面拖放上传使用 Tauri 原生 WebView drag/drop 路径事件，并按窗口 scale factor 把物理坐标映射到 DOM 逻辑坐标；只有文件管理器面板命中的 drop 才接受。拖放路径可能混合文件/目录，因此发生同名冲突时只提供 Keep Both/Skip，不提供目录级危险 Replace。
 - 从 SFTP 远端名称派生本地下载路径时，后端逐组件执行跨平台安全验证；Linux 远端合法的反斜杠文件名不能在 Windows 客户端被重新解释成目录分隔符。

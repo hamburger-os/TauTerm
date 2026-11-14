@@ -12,6 +12,7 @@ export type SftpErrorCode =
   | "closed"
   | "timeout"
   | "unsupported"
+  | "loop"
   | "io"
   | "protocol";
 

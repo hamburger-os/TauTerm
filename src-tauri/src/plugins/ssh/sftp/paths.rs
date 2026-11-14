@@ -55,6 +55,48 @@ pub fn sibling_artifact(path: &str, tag: &str) -> String {
     )
 }
 
+/// 把 `READLINK` 返回的目标文本解析成绝对远端路径。
+///
+/// 绝对目标直接按 `/` 归一化；相对目标按链接所在目录拼接。这里只做纯字符串
+/// 归一化（`.`、`..`、重复斜杠），不做网络解析：真实绝对路径由 SFTP `REALPATH`
+/// 优先给出，本函数只是 `REALPATH` 不可用时的确定性兜底。
+pub fn resolve_link_target(link_path: &str, target: &str) -> String {
+    if target.starts_with('/') {
+        return normalize_remote_path(target);
+    }
+    let (dir, _) = parts(link_path);
+    let base = if dir.is_empty() { "/" } else { dir };
+    normalize_remote_path(&join(base, target))
+}
+
+/// 纯字符串归一化远端绝对路径；越界的 `..` 被钳制在根目录。
+fn normalize_remote_path(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    let joined = segments.join("/");
+    if !absolute {
+        return if joined.is_empty() {
+            ".".to_string()
+        } else {
+            joined
+        };
+    }
+    if joined.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", joined)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,5 +115,23 @@ mod tests {
     fn keep_both_keeps_extension() {
         assert_eq!(keep_both_candidate("/a/b.txt", 2), "/a/b (2).txt");
         assert_eq!(keep_both_candidate("/a/b", 2), "/a/b (2)");
+    }
+
+    #[test]
+    fn link_target_resolution_handles_absolute_and_relative_targets() {
+        assert_eq!(
+            resolve_link_target("/home/admin/Public", "/share/CACHEDEV1_DATA/Public"),
+            "/share/CACHEDEV1_DATA/Public"
+        );
+        assert_eq!(
+            resolve_link_target("/home/admin/Public", "../share/Public"),
+            "/home/share/Public"
+        );
+        assert_eq!(
+            resolve_link_target("/home/admin/link", "./sub//x/../y"),
+            "/home/admin/sub/y"
+        );
+        assert_eq!(resolve_link_target("/a/b", "../../../x"), "/x");
+        assert_eq!(resolve_link_target("/a/b", "."), "/a");
     }
 }

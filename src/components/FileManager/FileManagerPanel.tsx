@@ -22,9 +22,19 @@ import InlinePrompt from "./InlinePrompt";
 import CommonContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import TransferProgressBar from "./TransferProgressBar";
-import type { FileStatInfo } from "./FilePropertiesModal";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
+import { canOpenAsDocument, isDirectory, isSpecial, isSymlink } from "./entryKind";
+import {
+  activateEntry,
+  classifyDownloadTargets,
+  openLinkTargetLocation,
+  readLinkTargetText,
+  resolutionFailure,
+  resolveEntry,
+  type EntryActivationHandlers,
+  type ResolvedEntry,
+} from "./entryActivation";
 import { useToast } from "../../context/ToastContext";
 import { sftpErrorMessage } from "../../services/sftpErrors";
 import styles from "./FileManager.module.css";
@@ -33,12 +43,6 @@ const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog")
 const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
 const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
 const RemoteDocumentDialog = lazy(() => import("../FileEditor/RemoteDocumentDialog"));
-
-// 远程文档只打开普通文件。目录有独立导航语义；符号链接和特殊文件保持 no-follow。
-function canOpenDocument(entry: SftpEntry): boolean {
-  const entryType = entry.entry_type ?? (entry.is_dir ? "directory" : "file");
-  return entryType === "file" && !entry.is_dir;
-}
 
 type ViewMode = "list" | "grid";
 const VIEW_MODE_STORAGE_KEY = "tauterm-file-manager-view-mode";
@@ -203,26 +207,51 @@ export default function FileManagerPanel({
   // ── Properties modal state ────────────────────────────
   const [propsVisible, setPropsVisible] = useState(false);
   const [propsTarget, setPropsTarget] = useState<SftpEntry | null>(null);
-  const [propsInfo, setPropsInfo] = useState<FileStatInfo | null>(null);
+  const [propsInfo, setPropsInfo] = useState<SftpEntry | null>(null);
+  const [propsResolution, setPropsResolution] = useState<ResolvedEntry | null>(null);
   const [propsLoading, setPropsLoading] = useState(false);
   const propsRequestGenerationRef = useRef(0);
 
   // ── Remote document state ─────────────────────────────
   const [documentVisible, setDocumentVisible] = useState(false);
   const [documentTarget, setDocumentTarget] = useState<SftpEntry | null>(null);
-
-  const handleOpenDocument = useCallback((explicitTarget?: SftpEntry) => {
-    const target = explicitTarget
-      ?? (ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget);
-    if (!target || !canOpenDocument(target)) return;
-    setDocumentTarget(target);
-    setDocumentVisible(true);
-  }, [ctxTarget, ms.selectedEntries]);
+  // 链接解析是一次 RPC；解析期间的重复双击/回车必须被忽略，避免并发激活同一个条目。
+  const activationInFlightRef = useRef(false);
 
   const closeDocument = useCallback(() => {
     setDocumentVisible(false);
     setDocumentTarget(null);
   }, []);
+
+  // 激活副作用集中由 entryActivation 分派：面板只提供导航/打开/提示回调。
+  const activationHandlers = useMemo<EntryActivationHandlers>(() => ({
+    navigate: (path) => {
+      fm.navigateTo(path);
+      ms.clearSelection();
+    },
+    openDocument: (entry) => {
+      setDocumentTarget(entry);
+      setDocumentVisible(true);
+    },
+    notify: (messageKey) => {
+      showToast("warning", t(messageKey));
+    },
+  }), [fm, ms, showToast, t]);
+
+  /** 双击/Enter/“打开”的统一入口；符号链接只跟随一次。 */
+  const handleActivate = useCallback(
+    (explicitTarget?: SftpEntry) => {
+      if (activationInFlightRef.current) return;
+      const target = explicitTarget
+        ?? (ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget);
+      if (!target) return;
+      activationInFlightRef.current = true;
+      void activateEntry(sessionId, target, activationHandlers).finally(() => {
+        activationInFlightRef.current = false;
+      });
+    },
+    [activationHandlers, ctxTarget, ms.selectedEntries, sessionId],
+  );
 
   // ── Entry click / double-click ──────────────────────
   const handleEntryClick = useCallback(
@@ -234,14 +263,9 @@ export default function FileManagerPanel({
 
   const handleEntryDoubleClick = useCallback(
     (entry: SftpEntry) => {
-      if (entry.is_dir) {
-        fm.navigateTo(entry.path);
-        ms.clearSelection();
-      } else {
-        handleOpenDocument(entry);
-      }
+      handleActivate(entry);
     },
-    [fm, handleOpenDocument, ms],
+    [handleActivate],
   );
 
   // ── Parent directory interactions ──────────────────
@@ -441,8 +465,18 @@ export default function FileManagerPanel({
       ms.selectedEntries.length > 0 ? ms.selectedEntries : ctxTarget ? [ctxTarget] : [];
     if (targets.length === 0) return;
 
-    const dirTargets = targets.filter(e => e.is_dir);
-    const fileTargets = targets.filter(e => !e.is_dir);
+    // 下载前先解析符号链接一次：目录目标走目录流程、文件目标走文件流程，
+    // 断链与特殊文件目标不下载并给出原因。分类逻辑集中在 entryActivation。
+    const classification = await classifyDownloadTargets(sessionId, targets);
+    for (const notice of classification.notices) {
+      showToast("warning", t(notice.messageKey));
+    }
+    const dirTargets = classification.directories;
+    const fileTargets = classification.files;
+    if (dirTargets.length === 0 && fileTargets.length === 0) {
+      ms.clearSelection();
+      return;
+    }
 
     // Single directory → pick exact local folder, download into it
     if (dirTargets.length === 1 && fileTargets.length === 0) {
@@ -488,7 +522,7 @@ export default function FileManagerPanel({
     }
 
     ms.clearSelection();
-  }, [fm, ms, ctxTarget, isConnected, showToast, t]);
+  }, [fm, ms, ctxTarget, isConnected, sessionId, showToast, t]);
 
   const handleRename = useCallback(() => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
@@ -510,20 +544,49 @@ export default function FileManagerPanel({
     }
   }, [ms, ctxTarget]);
 
+  // 打开链接目标位置：目录目标是目标本身，文件/特殊目标是目标所在目录。
+  const handleOpenLinkTarget = useCallback(() => {
+    const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
+    if (!target || !isSymlink(target)) return;
+    void openLinkTargetLocation(sessionId, target, activationHandlers);
+  }, [activationHandlers, ms, sessionId, ctxTarget]);
+
+  // 复制链接目标原文：解析由 entryActivation 完成，断链时按错误类别提示。
+  const handleCopyLinkTarget = useCallback(async () => {
+    const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
+    if (!target || !isSymlink(target)) return;
+    const { text, messageKey } = await readLinkTargetText(sessionId, target);
+    if (text === null) {
+      if (messageKey) showToast("warning", t(messageKey));
+      return;
+    }
+    try {
+      await copyToClipboard(text);
+    } catch {
+      // Clipboard API may not be available
+    }
+  }, [ms, ctxTarget, sessionId, showToast, t]);
+
   const handleDelete = useCallback(() => {
     const targets =
       ms.selectedEntries.length > 0 ? ms.selectedEntries : ctxTarget ? [ctxTarget] : [];
     if (targets.length === 0) return;
 
-    const hasDirs = targets.some((entry) => entry.is_dir);
+    // 递归删除只用于真实目录；符号链接只删除链接本身，确认文案要说明目标不会被删除。
+    const hasDirs = targets.some((entry) => isDirectory(entry));
+    const hasLinks = targets.some((entry) => isSymlink(entry));
     const message =
       targets.length === 1
-        ? targets[0].is_dir
+        ? isDirectory(targets[0])
           ? t("fileManager.deleteDirConfirm", { name: targets[0].name })
-          : t("fileManager.deleteConfirm", { name: targets[0].name })
+          : isSymlink(targets[0])
+            ? t("fileManager.deleteSymlinkConfirm", { name: targets[0].name })
+            : t("fileManager.deleteConfirm", { name: targets[0].name })
         : hasDirs
           ? t("fileManager.confirmBatchDeleteWithDirs", { count: targets.length })
-          : t("fileManager.confirmBatchDelete", { count: targets.length });
+          : hasLinks
+            ? t("fileManager.confirmBatchDeleteWithSymlinks", { count: targets.length })
+            : t("fileManager.confirmBatchDelete", { count: targets.length });
 
     // Snapshot targets now: later selection/context-menu changes must not change what
     // the confirmation dialog is authorizing.
@@ -565,18 +628,6 @@ export default function FileManagerPanel({
     ms.clearSelection();
   }, [fm, ms, isConnected]);
 
-  // ── 打开目录 ──────────────────────────────────────────
-  const handleOpenDir = useCallback(() => {
-    const target =
-      ms.selectedEntries.length === 1 && ms.selectedEntries[0].is_dir
-        ? ms.selectedEntries[0]
-        : ctxTarget;
-    if (target?.is_dir) {
-      fm.navigateTo(target.path);
-      ms.clearSelection();
-    }
-  }, [fm, ms, ctxTarget]);
-
   // ── 属性弹窗 ──────────────────────────────────────────
   const handleProperties = useCallback(async () => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
@@ -585,34 +636,26 @@ export default function FileManagerPanel({
     const generation = ++propsRequestGenerationRef.current;
     setPropsTarget(target);
     setPropsInfo(null);
+    setPropsResolution(null);
     setPropsLoading(true);
     setPropsVisible(true);
 
-    try {
-      const info = await invoke<FileStatInfo>("sftp_stat_cmd", {
+    // 属性与链接解析并发读取；解析失败不是致命错误，属性仍按 stat / 条目回退展示。
+    const [statResult, resolutionResult] = await Promise.allSettled([
+      invoke<SftpEntry>("sftp_stat_cmd", {
         sessionId,
         remotePath: target.path,
-      });
-      if (generation !== propsRequestGenerationRef.current) return;
-      setPropsInfo(info);
-    } catch {
-      if (generation !== propsRequestGenerationRef.current) return;
-      // 如果 stat 失败，使用 entry 本身的字段作为回退
-      setPropsInfo({
-        name: target.name,
-        path: target.path,
-        is_dir: target.is_dir,
-        size: target.size,
-        accessed: target.accessed,
-        modified: target.modified,
-        permissions: target.permissions,
-        entry_type: target.entry_type,
-      });
-    } finally {
-      if (generation === propsRequestGenerationRef.current) {
-        setPropsLoading(false);
-      }
+      }),
+      isSymlink(target) ? resolveEntry(sessionId, target.path) : Promise.resolve(null),
+    ]);
+    if (generation !== propsRequestGenerationRef.current) return;
+    setPropsInfo(statResult.status === "fulfilled" ? statResult.value : target);
+    if (resolutionResult.status === "fulfilled") {
+      setPropsResolution(resolutionResult.value);
+    } else if (isSymlink(target)) {
+      setPropsResolution(resolutionFailure(target.path, resolutionResult.reason));
     }
+    setPropsLoading(false);
   }, [sessionId, ms, ctxTarget]);
 
   const closeProperties = useCallback(() => {
@@ -621,6 +664,7 @@ export default function FileManagerPanel({
     setPropsLoading(false);
     setPropsTarget(null);
     setPropsInfo(null);
+    setPropsResolution(null);
   }, []);
 
   // Connection loss invalidates transient file-service interactions such as context menus,
@@ -748,7 +792,7 @@ export default function FileManagerPanel({
     }
 
     if (contextMenuSelectedCount <= 1) {
-      if (ctxTarget.is_dir) {
+      if (isDirectory(ctxTarget)) {
         return [
           { id: "open", label: t("fileManager.open") },
           { id: "sep-open-dl", label: "", type: "separator" },
@@ -762,16 +806,37 @@ export default function FileManagerPanel({
           { id: "properties", label: t("fileManager.properties") },
         ];
       }
+      if (isSymlink(ctxTarget)) {
+        return [
+          { id: "open", label: t("fileManager.open") },
+          { id: "openLinkTarget", label: t("fileManager.openLinkTarget") },
+          { id: "sep-open-dl", label: "", type: "separator" },
+          { id: "download", label: t("fileManager.download") },
+          { id: "sep-dl", label: "", type: "separator" },
+          { id: "rename", label: t("fileManager.rename") },
+          { id: "copyPath", label: t("fileManager.copyPath") },
+          { id: "copyLinkTarget", label: t("fileManager.copyLinkTarget") },
+          { id: "sep3", label: "", type: "separator" },
+          { id: "delete", label: t("fileManager.delete"), danger: true },
+          { id: "sep4", label: "", type: "separator" },
+          { id: "properties", label: t("fileManager.properties") },
+        ];
+      }
+      // 普通文件：打开 + 下载；特殊文件（FIFO/socket/设备）不提供这两项。
       const items: ContextMenuItem[] = [];
-      if (canOpenDocument(ctxTarget)) {
+      if (canOpenAsDocument(ctxTarget)) {
         items.push(
           { id: "open", label: t("fileManager.open") },
           { id: "sep-open-dl", label: "", type: "separator" },
         );
       }
+      if (!isSpecial(ctxTarget)) {
+        items.push(
+          { id: "download", label: t("fileManager.download") },
+          { id: "sep5", label: "", type: "separator" },
+        );
+      }
       items.push(
-        { id: "download", label: t("fileManager.download") },
-        { id: "sep5", label: "", type: "separator" },
         { id: "rename", label: t("fileManager.rename") },
         { id: "copyPath", label: t("fileManager.copyPath") },
         { id: "sep6", label: "", type: "separator" },
@@ -806,10 +871,9 @@ export default function FileManagerPanel({
         case "newFile": handleNewFile(); break;
         case "newFolder": handleNewFolder(); break;
         case "refresh": handleRefresh(); break;
-        case "open":
-          if (ctxTarget?.is_dir) handleOpenDir();
-          else handleOpenDocument();
-          break;
+        case "open": handleActivate(); break;
+        case "openLinkTarget": handleOpenLinkTarget(); break;
+        case "copyLinkTarget": void handleCopyLinkTarget(); break;
         case "download": handleDownload(); break;
         case "rename": handleRename(); break;
         case "copyPath": handleCopyPath(); break;
@@ -819,9 +883,8 @@ export default function FileManagerPanel({
     },
     [
       closeContextMenu,
-      ctxTarget,
       handleUpload, handleUploadFolder, handleNewFile, handleNewFolder, handleRefresh,
-      handleOpenDir, handleOpenDocument, handleDownload, handleRename,
+      handleActivate, handleOpenLinkTarget, handleCopyLinkTarget, handleDownload, handleRename,
       handleCopyPath, handleProperties, handleDelete,
     ],
   );
@@ -1040,6 +1103,7 @@ export default function FileManagerPanel({
             visible
             entry={propsTarget}
             statInfo={propsInfo}
+            resolution={propsResolution}
             loading={propsLoading}
             onClose={closeProperties}
             sessionId={sessionId}
@@ -1050,7 +1114,7 @@ export default function FileManagerPanel({
               // Keep the existing metadata visible while refreshing after chmod.
               // Replacing the whole body with a loading state would unmount the
               // focused controls and create an unnecessary visual/focus flash.
-              invoke<FileStatInfo>("sftp_stat_cmd", {
+              invoke<SftpEntry>("sftp_stat_cmd", {
                 sessionId,
                 remotePath: target.path,
               })

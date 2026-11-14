@@ -21,13 +21,15 @@ use russh_sftp::protocol::OpenFlags;
 
 use crate::kernel::file_transfer::OverwritePolicy;
 
-use super::attrs::{entry_type_from_permissions, permissions_to_string, SftpEntry, SftpEntryType};
+use super::attrs::{
+    entry_type_from_permissions, permissions_to_string, ResolvedEntry, SftpEntry, SftpEntryType,
+};
 use super::capability::SftpCapability;
-use super::error::SftpError;
+use super::error::{SftpError, SftpErrorCode};
 
 use super::paths::{
     join as remote_join, keep_both_candidate as remote_keep_both_candidate, parts as remote_parts,
-    sibling_artifact as remote_sibling_artifact,
+    resolve_link_target, sibling_artifact as remote_sibling_artifact,
 };
 
 /// 传输缓冲区大小（256 KB — SSH 通道窗口约 2MB，256KB 在高 RTT 链路下能填满窗口）
@@ -230,7 +232,6 @@ async fn sftp_list_dir_inner(
             Some(SftpEntry {
                 name,
                 path: full_path,
-                is_dir: entry_type == SftpEntryType::Directory,
                 entry_type,
                 size: meta.size.unwrap_or(0),
                 accessed: meta.atime.map(|t| t as u64),
@@ -241,8 +242,10 @@ async fn sftp_list_dir_inner(
         .collect();
 
     result.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
+        let a_is_dir = a.entry_type == SftpEntryType::Directory;
+        let b_is_dir = b.entry_type == SftpEntryType::Directory;
+        b_is_dir
+            .cmp(&a_is_dir)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(result)
@@ -274,12 +277,138 @@ async fn sftp_stat_inner(cap: &SftpCapability, remote_path: &str) -> Result<Sftp
     Ok(SftpEntry {
         name,
         path: remote_path.to_string(),
-        is_dir: entry_type == SftpEntryType::Directory,
         entry_type,
         size: stat.size.unwrap_or(0),
         accessed: stat.atime.map(|t| t as u64),
         modified: stat.mtime.map(|t| t as u64),
         permissions: Some(permissions_to_string(stat.permissions)),
+    })
+}
+
+/// 解析一条目录项的“跟随”信息。
+///
+/// 分类使用 lstat（路径自身是什么），跟随使用 `STAT`（链接指向什么），展示用的
+/// 目标原文来自 `READLINK`，绝对路径优先 `REALPATH`。目标不可用是正常结果而非
+/// 传输错误：返回 `target_exists == false` 与 `resolution_error_*`，只有 lstat
+/// 本身失败（例如目录项已被删除）才返回 `Err`。
+pub async fn sftp_resolve_entry(
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<ResolvedEntry, SftpError> {
+    let result = sftp_resolve_entry_inner(cap, remote_path).await;
+    if let Err(error) = &result {
+        cap.invalidate_if_broken(error).await;
+    }
+    result
+}
+
+async fn sftp_resolve_entry_inner(
+    cap: &SftpCapability,
+    remote_path: &str,
+) -> Result<ResolvedEntry, SftpError> {
+    let sftp = cap.client().await?;
+
+    let lstat = sftp.symlink_metadata(remote_path).await.map_err(|error| {
+        SftpError::from_client(&error)
+            .with_message(format!("获取文件信息 '{}' 失败: {}", remote_path, error))
+    })?;
+    let entry_type = entry_type_from_permissions(lstat.permissions, lstat.is_dir());
+
+    // 非链接（或解析期间已被替换成普通对象）：路径本身就是目标。
+    if entry_type != SftpEntryType::Symlink {
+        let real_path = sftp
+            .canonicalize(remote_path)
+            .await
+            .ok()
+            .filter(|path| !path.is_empty());
+        return Ok(ResolvedEntry {
+            path: remote_path.to_string(),
+            entry_type,
+            link_target: None,
+            target_path: real_path.or_else(|| Some(remote_path.to_string())),
+            target_type: Some(entry_type),
+            target_exists: true,
+            target_size: lstat.size,
+            resolution_error_code: None,
+            resolution_error: None,
+        });
+    }
+
+    let link_target = match sftp.read_link(remote_path).await {
+        Ok(target) => Some(target),
+        Err(error) => {
+            let classified = SftpError::from_client(&error);
+            if classified.is_connection_lost() {
+                return Err(classified
+                    .with_message(format!("读取符号链接 '{}' 失败: {}", remote_path, error)));
+            }
+            log::debug!(
+                "READLINK '{}' 失败（继续用 STAT/REALPATH 解析）: {}",
+                remote_path,
+                error
+            );
+            None
+        }
+    };
+
+    let followed = sftp.metadata(remote_path).await;
+    let (target_type, target_exists, target_size, resolution_error) = match followed {
+        Ok(meta) => {
+            let kind = entry_type_from_permissions(meta.permissions, meta.is_dir());
+            // 大小只对普通文件有意义；目录/特殊文件的 size 会把 UI 引向错误判断。
+            let size = (kind == SftpEntryType::File).then_some(meta.size.unwrap_or(0));
+            (Some(kind), true, size, None)
+        }
+        Err(error) => {
+            let classified = SftpError::from_client(&error);
+            // 通道坏了不是“链接坏了”：连接失效必须让缓存会话失效并按 IPC 错误上报，
+            // 否则前端会把断线显示成无法解析的链接。
+            if classified.is_connection_lost() {
+                return Err(classified.with_message(format!(
+                    "获取符号链接目标 '{}' 信息失败: {}",
+                    remote_path, error
+                )));
+            }
+            (None, false, None, Some(classified))
+        }
+    };
+
+    // 真实路径优先 REALPATH；不可用（服务端不支持/目标不可达）时退回目标原文拼接。
+    // REALPATH 失败只在观察不到连接失效时降级，通道错误照常上抛。
+    let target_path = match sftp.canonicalize(remote_path).await {
+        Ok(path) if !path.is_empty() => Some(path),
+        Ok(_) => link_target
+            .as_deref()
+            .map(|target| resolve_link_target(remote_path, target)),
+        Err(error) => {
+            let classified = SftpError::from_client(&error);
+            if classified.is_connection_lost() {
+                return Err(classified.with_message(format!(
+                    "解析符号链接真实路径 '{}' 失败: {}",
+                    remote_path, error
+                )));
+            }
+            link_target
+                .as_deref()
+                .map(|target| resolve_link_target(remote_path, target))
+        }
+    };
+
+    let (resolution_error_code, resolution_error) = match resolution_error {
+        Some(error) => (Some(error.code), Some(error.message)),
+        None => (None, None),
+    };
+
+    Ok(ResolvedEntry {
+        path: remote_path.to_string(),
+        entry_type,
+        link_target,
+        target_path,
+        target_type,
+        target_exists,
+        target_size,
+        resolution_error_code,
+        resolution_error,
     })
 }
 
@@ -498,16 +627,32 @@ async fn commit_local_temp(
     }
 }
 
+/// 远端目标是否存在（lstat 语义）。
+///
+/// 不用 `try_exists`：后者跟随链接，悬空的符号链接会返回“不存在”，导致 FileTransfer
+/// 的 Keep Both / Skip / Replace 判断把链接当成空位而被 rename 覆盖。
+async fn remote_path_exists(
+    sftp: &russh_sftp::client::SftpSession,
+    path: &str,
+) -> Result<bool, String> {
+    match sftp.symlink_metadata(path).await {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            if SftpError::from_client(&error).code == SftpErrorCode::NotFound {
+                Ok(false)
+            } else {
+                Err(format!("检查远程目标 '{}' 失败: {}", path, error))
+            }
+        }
+    }
+}
+
 async fn resolve_remote_destination(
     sftp: &russh_sftp::client::SftpSession,
     requested: &str,
     policy: OverwritePolicy,
 ) -> Result<Option<String>, String> {
-    let exists = sftp
-        .try_exists(requested)
-        .await
-        .map_err(|e| format!("检查远程目标 '{}' 失败: {}", requested, e))?;
-    if !exists {
+    if !remote_path_exists(sftp, requested).await? {
         return Ok(Some(requested.to_string()));
     }
     match policy {
@@ -518,12 +663,15 @@ async fn resolve_remote_destination(
                 .symlink_metadata(requested)
                 .await
                 .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", requested, e))?;
-            if entry_type_from_permissions(meta.permissions, meta.is_dir())
-                == SftpEntryType::Directory
-            {
-                Err(format!("远程目标已存在且是目录: {}", requested))
-            } else {
-                Ok(Some(requested.to_string()))
+            match entry_type_from_permissions(meta.permissions, meta.is_dir()) {
+                SftpEntryType::Directory => Err(format!("远程目标已存在且是目录: {}", requested)),
+                // 写操作不穿透链接、也不替换链接：替换链接会让用户失去目标线索，
+                // 静默替换更危险。要求调用方改用 Keep Both / Skip 或先显式处理链接。
+                SftpEntryType::Symlink => Err(format!(
+                    "远程目标已存在且是符号链接（为避免替换链接，请选择保留两份或跳过）: {}",
+                    requested
+                )),
+                _ => Ok(Some(requested.to_string())),
             }
         }
     }
@@ -534,21 +682,13 @@ async fn try_commit_remote_noreplace(
     temp: &str,
     candidate: &str,
 ) -> Result<bool, String> {
-    if sftp
-        .try_exists(candidate)
-        .await
-        .map_err(|e| format!("检查远程目标 '{}' 失败: {}", candidate, e))?
-    {
+    if remote_path_exists(sftp, candidate).await? {
         return Ok(false);
     }
     match sftp.rename(temp, candidate).await {
         Ok(()) => Ok(true),
         Err(rename_error) => {
-            let now_exists = sftp
-                .try_exists(candidate)
-                .await
-                .map_err(|e| format!("重新检查远程目标 '{}' 失败: {}", candidate, e))?;
-            if now_exists {
+            if remote_path_exists(sftp, candidate).await? {
                 Ok(false)
             } else {
                 Err(format!(
@@ -588,10 +728,7 @@ async fn commit_remote_temp(
             Err(format!("无法为 '{}' 生成不冲突文件名", final_path))
         }
         OverwritePolicy::Replace => {
-            let exists = sftp
-                .try_exists(final_path)
-                .await
-                .map_err(|e| format!("检查远程目标 '{}' 失败: {}", final_path, e))?;
+            let exists = remote_path_exists(sftp, final_path).await?;
             if !exists {
                 return sftp
                     .rename(temp, final_path)
@@ -603,6 +740,16 @@ async fn commit_remote_temp(
                 .symlink_metadata(final_path)
                 .await
                 .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", final_path, e))?;
+            if entry_type_from_permissions(meta.permissions, meta.is_dir())
+                == SftpEntryType::Symlink
+            {
+                // 提交边界再次成立：从规划到 commit 之间目标可能被替换成链接，
+                // 不允许 rename 覆盖链接本身。
+                return Err(format!(
+                    "远程目标已存在且是符号链接（为避免替换链接，请选择保留两份或跳过）: {}",
+                    final_path
+                ));
+            }
             if entry_type_from_permissions(meta.permissions, meta.is_dir())
                 == SftpEntryType::Directory
             {
@@ -686,8 +833,10 @@ async fn sftp_download_inner(
 
     let (mut remote_file, remote_size, remote_mtime) = {
         let sftp = cap.client().await?;
+        // 下载是读取语义：源路径按 follow 处理，用户在文件管理器里对选中的顶层
+        // 链接点“下载”就应得到目标内容。写入端（上传/覆盖）仍保持 no-follow。
         let meta = sftp
-            .symlink_metadata(remote_path)
+            .metadata(remote_path)
             .await
             .map_err(|e| format!("获取远程文件信息 '{}' 失败: {}", remote_path, e))?;
         let entry_type = entry_type_from_permissions(meta.permissions, meta.is_dir());
@@ -752,7 +901,7 @@ async fn sftp_download_inner(
 
     let remote_unchanged = {
         let sftp = cap.client().await?;
-        match sftp.symlink_metadata(remote_path).await {
+        match sftp.metadata(remote_path).await {
             Ok(meta) => {
                 entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::File
                     && meta.size.unwrap_or(0) == remote_size
@@ -1053,7 +1202,43 @@ async fn sftp_rename_inner(
     from_path: &str,
     to_path: &str,
 ) -> Result<(), String> {
+    // 改名到同一路径是 no-op：避免重复提交被误判成目标存在。
+    if from_path == to_path {
+        return Ok(());
+    }
     let sftp = cap.client().await?;
+    // 用 lstat 而不是 try_exists：悬空的符号链接也必须算“目标已存在”，
+    // 否则 rename 会静默替换掉链接本身。
+    let target_exists = match sftp.symlink_metadata(to_path).await {
+        Ok(_) => true,
+        Err(error) => {
+            let classified = SftpError::from_client(&error);
+            if classified.code != SftpErrorCode::NotFound {
+                return Err(format!("检查重命名目标 '{}' 失败: {}", to_path, error));
+            }
+            false
+        }
+    };
+    if target_exists {
+        // 大小写不敏感的服务端（NTFS/APFS/SMB 共享）上，目标可能是同一对象的另一种
+        // 大小写；那不是覆盖，必须允许。真实路径忽略大小写相等即视为同一对象。
+        let from_real = sftp
+            .canonicalize(from_path)
+            .await
+            .map_err(|e| format!("解析重命名源路径 '{}' 失败: {}", from_path, e))?;
+        let to_real = sftp
+            .canonicalize(to_path)
+            .await
+            .map_err(|e| format!("解析重命名目标 '{}' 失败: {}", to_path, e))?;
+        if !from_real.eq_ignore_ascii_case(&to_real) {
+            // POSIX rename 会静默覆盖同名目标；文件管理器不提供隐式覆盖语义。
+            // SFTP v3 没有 rename-noreplace，检查与 rename 之间仍有并发窗口。
+            return Err(format!(
+                "重命名目标 '{}' 已存在，冲突：请更换名称或先删除目标",
+                to_path
+            ));
+        }
+    }
     sftp.rename(from_path, to_path)
         .await
         .map_err(|e| format!("重命名 '{}' -> '{}' 失败: {}", from_path, to_path, e))?;

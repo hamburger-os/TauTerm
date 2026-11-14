@@ -21,6 +21,7 @@ import {
   type OverwritePolicy,
 } from '../types';
 import { sftpErrorCode, sftpErrorMessage } from '../../../services/sftpErrors';
+import { isDirectory, isRegularFile, isSymlink } from '../entryKind';
 
 export interface UseFileManagerReturn {
   currentPath: string | null;
@@ -67,8 +68,10 @@ function sortEntries(
   field: SortField,
   direction: SortDirection,
 ): SftpEntry[] {
-  const dirs = list.filter(entry => entry.is_dir);
-  const files = list.filter(entry => !entry.is_dir);
+  // 排序分组只把真实目录（entry_type 为 directory）放在前面；符号链接即使指向
+  // 目录也留在文件组，避免“看起来是目录却被当成目录排到上面”的歧义。
+  const dirs = list.filter(entry => isDirectory(entry));
+  const files = list.filter(entry => !isDirectory(entry));
 
   const compare = (a: SftpEntry, b: SftpEntry): number => {
     let result: number;
@@ -326,7 +329,8 @@ export function useFileManager(
 
   const downloadFiles = useCallback(
     async (targetEntries: SftpEntry[]) => {
-      const files = targetEntries.filter(entry => !entry.is_dir);
+      // 调用方已把链接目标分类成文件流程；普通文件与文件目标链接都走单文件下载。
+      const files = targetEntries.filter(entry => isRegularFile(entry) || isSymlink(entry));
       if (files.length === 0) return;
 
       let downloadDir: string;
@@ -403,7 +407,9 @@ export function useFileManager(
       const failed: string[] = [];
 
       for (const entry of dirEntries) {
-        if (!entry.is_dir) continue;
+        // 调用方已把链接目标分类成目录流程；真实目录与目录目标链接都以逻辑路径
+        // 交给后端，后端对顶层链接只跟随一次。
+        if (!isDirectory(entry) && !isSymlink(entry)) continue;
         try {
           await startFileTransferAndWait(
             'receive',
@@ -479,7 +485,8 @@ export function useFileManager(
       if (currentPath === null) return [];
       if (targetEntries.length === 1) {
         const entry = targetEntries[0];
-        if (entry.is_dir) {
+        // 递归删除只用于真实目录；符号链接只删除链接本身，绝不递归进目标。
+        if (isDirectory(entry)) {
           await invoke<void>('sftp_delete_recursive_cmd', {
             sessionId,
             remotePath: entry.path,
@@ -497,7 +504,7 @@ export function useFileManager(
       const failed: string[] = [];
       for (const entry of targetEntries) {
         try {
-          if (entry.is_dir) {
+          if (isDirectory(entry)) {
             await invoke<void>('sftp_delete_recursive_cmd', {
               sessionId,
               remotePath: entry.path,
