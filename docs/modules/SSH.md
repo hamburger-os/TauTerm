@@ -21,6 +21,7 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 首次/新增算法确认与 Host Key Changed 替换都以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
 - 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走应用层注册的受信连接 contribution；
 - TCP/KEX 网络阶段与用户 Host Key 确认分别计时。网络阶段固定 deadline 不包含用户阅读时间；用户安全决策拥有独立的较长上限，确认完成后 KEX 重新获得完整网络 deadline。确认事件无法送达、用户确认过期、信任存储不可用都 fail-closed。
+- 服务器出示主机证书（host certificate）时仍 fail-closed：TauTerm 的主机身份信任源只有 `known_hosts.json` 中的指纹，没有 `@cert-authority` 一类的 CA 信任库，无法校验证书的签发授权，因此不能把“证书内公钥的指纹”当作信任依据；该拒绝会以明确原因写入日志，而不是伪装成普通的 host-key 变化或 KEX 失败。
 
 `known_hosts.json` 只保存公开主机身份信息，不保存密码、私钥或 passphrase。
 
@@ -44,7 +45,7 @@ RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端�
 
 `SshRuntime` 的强引用只由 SessionStore 持有的 service / file-transfer / channel-factory capability graph 管理。注册到 `PluginRuntime` 的 `SshAdapter` 自己持有 `SessionRuntimeRegistry<SshRuntime>` 弱索引；该索引不拥有连接、不能延长连接生命周期，失效 weak entry 会被视为运行时不可用并清理。SSH 不使用模块级静态 runtime registry，因此插件实例与其私有运行态索引具有明确 ownership，SessionStore 仍是运行时资源生命周期的单一强 ownership source。
 
-SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过专用通道工作，不把文件管理或日志读取伪装成终端字节流；通道分工与能力模型见下节。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
+SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过专用通道工作，不把文件管理或日志读取伪装成终端字节流；通道分工与能力模型见下节。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录；递归传输默认不跟随符号链接，批量 Replace 拒绝替换链接本身，唯一例外是文件管理器里用户显式选中的顶层条目（解析一次并跟随，见下文）；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
 
 ### 侧通道能力模型
 

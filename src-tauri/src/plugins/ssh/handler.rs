@@ -6,7 +6,7 @@
 //! `build_connection` 在另一个 select 分支中完成信任判断或通知前端。
 
 use russh::client::Handler;
-use russh::keys::HashAlg;
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use tokio::sync::oneshot;
 
 /// 主机密钥验证请求
@@ -48,10 +48,26 @@ impl Handler for SshHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let algorithm = server_public_key.algorithm().as_str().to_string();
-        let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
+        // russh 0.63 起客户端也能收到服务器出示的主机证书（host certificate）。
+        // TauTerm 的信任模型只有 known_hosts 里的主机公钥指纹，没有 `@cert-authority`
+        // 一类的 CA 信任库，无法判断证书是否由受信 CA 签发给本主机；按“证书内公钥的
+        // 指纹”直接信任会把 CA 授权语义替换成 TOFU，因此这里显式拒绝，并给出可诊断
+        // 的原因，而不是退回 0.62 时那种无法解释的 KEX 失败。
+        let public_key = match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            PublicKeyOrCertificate::Certificate(certificate) => {
+                log::error!(
+                    "SSH 服务器出示主机证书（{}）；TauTerm 尚未支持 CA 主机证书信任，拒绝连接",
+                    certificate.algorithm().as_str()
+                );
+                return Ok(false);
+            }
+        };
+
+        let algorithm = public_key.algorithm().as_str().to_string();
+        let fingerprint = public_key.fingerprint(HashAlg::Sha256).to_string();
 
         // 原始 KEX 回调属于协议细节；INFO 只保留上层 trust decision，避免同一
         // fingerprint 在 handler / verifier / session 三层重复刷屏。
