@@ -26,6 +26,7 @@ import { useToast } from "./context/ToastContext";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
+import { useTerminalActions } from "./hooks/useTerminalActions";
 import { pluginRegistry } from "./core/plugin-registry";
 import { usePluginSendBarVisible, usePluginSendTargetVisible } from "./core/usePluginRuntime";
 import { ACTION_IDS } from "./shortcuts/actionIds";
@@ -45,6 +46,9 @@ function AppInner() {
   const { state: sessionState, refreshEndpoints, disconnect, closeChannel, switchTab } = useSession();
   const { state: transferState } = useTransfer();
   const { registerAction, executeAction } = useKeyboard();
+  // Terminal commands (copy/paste/search/select-all/clear/reset) are global actions
+  // that follow the active terminal surface; see useTerminalActions.
+  useTerminalActions();
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);

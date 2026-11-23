@@ -1,11 +1,11 @@
 import type { IModes, Terminal } from "@xterm/xterm";
 
 /**
- * Host-side view of the terminal's emulation state.
+ * Host-side terminal commands + read-only view of the terminal's emulation state.
  *
- * xterm.js owns every VT mode bit; TauTerm only *reads* the sanctioned
- * `Terminal.modes` / active-buffer APIs so the Workspace can explain or recover
- * a full-screen application without parsing or rewriting PTY output.
+ * xterm.js owns every VT mode bit and every byte-driven screen operation. The host
+ * only *reads* the sanctioned `Terminal.modes` / active-buffer APIs and exposes the
+ * two explicit local commands below; it never parses or rewrites PTY output.
  */
 export interface TerminalPresentation {
   /** Active buffer is the alternate screen (`CSI ? 1049 h` and friends). */
@@ -41,4 +41,16 @@ export function isSameTerminalPresentation(
  */
 export function resetTerminalSurface(term: Terminal): void {
   term.reset();
+}
+
+/**
+ * Clear the screen *and* its scrollback, keeping the cursor line as the new first
+ * line (xterm's "clear the entire buffer"). This is the host-side command, not a
+ * byte-stream clear: a remote `clear` follows VT semantics (ED2 erases only the
+ * viewport, ED3 erases saved lines), so the two must never be conflated. Data
+ * sources that can restore their own history on remount (RTT) are told to drop
+ * their replay window separately via `TerminalSurfaceSource.clearReplayHistory`.
+ */
+export function clearTerminalSurface(term: Terminal): void {
+  term.clear();
 }

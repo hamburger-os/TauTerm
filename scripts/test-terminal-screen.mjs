@@ -191,4 +191,75 @@ assert.match(
   "TerminalSurface must pass convertEol into the shared xterm option builder",
 );
 
+// ---------------------------------------------------------------------------
+// Clear semantics: ED2 (the byte-stream clear a shell emits) vs ED3 / host clear.
+//
+// A remote `clear` is not a host command: it sends whatever terminfo tells it to.
+// ED2 erases only the viewport and *keeps* saved lines, ED3 erases saved lines.
+// The scrollbar and upward scrolling are derived from the buffer length, so a
+// screenshot "clear left history behind" is exactly an ED2-only clear — not a
+// TauTerm bug and not something the host may fix by rewriting the byte stream.
+// The explicit host command is xterm's `clear()` (screen + scrollback, cursor
+// line kept). Pin all three so a future option or upstream change cannot make
+// the byte-stream clear silently eat history.
+// ---------------------------------------------------------------------------
+const SCROLLBACK_LINES = 30;
+const SCROLLBACK_TEXT = Array.from(
+  { length: SCROLLBACK_LINES },
+  (_, i) => `line-${String(i).padStart(3, "0")}`,
+).join("\r\n") + "\r\n";
+
+function createScrollbackTerminal() {
+  return new Terminal({
+    cols: 40,
+    rows: 10,
+    scrollback: 100,
+    convertEol: false,
+    allowTransparency: true,
+    customGlyphs: true,
+    allowProposedApi: true,
+  });
+}
+
+function writeAndWait(terminal, data) {
+  return new Promise((done) => terminal.write(data, done));
+}
+
+const ed2 = createScrollbackTerminal();
+await writeAndWait(ed2, SCROLLBACK_TEXT);
+assert.equal(ed2.buffer.active.baseY, SCROLLBACK_LINES + 1 - 10, "setup: saved lines must exist");
+
+await writeAndWait(ed2, "\x1b[H\x1b[2J"); // ED2: what a plain `clear` emits
+assert.equal(ed2.buffer.active.baseY, SCROLLBACK_LINES + 1 - 10, "ED2 must keep saved lines");
+assert.equal(rowText(ed2, 0), "line-000", "ED2 must leave the oldest saved line addressable");
+assert.equal(rowText(ed2, 20), "line-020", "the last saved line before the viewport must survive ED2");
+assert.equal(rowText(ed2, 21), "", "ED2 must still erase the viewport rows");
+
+const ed3 = createScrollbackTerminal();
+await writeAndWait(ed3, SCROLLBACK_TEXT);
+await writeAndWait(ed3, "\x1b[3J"); // ED3: "Erase Saved Lines"
+assert.equal(ed3.buffer.active.baseY, 0, "ED3 must drop the saved lines");
+assert.equal(ed3.buffer.active.length, 10, "ED3 must keep exactly one viewport of lines");
+
+const hostClear = createScrollbackTerminal();
+await writeAndWait(hostClear, SCROLLBACK_TEXT);
+hostClear.clear();
+assert.equal(hostClear.buffer.active.baseY, 0, "the host clear command must drop the saved lines");
+assert.equal(hostClear.buffer.active.length, 10, "the host clear command must keep exactly one viewport");
+
+// Source contract: TauTerm must not opt into xterm's non-canonical "push erased
+// text into scrollback" mode (PuTTY emulation) — the option is what decides the
+// ED2 branch in xterm's InputHandler.
+const themeSource = readFileSync(resolve(ROOT, "src", "components", "Terminal", "terminalTheme.ts"), "utf8");
+assert.doesNotMatch(
+  themeSource,
+  /scrollOnEraseInDisplay/,
+  "the shared xterm options must not set scrollOnEraseInDisplay (ED2 is canonical)",
+);
+assert.match(
+  surfaceSource,
+  /clearTerminalSurface\(term\)/,
+  "the Clear command must go through the shared core clear helper, not a second inline implementation",
+);
+
 console.log(`terminal-screen: pinned ${ART_ROWS.length} logo rows, their 24-bit half-block colours and the PTY convertEol wiring`);

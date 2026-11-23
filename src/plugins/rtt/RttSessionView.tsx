@@ -93,6 +93,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
   const { state, disconnect } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
+  const sessionActive = state.activeTabId === sessionId;
   const connected = tab?.state === "connected";
   const runtimeReadable = connected || tab?.disconnectInfo?.retain_terminal === true;
   const runtime = usePluginRuntime<RttRuntimeSnapshot>("rtt", sessionId);
@@ -119,9 +120,15 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
   chunksRef.current = chunks;
   const channelIndexRef = useRef<number | null>(selectedChannel);
   channelIndexRef.current = selectedChannel;
+  // Generation comes from the runtime snapshot, not from the chunks currently in
+  // the replay window: the surface may mount before history finishes loading.
+  const generationRef = useRef<number | null>(snapshot?.generation ?? null);
+  generationRef.current = snapshot?.generation ?? null;
   const terminalSource = useMemo(
     () => createRttTerminalSource({
       getChunks: () => chunksRef.current,
+      getChannelIndex: () => channelIndexRef.current,
+      getGeneration: () => generationRef.current,
       send: (data) => {
         const channelIndex = channelIndexRef.current;
         if (channelIndex == null) return;
@@ -345,6 +352,7 @@ export default function RttSessionView({ sessionId }: { sessionId: string }) {
                     source={terminalSource}
                     inputEnabled={connected && usableDown}
                     convertEol
+                    isActive={sessionActive}
                     onDisconnectSession={connected ? () => void disconnect(sessionId) : undefined}
                   />
                 ) : mode === "log" ? (

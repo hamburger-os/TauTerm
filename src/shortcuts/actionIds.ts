@@ -16,6 +16,8 @@ export const ACTION_IDS = {
   TERMINAL_PASTE: "terminal.paste",
   TERMINAL_SEARCH: "terminal.search",
   TERMINAL_SELECT_ALL: "terminal.selectAll",
+  TERMINAL_CLEAR: "terminal.clear",
+  TERMINAL_RESET: "terminal.reset",
 
   // Workspace
   WORKSPACE_SPLIT_RIGHT: "workspace.splitRight",

@@ -43,6 +43,7 @@ flowchart TB
 - WSL 端点发现与工作目录探针都经 `kernel::process::hidden_command` 启动。Windows 子进程可见性边界（含 UAC 提权 helper 的 `SW_HIDE` 例外）由 [PLATFORM_SECURITY.md](PLATFORM_SECURITY.md) 拥有，由 `npm run check:windows-spawn` 锁定，本文不复述其机制。
 - `LocalShellConfig::resolve()` 是**纯计算**：只做参数校验、executable 解析、工作目录/argv 拼装，不启动任何进程。它同时服务于“生成默认会话名”，因此任何探测放进 `resolve()` 都会变成“改一个配置项就跑一次发行版”。WSL 工作目录的存在性由 `connect_with_mode` 在建立 PTY 前用一次隐藏探针确认，并放在 blocking worker 上执行。
 - 该探针不能被删除：`wsl.exe --cd <dir>` 对**不存在**的目录不会失败——实测它只在 stderr 报一行 `chdir(...) failed`，然后在 `/` 里启动进程并返回 0。因此探针不再依赖 `--cd` 的退出码，而是在同一个发行版/同一用户下直接 `cd` 到目标目录（与真实会话同一个 chdir）；成功即通过，失败返回专用退出码（目录不可用）并给出明确错误。`~`/`~/…` 在探针脚本内用 `$HOME` 展开，路径以位置参数传入，不参与 shell 语法拼接。探针有界（15s，进程等待与管道收集都受限）并在超时后 kill。
+- Local Shell 启动的 shell 进程固定获得 `TERM=xterm-256color` 与 `COLORTERM=truecolor`；配置的环境变量行在默认值之后应用，因此显式 `TERM` 行可覆盖它。子进程看到的 terminal type 决定 `clear` 等 terminfo 行为，宿主不改写其输出。
 - Local Shell 的 PTY 以宿主共享初始几何（`crate::session::DEFAULT_TERMINAL_COLUMNS/ROWS`）=120×30 建立，不依赖 `portable-pty` 的默认 24×80。终端几何的所有权、前端首次 `fit()` 的下发时机与防抖策略由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 拥有。
 
 ## 代码锚点

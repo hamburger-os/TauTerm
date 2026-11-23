@@ -127,7 +127,7 @@ flowchart TB
 - Keep Both/Skip 的冲突语义必须在最终 commit 时再次成立；目录 Keep Both 必须创建独立根目录，不允许静默合并到已有目录。文件管理器支持文件与目录上传；目录上传保留空目录并默认跳过本地符号链接/特殊文件。
 - 桌面拖放上传使用 Tauri 原生 WebView drag/drop 路径事件，并按窗口 scale factor 把物理坐标映射到 DOM 逻辑坐标；只有文件管理器面板命中的 drop 才接受。拖放路径可能混合文件/目录，因此发生同名冲突时只提供 Keep Both/Skip，不提供目录级危险 Replace。
 - 从 SFTP 远端名称派生本地下载路径时，后端逐组件执行跨平台安全验证；Linux 远端合法的反斜杠文件名不能在 Windows 客户端被重新解释成目录分隔符。
-- 交互式终端通道的 pty-req 使用宿主共享初始几何（`crate::session::DEFAULT_TERMINAL_COLUMNS/ROWS`）=120×30，并单独发送 `COLORTERM=truecolor` env 请求（服务端未配置 `AcceptEnv` 时静默忽略）。终端几何的所有权、前端 `fit()` 下发时机与防抖策略由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 拥有。***terminal modes 列表保持为空***：pty-req 的 modes 是“客户端本地 termios 的镜像”，而 TauTerm 没有也不应该伪造一份本地 termios——服务端默认值加上远端程序自己的 `tcsetattr` 才是权威。`want_reply` 的 Success/Failure 作为通道控制消息被读取循环消费（`SshDriver` 统一忽略非数据消息），因此拒绝 pty 的表现是“拿到一个非 tty 的 shell”，而不是一个需要额外超时机制去验证的握手分支。
+- 交互式终端通道的 pty-req 使用宿主共享初始几何（`crate::session::DEFAULT_TERMINAL_COLUMNS/ROWS`）=120×30，终端类型固定为 `xterm-256color`（sshd 将其导出为远端 `TERM`；远端 `clear`、TUI 配色与终端能力查询都以该值与远端 terminfo 为准），并单独发送 `COLORTERM=truecolor` env 请求（服务端未配置 `AcceptEnv` 时静默忽略）。终端几何的所有权、前端 `fit()` 下发时机与防抖策略由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 拥有。***terminal modes 列表保持为空***：pty-req 的 modes 是“客户端本地 termios 的镜像”，而 TauTerm 没有也不应该伪造一份本地 termios——服务端默认值加上远端程序自己的 `tcsetattr` 才是权威。`want_reply` 的 Success/Failure 作为通道控制消息被读取循环消费（`SshDriver` 统一忽略非数据消息），因此拒绝 pty 的表现是“拿到一个非 tty 的 shell”，而不是一个需要额外超时机制去验证的握手分支。
 - SSH 通道对终端字节是透明的：后端不解码、不换行转换、不剥离序列。宿主侧“UTF-8 会话把字节直接交给 xterm”的呈现契约由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 拥有。
 - 父配置可以持久化；临时 child terminal 的运行状态不能作为 Workspace 可恢复资源。
 - 凭据存储策略由平台安全模块统一负责，SSH 只消费安全凭据接口；运行时配置不能通过 Debug 输出秘密，生命周期结束应主动清理秘密缓冲区。
