@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] — 2026-11-24
+
 ### Added
 - **Terminal renderer setting** — `Settings → Appearance → Terminal renderer` switches the terminal between `auto` (GPU preferred, DOM fallback) and `cpu` (WebGL off). A fully transparent WebGL surface is a known defect class on some WebView combinations; the CPU tier is the only way to bind a rendering problem to the renderer without changing any data. The policy is owned by `src/core/terminal-renderer.ts`, and the context-menu state summary now distinguishes “user disabled WebGL” from “WebGL unavailable, fell back to DOM”.
 - **`check:windows-spawn` gate** — locks the rule that every background child process goes through `kernel::process::hidden_command`; the only exceptions are user-visible launchers, annotated inline with `// visible-launcher: <reason>`.
