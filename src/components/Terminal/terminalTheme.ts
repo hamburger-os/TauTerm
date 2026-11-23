@@ -207,7 +207,15 @@ export function createTerminalOptions(input: TerminalOptionsInput): ITerminalOpt
     // so half-block logos, TUI borders and character scrollbars end up with 1px seams.
     customGlyphs: true,
     cursorBlink: true,
-    cursorStyle: "underline",
+    // 方块光标：xterm 6 的默认值本来就是 `block`，TauTerm 仍然显式写出，因为
+    // 光标形态是用户可见契约——本仓库曾把它强制成 `underline`，而 WebGL 渲染器
+    // 只画 1 个设备像素高的一条线，在深色玻璃背景 + 高分屏上等于"没有光标"
+    // （vim/less/htop 都按覆盖字符的方块设计）。不允许再依赖上游默认值表达它。
+    // 应用仍可用 DECSCUSR 覆盖：xterm 的 `decPrivateModes.cursorStyle` 优先于选项。
+    cursorStyle: "block",
+    // 失焦形态同样显式写出（xterm 6 默认即 `outline`）：失焦时仍要能看见光标，
+    // 这只是让该契约不随上游默认值漂移，不是新的行为。
+    cursorInactiveStyle: "outline",
     allowProposedApi: true,
     scrollback: input.scrollback,
   };

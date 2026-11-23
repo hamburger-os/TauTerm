@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -359,7 +359,7 @@ impl TrdpRuntime {
                 "TRDP 原生桥接组件未就绪。npm run tauri dev 会自动构建；也可运行 npm run trdp:build 诊断。".to_string()
             })?;
 
-        let mut child = Command::new(&bridge)
+        let mut child = crate::kernel::process::hidden_command(&bridge)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1476,7 +1476,7 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
             "TRDP 原生桥接组件未就绪。`npm run tauri dev` 会自动构建该组件；如果开发启动失败，请确认 CMake 3.20+ 与 Windows C++ 构建工具链可用。也可单独运行 `npm run trdp:build` 诊断原生构建。".to_string()
         })?;
 
-    let mut child = Command::new(&bridge)
+    let mut child = crate::kernel::process::hidden_command(&bridge)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

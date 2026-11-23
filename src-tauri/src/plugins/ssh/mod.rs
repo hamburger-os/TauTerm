@@ -1171,13 +1171,33 @@ pub async fn open_pty_shell_channel(
                 reason: format!("打开 SSH 通道失败: {e}"),
             })?;
 
-    // 2. 请求 PTY（终端）
+    // 2. 请求 PTY（终端）。
+    //
+    // 几何只在这里给一个确定的初始值；真正的视口尺寸由前端首个 `fit()` 后通过
+    // `resize_pty` → `window_change` 下发（见 `crate::session::DEFAULT_TERMINAL_*`）。
+    //
+    // 终端模式列表保持为空：pty-req 的 modes 是“客户端本地 termios 的镜像”，
+    // 而 TauTerm 没有也不应该伪造一份本地 termios —— 服务端默认值 + 远端程序
+    // 自己的 tcsetattr 才是权威。
     channel
-        .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+        .request_pty(
+            true,
+            "xterm-256color",
+            u32::from(crate::session::DEFAULT_TERMINAL_COLUMNS),
+            u32::from(crate::session::DEFAULT_TERMINAL_ROWS),
+            0,
+            0,
+            &[],
+        )
         .await
         .map_err(|e| SessionError::ConnectionFailed {
             reason: format!("请求 PTY 失败: {e}"),
         })?;
+
+    // 2b. 颜色能力：24-bit 颜色不是 TERM 能表达的，必须走 env 请求（与 OpenSSH 一样
+    // 在 pty-req 之后、shell 之前发送）。服务端未配置 `AcceptEnv` 时会拒绝，
+    // `want_reply=false` 让该请求不产生任何可失败握手。
+    let _ = channel.set_env(false, "COLORTERM", "truecolor").await;
 
     // 3. 启动 shell
     channel

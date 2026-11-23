@@ -48,6 +48,18 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * 文本会话的展示缓冲。
+ *
+ * UTF-8 会话直接攒**字节**交给 xterm：xterm 自己就是这条字节流的 UTF-8 解码器
+ * 唯一所有者，宿主再解一遍只是多一次 string 往返，并会把任何非 UTF-8 字节
+ * 静默替换成 U+FFFD。只有显式声明了非 UTF-8 编码的会话（串口/网络调试）才
+ * 需要宿主先解码一次。
+ */
+interface TextFrameBuffer {
+  asBytes: boolean;
+  chunks: (Uint8Array | string)[];
+}
 
 /** 将原始字节数据转换为 DualLine 基础结构（id 由调用方分配以保证单调递增） */
 function dataToDualLine(data: Uint8Array, direction: "RX" | "TX"): Omit<DualLine, "id"> {
@@ -133,7 +145,7 @@ export default function TerminalView({
   const frameBufRef = useRef<Map<string, { buffer: Uint8Array[]; timer: ReturnType<typeof setTimeout> | null; generation: number }>>(new Map());
   const [dualLines, setDualLines] = useState<Map<string, DualLine[]>>(new Map());
   const pendingDualRef = useRef<Map<string, DualLine[]>>(new Map());
-  const pendingTextRef = useRef<Map<string, string[]>>(new Map());
+  const pendingTextRef = useRef<Map<string, TextFrameBuffer>>(new Map());
   const pendingStartupDataRef = useRef(new PendingSessionData());
   const sessionDataHandlerRef = useRef<(sessionId: string, data: Uint8Array) => void>(() => {});
   const textRafIdRef = useRef<number | null>(null);
@@ -273,10 +285,14 @@ export default function TerminalView({
     const snapshot = new Map(pending);
     pending.clear();
 
-    for (const [sessionId, chunks] of snapshot) {
+    for (const [sessionId, frame] of snapshot) {
       const writeFn = writeRefs.current.get(sessionId);
-      if (!writeFn) continue;
-      const merged = chunks.join("");
+      if (!writeFn || frame.chunks.length === 0) continue;
+      if (frame.asBytes) {
+        writeFn(concatBytes(frame.chunks as Uint8Array[]));
+        continue;
+      }
+      const merged = (frame.chunks as string[]).join("");
       if (merged.length === 0) continue;
       writeFn(merged);
     }
@@ -368,10 +384,17 @@ export default function TerminalView({
           pushDualLine(sessionId, "RX", frameData, decoded);
         });
       } else {
-        const text = getSessionDecoder(sessionId).decode(data, { stream: true });
+        // `decoder.encoding` is the canonical name ("utf-8" for every UTF-8 label),
+        // so it decides whether the host may hand raw bytes to xterm unchanged.
+        const decoder = getSessionDecoder(sessionId);
+        const asBytes = decoder.encoding === "utf-8";
         const pending = pendingTextRef.current;
-        if (!pending.has(sessionId)) pending.set(sessionId, []);
-        pending.get(sessionId)!.push(text);
+        let frame = pending.get(sessionId);
+        if (!frame || frame.asBytes !== asBytes) {
+          frame = { asBytes, chunks: [] };
+          pending.set(sessionId, frame);
+        }
+        frame.chunks.push(asBytes ? data : decoder.decode(data, { stream: true }));
         if (textRafIdRef.current === null) textRafIdRef.current = requestAnimationFrame(flushTextBuffers);
       }
     };

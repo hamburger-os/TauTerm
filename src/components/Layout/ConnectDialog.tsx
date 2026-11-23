@@ -275,7 +275,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             exit={{ y: 20, scale: 0.95, opacity: 0 }}
             transition={{ duration: 0.15, delay: 0.05, ease: [0.4, 0, 0.2, 1] }}
           >
-            <div className={`${styles.dialog} liquid-glass`}>
+            <div className={`${styles.dialog} liquid-glass`} role="dialog" aria-modal="true">
               {step === "mode" ? (
                 <>
                   <h2 className={styles.title}>{t("session.newSession")}</h2>

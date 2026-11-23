@@ -734,21 +734,21 @@ pub async fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
 
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("explorer")
+            std::process::Command::new("explorer") // visible-launcher: the user asked to open a folder in the OS file manager
                 .arg(&path)
                 .spawn()
                 .map_err(|e| format!("打开目录失败: {}", e))?;
         }
         #[cfg(target_os = "macos")]
         {
-            std::process::Command::new("open")
+            std::process::Command::new("open") // visible-launcher: the user asked to open a folder in the OS file manager
                 .arg(&path)
                 .spawn()
                 .map_err(|e| format!("打开目录失败: {}", e))?;
         }
         #[cfg(target_os = "linux")]
         {
-            std::process::Command::new("xdg-open")
+            std::process::Command::new("xdg-open") // visible-launcher: the user asked to open a folder in the OS file manager
                 .arg(&path)
                 .spawn()
                 .map_err(|e| format!("打开目录失败: {}", e))?;

@@ -15,6 +15,7 @@
 //! - `log_filename`    — System/Session 共用的按 segment 创建时间可排序文件名协议
 //! - `log_writer`      — 单日志文件写入器，格式化（text/hex/dual）、自动分卷
 //! - `charset`         — 字符编码转码（UTF-8 ↔ GBK/Big5/Shift-JIS 等，发送转码 + 日志解码）
+//! - `process`         — 子进程可见性：桌面构建上唯一允许的后台进程启动入口
 
 pub mod charset;
 pub mod config_store;
@@ -26,6 +27,7 @@ pub mod log_writer;
 pub mod persistence;
 pub mod plugin_adapter;
 pub mod plugin_runtime;
+pub mod process;
 pub mod script_engine;
 pub mod session_store;
 pub mod theme_engine;

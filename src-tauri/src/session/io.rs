@@ -217,6 +217,16 @@ impl SessionIo {
             .is_some_and(DataPlaneHandle::is_connected)
     }
 
+    /// 该 Session 的数据面是否拥有终端几何能力（只有 PTY 类驱动支持）。
+    ///
+    /// 串口/网络等原始字节流没有终端尺寸可通知，调用方应据此跳过 `resize_terminal`
+    /// 而不是把"不支持"当成错误上报。
+    pub fn supports_terminal_control(&self) -> bool {
+        self.primary
+            .as_ref()
+            .is_some_and(DataPlaneHandle::supports_terminal_control)
+    }
+
     pub fn is_exclusive(&self) -> bool {
         self.primary
             .as_ref()

@@ -1,4 +1,9 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import {
+  DEFAULT_TERMINAL_RENDERER_POLICY,
+  isTerminalRendererPolicy,
+  type TerminalRendererPolicy,
+} from "../core/terminal-renderer";
 
 export type ThemeId = "spectrum-flow" | "obsidian" | "frosted";
 export type VisualPerformanceMode = "quality" | "performance";
@@ -56,6 +61,14 @@ interface ThemeContextValue {
   /** 终端行缓冲上限（所有模式统一），范围 1,000–100,000，默认 10,000 */
   bufferLines: number;
   setBufferLines: (n: number) => void;
+  /**
+   * 终端渲染器策略：`auto` 优先 GPU 并在 WebGL 不可用时回退 CPU，`cpu` 完全关闭 WebGL。
+   *
+   * 这是用户可见的降级开关：透明玻璃背景 + WebGL 在部分 WebView 组合下存在渲染缺陷，
+   * 关闭 WebGL 是唯一不影响数据的自证手段。
+   */
+  terminalRenderer: TerminalRendererPolicy;
+  setTerminalRenderer: (policy: TerminalRendererPolicy) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -85,6 +98,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     readStoredNumber("tauterm-buffer-lines", BUFFER_LINES_MIN, BUFFER_LINES_MAX, BUFFER_LINES_DEFAULT),
   );
 
+  const [terminalRenderer, setTerminalRendererState] = useState<TerminalRendererPolicy>(() => {
+    const stored = localStorage.getItem("tauterm-terminal-renderer");
+    return isTerminalRendererPolicy(stored) ? stored : DEFAULT_TERMINAL_RENDERER_POLICY;
+  });
+
   const setTheme = useCallback((newTheme: ThemeId) => {
     setThemeState(newTheme);
     localStorage.setItem("tauterm-theme", newTheme);
@@ -107,6 +125,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!Number.isFinite(n) || n < BUFFER_LINES_MIN || n > BUFFER_LINES_MAX) return;
     setBufferLinesState(n);
     localStorage.setItem("tauterm-buffer-lines", String(n));
+  }, []);
+
+  const setTerminalRenderer = useCallback((policy: TerminalRendererPolicy) => {
+    if (!isTerminalRendererPolicy(policy)) return;
+    setTerminalRendererState(policy);
+    localStorage.setItem("tauterm-terminal-renderer", policy);
   }, []);
 
   // Apply theme / performance tier on mount and changes.
@@ -177,6 +201,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (e.key === "tauterm-performance-mode" && isPerformanceMode(e.newValue)) {
         setPerformanceModeState(e.newValue);
       }
+      if (e.key === "tauterm-terminal-renderer" && isTerminalRendererPolicy(e.newValue)) {
+        setTerminalRendererState(e.newValue);
+      }
     };
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
@@ -195,6 +222,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         setFontSize,
         bufferLines,
         setBufferLines,
+        terminalRenderer,
+        setTerminalRenderer,
       }}
     >
       {children}

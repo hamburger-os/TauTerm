@@ -130,8 +130,7 @@
     "deletePersistFailed": "删除会话配置失败：{{error}}。会话仍保留在列表中，可重试删除。",
     "loadPersistFailed": "加载已保存会话失败：{{error}}。磁盘上的会话库未被修改。",
     "workspaceLoadFailed": "读取工作区布局失败：{{error}}。自动保存布局已暂停，磁盘布局保持不变。请重启应用后重试。",
-    "renamePersistFailed": "重命名已保存会话失败：{{error}}。已恢复原名称。",
-    "displayOverflow": "{{session}} 的显示队列已过载，Presentation Path 已丢弃 {{count}} 个数据块。线路数据不因此判定丢失，但当前屏幕内容可能不完整。"
+    "renamePersistFailed": "重命名已保存会话失败：{{error}}。已恢复原名称。"
   },
   "stats": {
     "txBytes": "发送",
@@ -871,6 +870,10 @@
     "fontSizeNote": "更改后立即对所有终端视图生效",
     "bufferLines": "缓冲行数",
     "bufferLinesNote": "行（1,000–100,000）。更改后立即对所有模式生效",
+    "terminalRenderer": "终端渲染器",
+    "terminalRendererDesc": "自动会在你正在看的终端上使用 GPU 渲染器，WebGL 不可用时回退到 CPU 渲染器。若终端显示异常（例如光标始终不出现），可切换到 CPU。",
+    "terminalRendererAuto": "自动（优先 GPU）",
+    "terminalRendererCpu": "CPU（关闭 WebGL）",
     "languageLabel": "界面语言",
     "languageZh": "中文",
     "languageEn": "English",
@@ -1022,6 +1025,7 @@
     "fullscreenApp": "全屏应用",
     "mouseReporting": "鼠标上报：{{mode}}",
     "rendererFallback": "渲染器：DOM 回退（无 WebGL）",
+    "rendererCpu": "渲染器：CPU（已关闭 WebGL）",
     "pasteWarningTitle": "确认终端粘贴",
     "pasteWarningMessage": "此内容包含换行或较大数据量，粘贴后可能立即提交输入，或一次向远端/设备发送大量数据。请确认内容后继续。",
     "pasteWarningMeta": "{{lines}} 行内容 · {{characters}} 个字符",

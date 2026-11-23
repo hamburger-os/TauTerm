@@ -301,19 +301,16 @@ fn start_native_crash_helper() -> Result<(), String> {
 
     use std::io::Read;
     use std::os::windows::io::AsRawHandle;
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    use std::process::Stdio;
 
     let executable =
         std::env::current_exe().map_err(|error| format!("resolve current executable: {error}"))?;
-    let mut child = Command::new(executable)
+    let mut child = crate::kernel::process::hidden_command(executable)
         .arg(CRASH_HELPER_ARG)
         .arg(std::process::id().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|error| format!("start crash helper: {error}"))?;
     let stdin = child

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Terminal renderer setting** — `Settings → Appearance → Terminal renderer` switches the terminal between `auto` (GPU preferred, DOM fallback) and `cpu` (WebGL off). A fully transparent WebGL surface is a known defect class on some WebView combinations; the CPU tier is the only way to bind a rendering problem to the renderer without changing any data. The policy is owned by `src/core/terminal-renderer.ts`, and the context-menu state summary now distinguishes “user disabled WebGL” from “WebGL unavailable, fell back to DOM”.
+- **`check:windows-spawn` gate** — locks the rule that every background child process goes through `kernel::process::hidden_command`; the only exceptions are user-visible launchers, annotated inline with `// visible-launcher: <reason>`.
+
+### Changed
+- **Terminal cursor is a block again** — the shared option builder forced `cursorStyle: "underline"`, which xterm's WebGL renderer draws as a single device pixel at the bottom of the cell. On a dark glass surface at 125–150% scaling that is sub-CSS-pixel high, so vim/less/htop looked like they had no cursor at all while input and the ruler kept working. The default is now `block` with an explicit `outline` when the terminal is unfocused; applications can still override it through DECSCUSR.
+- **UTF-8 terminal bytes reach xterm undecoded** — the presentation path no longer runs `TextDecoder` over PTY output and hands xterm a string it immediately re-encodes. xterm is the single owner of UTF-8 decoding for its byte stream; only sessions that declare a non-UTF-8 encoding are transcoded by the host.
+- **Presentation path never drops bytes** — when the display batch queue is full, `DataBatcher::push` now blocks the session's receive pump instead of discarding the chunk. Dropped chunks could split a CSI/OSC sequence and leave xterm permanently misparsed. The `session-display-overflow` event, its toast and its drop counter are removed; a stalled presentation queue now logs a warning instead. Backpressure stops at the bounded DataPlane subscription: a sustained stall detaches that consumer and ends as an explicit session disconnect, never as a silent byte loss.
+- **Terminal keyboard focus has one owner** — `src/components/Terminal/terminalFocus.ts` decides when a terminal may take focus (never over an open modal or a real text field). Connecting, switching tabs and switching panes now focus the active terminal; previously nothing did, so keystrokes could land on a host button while output kept rendering.
+- **`convertEol` is a required terminal-surface prop** — it decides byte-stream semantics and has no safe default, so a forgotten prop is now a type error instead of silently rewriting PTY line endings.
+- **PTY geometry has one explicit initial value** — Local Shell and SSH now create their terminal at `session::DEFAULT_TERMINAL_COLUMNS/ROWS` (120×30) instead of portable-pty's implicit 24×80 and SSH's hard-coded 80×24. The frontend remains the geometry owner: its first `fit()` is sent immediately (no debounce, no drop when `runtimeId` is not ready yet), later resizes stay debounced, and failures are reported to System Log instead of being swallowed. SSH additionally requests `COLORTERM=truecolor`; its pty-req mode list stays empty because TauTerm owns no local termios to mirror.
+
+### Fixed
+- **Console window flashing on WSL session create/connect** — `wsl.exe --list --quiet` and `wsl.exe --cd … --exec /bin/sh` were spawned with raw `Command::new`. Release builds are GUI-subsystem processes, so each console-subsystem child allocated its own visible console window. Both probes, the crash helper, `setupc.exe`/`taskkill` and the TRDP bridge are now spawned through `kernel::process::hidden_command` (`CREATE_NO_WINDOW`); UAC elevation helpers stay on `ShellExecuteExW("runas")` with `nShow = 0` and are documented as the explicit exception to that boundary.
+- **WSL working-directory check never actually failed** — the probe ran `--exec /bin/sh -c "exit 0"` and only looked at the exit code, but `wsl.exe --cd <missing-dir>` exits 0 after silently starting in `/`. The probe now compares the child's `$PWD` (with `~` and `/` as legitimate root results), runs on a blocking worker with a 15s bound, and no longer runs during default-name generation because `resolve()` is pure computation. Session create/edit therefore no longer launches a Linux distribution per keystroke.
+
 ## [0.6.9] — 2026-11-14
 
 ### Added
