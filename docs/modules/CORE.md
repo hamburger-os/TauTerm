@@ -45,7 +45,7 @@ SessionStore 为每次根连接签发进程内单调递增的 `runtime_id`，chi
 
 `SessionDataPlane` 使用 paused attach 建立订阅并暂缓回调。公共发布入口验证身份、补充 canonical Session 字段、发布 connected，再释放数据面；child 数据回调需要根与 child 都完成发布，因此初期数据和断开不能越过注册屏障。插件只贡献自身元数据，不复制公共发布逻辑。前端对同实例重复 connected 和已关闭实例的迟到 connected 保持幂等，对新实例丢弃旧 child。
 
-公共 write/resize 命令也必须携带原连接身份；SessionStore 在同一短锁内校验实例仍连接并捕获其 SessionIo，随后锁外等待真实驱动 ACK。Network 等插件可把根会话的运行身份传递给后台 child I/O；是否存在可见页签不决定底层发送能力。迟到请求不能重新按裸 Session ID 获取重连后的 I/O。
+公共 write/resize 命令也必须携带原连接身份；SessionStore 在同一短锁内校验实例仍连接并捕获其 SessionIo，随后锁外等待真实驱动 ACK。`resize_pty` 先向捕获的 `SessionIo` 询问终端控制能力：串口、网络调试、RTT 等原始字节流没有 PTY 几何可同步，此时按“成功空操作”返回，不当作故障（否则通用终端适配层会在每个非 PTY Session 上记一条错误日志）；只有具备 terminal-control capability 的会话才进入确认式 `resize_terminal`，其失败仍上报 System Log。能力语义见 [TRANSPORT_RUNTIME.md](TRANSPORT_RUNTIME.md)。Network 等插件可把根会话的运行身份传递给后台 child I/O；是否存在可见页签不决定底层发送能力。迟到请求不能重新按裸 Session ID 获取重连后的 I/O。
 
 插件发送 contribution 接收原运行身份与通用默认发送能力；默认发送返回驱动确认后的真实线上字节，插件据此维护自身 TX 展示，不复制转码规则或猜测“原始输入就是已写入字节”。
 
