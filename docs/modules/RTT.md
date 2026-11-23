@@ -133,6 +133,8 @@ worker 每个 tick 只处理有界数量的控制命令；Down 写入按固定 b
 
 两个历史预算必须使用不同名称，不能当成同一个常量：**Rust host history** 是采集与回放的权威，按 Up Channel 保留 256 KiB、全会话保留 2 MiB，超限淘汰最老 chunk；数值只由 Rust Runtime 的 `HISTORY_PER_CHANNEL_BYTES` / `HISTORY_PER_SESSION_BYTES` 拥有，并通过 snapshot 的 `history_limits`（`per_channel_bytes` / `per_session_bytes`）暴露给 WebView，前端不得在 TypeScript 中复制这些数字。**WebView presentation window** 是视图重挂载时的可见回放窗口，按 Channel 保留 512 KiB、全会话保留 2 MiB，只影响前端缓存，不替代 Rust 历史、日志或采集。两者用途与所有权不同，数值也不必一致；不能用前端窗口大小推断 host 历史容量。
 
+终端视图的“清屏并清除历史”只作用于呈现层：`createRttTerminalSource` 按 `generation:channel` 记录回放水位，surface 因视图模式/重渲染重挂载时只回放水位之后的 chunk，因此清屏后切到 Log/HEX 再切回 Terminal 不会把刚清掉的内容重新写回来。回放水位与“当前 generation”都以 runtime snapshot 为唯一来源：surface 可能在历史经 IPC 加载完成前挂载（首次连接、重连后 buffer 尚未回填），因此不能从当前回放窗口里是否有数据来推断 generation。清屏不删除任何采集数据：Log/HEX 视图、Rust host history 与 Session Data Log 保持原样；新 generation（重连、目标重启）视为新 console，回放水位重置并全量回放。没有自带历史回放的数据源（PTY/Serial）不实现该能力，其历史只存在于不重挂载的 xterm 缓冲里。
+
 canonical RTT frame 在采集时发布到共享的 typed bounded `ObservationSource<StoredRttChunk>`。AutomationRx 与当前 SystemView decoder 都直接订阅该 canonical source；任何 defmt/自定义 telemetry decoder 也必须复用同一 source，不允许创建第二个 RTT reader。每个 subscriber 使用独立有界队列和 drop hook，慢消费者只影响自己的 delivery，并可把自己的 loss 计入对应语义。目标端 RTT/SystemView overflow、host acquisition loss、history eviction、decoder subscriber loss、automation loss、recording loss、presentation loss 必须保持区分。
 
 ## 前端运行态与后台生命周期

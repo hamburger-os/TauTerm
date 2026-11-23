@@ -1,8 +1,8 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { reportFrontendError } from "../../utils/runtimeDiagnostics";
 import TerminalSurface from "./TerminalSurface";
-import type { TerminalSurfaceHandle, TerminalSurfaceSource } from "./TerminalSurface";
+import type { TerminalSurfaceSource } from "./TerminalSurface";
 
 /** PTY resize 防抖间隔 (ms)：避免拖拽 resize 时 IPC 风暴 */
 const RESIZE_DEBOUNCE_MS = 150;
@@ -42,20 +42,19 @@ interface TerminalInstanceProps {
  * `TerminalSurface`；这里只保留 PTY 语义：输入路由、挂载前缓冲的回放和
  * `resize_pty` 通知。
  */
-const TerminalInstance = forwardRef<TerminalSurfaceHandle, TerminalInstanceProps>(
-  function TerminalInstance({
-    sessionId,
-    runtimeId,
-    onData,
-    isConnected = false,
-    isActive = true,
-    isVisible = true,
-    onTermReady,
-    onCleanup,
-    onDisconnectSession,
-    allowProtocolInspect = true,
-    convertEol,
-  }, ref) {
+const TerminalInstance = ({
+  sessionId,
+  runtimeId,
+  onData,
+  isConnected = false,
+  isActive = true,
+  isVisible = true,
+  onTermReady,
+  onCleanup,
+  onDisconnectSession,
+  allowProtocolInspect = true,
+  convertEol,
+}: TerminalInstanceProps) => {
     const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     /**
      * 最近一次 fit 量到的尺寸。运行时的 `runtimeId` 在终端挂载时可能还没就绪，
@@ -148,7 +147,6 @@ const TerminalInstance = forwardRef<TerminalSurfaceHandle, TerminalInstanceProps
 
     return (
       <TerminalSurface
-        ref={ref}
         sessionId={sessionId}
         source={source}
         inputEnabled={isConnected}
@@ -161,7 +159,6 @@ const TerminalInstance = forwardRef<TerminalSurfaceHandle, TerminalInstanceProps
         onFit={handleFit}
       />
     );
-  },
-);
+};
 
 export default TerminalInstance;

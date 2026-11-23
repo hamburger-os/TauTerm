@@ -4,8 +4,6 @@ import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import { useTransfer } from "../../context/TransferContext";
 import { useTheme } from "../../context/ThemeContext";
-import { useKeyboard } from "../../hooks/useKeyboard";
-import { ACTION_IDS } from "../../shortcuts/actionIds";
 import { PendingSessionData } from "../../core/pending-session-data";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { PaneRect } from "../../core/split-layout";
@@ -135,11 +133,8 @@ export default function TerminalView({
     return getActiveTaskForSession(tab.id)?.runtimeId === tab.runtimeId;
   };
   const { fontSize, bufferLines } = useTheme();
-  const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
-  const terminalRefs = useRef<Map<string, any>>(new Map());
   const lastDockedRectsRef = useRef<Map<string, PaneRect>>(new Map());
-  const activeTermRef = useRef<any>(null);
   const hexOffsetsRef = useRef<Map<string, number>>(new Map());
   const hexPendingRef = useRef<Map<string, { offset: number; data: Uint8Array }>>(new Map());
   const frameBufRef = useRef<Map<string, { buffer: Uint8Array[]; timer: ReturnType<typeof setTimeout> | null; generation: number }>>(new Map());
@@ -177,25 +172,6 @@ export default function TerminalView({
       .join(","),
     [state.tabs]
   );
-
-  useEffect(() => {
-    activeTermRef.current = state.activeTabId
-      ? terminalRefs.current.get(state.activeTabId) ?? null
-      : null;
-  }, [state.activeTabId, dockedPlacements]);
-
-  useEffect(() => {
-    registerAction(ACTION_IDS.TERMINAL_COPY, () => {
-      activeTermRef.current?.copySelection?.();
-    });
-    registerAction(ACTION_IDS.TERMINAL_PASTE, () => {
-      void activeTermRef.current?.requestPaste?.();
-    });
-    registerAction(ACTION_IDS.TERMINAL_SEARCH, () => activeTermRef.current?.toggleSearch?.());
-    registerAction(ACTION_IDS.TERMINAL_SELECT_ALL, () => {
-      activeTermRef.current?.terminal?.selectAll();
-    });
-  }, [registerAction]);
 
   useEffect(() => {
     return () => {
@@ -468,7 +444,6 @@ export default function TerminalView({
 
     for (const id of toRemove) {
       writeRefs.current.delete(id);
-      terminalRefs.current.delete(id);
       lastDockedRectsRef.current.delete(id);
       hexOffsetsRef.current.delete(id);
       hexPendingRef.current.delete(id);
@@ -564,10 +539,6 @@ export default function TerminalView({
         // collapses those rows onto column 0 — that is what shredded half-block
         // pixel-art logos. Serial / RTT / network byte streams keep the option.
         convertEol={tab.pluginId !== "local-shell" && tab.pluginId !== "ssh"}
-        ref={(node) => {
-          if (node) terminalRefs.current.set(tab.id, node);
-          else terminalRefs.current.delete(tab.id);
-        }}
       />
     );
   };

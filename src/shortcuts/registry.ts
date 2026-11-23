@@ -74,6 +74,14 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", descriptionKey: "settings.shortcutsAction_terminalPaste", description: "粘贴", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SELECT_ALL, keys: "Ctrl+Shift+A", descriptionKey: "settings.shortcutsAction_terminalSelectAll", description: "全选", category: "Terminal" },
+  // Clear = "drop the screen and its scrollback", never a byte-stream clear: the
+  // remote `clear` command follows VT semantics (ED2 keeps saved lines, only ED3
+  // removes them), so the two actions must not share a name. Ctrl+Shift+K mirrors
+  // Konsole's "clear scrollback" habit and stays away from the copy/paste chords.
+  { id: ACTION_IDS.TERMINAL_CLEAR, keys: "Ctrl+Shift+K", descriptionKey: "settings.shortcutsAction_terminalClear", description: "清屏并清除历史", category: "Terminal" },
+  // RIS is disruptive to a running full-screen application, so Reset ships without
+  // a default chord: the right-click menu and command palette reach it explicitly.
+  { id: ACTION_IDS.TERMINAL_RESET, keys: "", descriptionKey: "settings.shortcutsAction_terminalReset", description: "重置终端", category: "Terminal" },
   // Workspace. Splits stay reachable from the Pane menu, the command palette and
   // this registry, but they deliberately ship without a default chord: Ctrl+Shift
   // + digit belongs to full-screen applications, and a silently stolen chord is a

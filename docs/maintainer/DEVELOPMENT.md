@@ -44,7 +44,8 @@
 | `npm run check:terminal-clipboard` | 检查终端复制/粘贴快捷键、统一 paste 路径、焦点恢复和多行粘贴安全规则 |
 | `npm run check:conpty` | 检查随包 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`）的文件哈希、来源记录、驱动接线与 Windows 打包映射 |
 | `npm run check:terminal-cell-grid` | 检查终端行高设备像素对齐算法：所有支持缩放/字体组合都得到整数 CSS 行高，100% 等已对齐场景不被改写 |
-| `npm run check:terminal-screen` | 检查终端「字节 → 单元格」契约：用与宿主一致的 xterm 选项回放抓取到的半块像素画输出，锁定字符、行首缩进与逐格 24 位前景/背景色 |
+| `npm run check:terminal-screen` | 检查终端「字节 → 单元格」契约：用与宿主一致的 xterm 选项回放抓取到的半块像素画输出，锁定字符、行首缩进与逐格 24 位前景/背景色；并锁定 ED2 保留回滚、ED3/宿主 `clear()` 删除回滚的清屏语义 |
+| `npm run check:terminal-commands` | 检查终端宿主命令单一来源与 RTT 清屏回放：action 只在 `useTerminalActions` 注册一次（其他文件再注册即失败）、清屏焦点归还、RTT 水位按 `generation:channel` 隔离且生成自 runtime snapshot、清屏不删除记录数据、旧 per-view 终端目标保持删除 |
 | `npm run check:terminal-surface` | 检查终端呈现单一来源：只有 `TerminalSurface` 可以构造 xterm 与主题，禁止第二套终端皮肤和非法 `transparent` 背景关键字 |
 | `npm run test:terminal-theme` | 单元测试终端主题构造器：三主题背景恒为 `rgba(0, 0, 0, 0)`、16 色 ANSI 完整、缺失四色 token 必须抛错 |
 | `npm run check:i18n-usage` | 检查核心 UI 静态 i18n key 是否同时存在于 en-US / zh-CN（插件与运行时合并命名空间除外） |

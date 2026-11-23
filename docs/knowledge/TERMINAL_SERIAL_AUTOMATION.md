@@ -11,6 +11,16 @@
 
 TauTerm 使用 xterm.js 作为终端呈现层。实现终端输入/输出、清屏、光标、颜色或控制序列行为时，不应凭“常见终端习惯”猜测；先确认 ECMA-48 与 xterm.js 实际支持范围。
 
+### 清屏与回滚历史
+
+- xterm control sequences（ED / DECSED）：https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+- ncurses `clear(1)`（E3 能力与 `-x`）: https://manpages.ubuntu.com/manpages/jammy/man1/clear.1.html
+- xterm.js VT features: https://xtermjs.org/docs/api/vtfeatures/
+
+`CSI 2 J`（ED 2）只擦除视口，不删除 saved lines；`CSI 3 J`（ED 3，"Erase Saved Lines"）才删除回滚历史。shell 的 `clear` 命令是否同时发送 ED 3 取决于远端 `$TERM` 的 terminfo 是否带 E3 能力（`clear -x` 显式不删回滚；BusyBox 等嵌入式实现通常只发 ED 0/2），因此“清屏后是否还能上滚”是远端工具行为，不是终端仿真缺陷。
+
+内部设计：[UI_FOUNDATION.md](../modules/UI_FOUNDATION.md)（宿主清屏命令、焦点归还与远端 VT 语义的边界）。
+
 ## 终端剪贴板与快捷键
 
 ### 权威来源

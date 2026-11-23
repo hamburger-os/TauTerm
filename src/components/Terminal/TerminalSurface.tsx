@@ -1,8 +1,6 @@
 import {
-  forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -26,12 +24,18 @@ import SearchBar from "./SearchBar";
 import PasteSafetyDialog from "./PasteSafetyDialog";
 import { mountXtermHost, type XtermHostLifecycle } from "./xtermHostLifecycle";
 import {
+  releaseActiveTerminalCommandTarget,
+  setActiveTerminalCommandTarget,
+  type TerminalCommandTarget,
+} from "./terminalCommandTarget";
+import {
   focusTerminalOnActivation,
   restoreTerminalFocus as restoreFocusToTerminal,
 } from "./terminalFocus";
 import { createTerminalOptions, createTerminalTheme } from "./terminalTheme";
 import { planIntegerCellHeight } from "../../core/terminal-cell-grid";
 import {
+  clearTerminalSurface,
   IDLE_TERMINAL_PRESENTATION,
   isSameTerminalPresentation,
   readTerminalPresentation,
@@ -60,23 +64,18 @@ const SCROLL_BOTTOM_TOLERANCE = 5;
  *
  * 序列/去重/历史回放属于数据源，xterm 只消费已经排好序的字节。
  *
+ * `clearReplayHistory` 是唯一反向通知：数据源如果会在 surface 重挂载时回放自己
+ * 保留的历史（RTT），必须在这里丢弃可回放窗口，否则"清屏"会在下一个挂载周期
+ * 被回放撤销。没有独立历史的数据源（PTY/Serial）不实现即可。
+ *
  * 是否接受输入不是数据源状态而是 surface prop（`inputEnabled`）：它必须随会话
  * 连接状态变化触发重新渲染，否则“断开时取消待确认粘贴”这类 effect 永远不会重跑。
  */
 export interface TerminalSurfaceSource {
   input(data: string): void;
   attach(write: (data: Uint8Array | string) => void): () => void;
-}
-
-export interface TerminalSurfaceHandle {
-  readonly terminal: XTerm | null;
-  write(data: Uint8Array | string): void;
-  fit(): void;
-  focus(): void;
-  copySelection(): void;
-  requestPaste(): void;
-  openSearch(): void;
-  toggleSearch(): void;
+  /** 宿主清屏时通知数据源丢弃自己的可回放历史；没有独立历史的数据源可省略。 */
+  clearReplayHistory?(): void;
 }
 
 interface TerminalSurfaceProps {
@@ -214,18 +213,17 @@ function syncWebglRenderer(
  * second surface cannot re-derive a slightly different terminal. Data flow is the
  * caller's job via `TerminalSurfaceSource`.
  */
-const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
-  function TerminalSurface({
-    sessionId,
-    source,
-    inputEnabled = true,
-    isVisible = true,
-    isActive = true,
-    convertEol,
-    allowProtocolInspect = false,
-    onDisconnectSession,
-    onFit,
-  }, ref) {
+const TerminalSurface = ({
+  sessionId,
+  source,
+  inputEnabled = true,
+  isVisible = true,
+  isActive = true,
+  convertEol,
+  allowProtocolInspect = false,
+  onDisconnectSession,
+  onFit,
+}: TerminalSurfaceProps) => {
     const { t } = useTranslation();
     const { showToast } = useToast();
     const { theme, fontSize, bufferLines, terminalRenderer } = useTheme();
@@ -345,24 +343,55 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
     const requestClipboardPasteRef = useRef(requestClipboardPaste);
     requestClipboardPasteRef.current = requestClipboardPaste;
 
+    /**
+     * Host-side "clear screen and scrollback". The byte stream is never rewritten
+     * (a remote `clear` stays VT-correct: ED2 keeps saved lines); this command is
+     * the explicit user intent to drop both the viewport and the emulator history.
+     * A data source that replays its own history on remount is told to drop that
+     * window too, otherwise the clear would be undone by the next mount.
+     */
+    const clearSurface = useCallback(() => {
+      const term = xtermRef.current;
+      if (!term) return;
+      clearTerminalSurface(term);
+      sourceRef.current.clearReplayHistory?.();
+    }, []);
+
+    /** Full terminal reset (RIS); also refreshes the read-only presentation mirror. */
+    const resetSurface = useCallback(() => {
+      const term = xtermRef.current;
+      if (!term) return;
+      resetTerminalSurface(term);
+      refreshPresentation();
+    }, [refreshPresentation]);
+
+    /**
+     * The single target object for the globally registered terminal actions.
+     * It delegates to refs so shortcuts always act on the live surface even when
+     * the surrounding React tree re-renders without touching this instance.
+     *
+     * Clear/reset restore focus here, inside the shared implementation: every entry
+     * point (context menu, shortcut, command palette) must behave identically, and
+     * a palette invocation otherwise leaves focus on the closing overlay.
+     */
+    const commandTarget = useMemo<TerminalCommandTarget>(() => ({
+      copySelection: () => copySelectionRef.current(),
+      requestPaste: () => { void requestClipboardPasteRef.current(); },
+      selectAll: () => xtermRef.current?.selectAll(),
+      toggleSearch: () => setSearchOpen(open => !open),
+      clear: () => {
+        clearSurface();
+        restoreTerminalFocus();
+      },
+      reset: () => {
+        resetSurface();
+        restoreTerminalFocus();
+      },
+    }), [clearSurface, resetSurface, restoreTerminalFocus]);
+
     const scheduleFit = useCallback(() => {
       hostLifecycleRef.current?.scheduleFit();
     }, []);
-
-    useImperativeHandle(ref, () => ({
-      get terminal() {
-        return xtermRef.current;
-      },
-      write: (data: Uint8Array | string) => {
-        xtermRef.current?.write(data);
-      },
-      fit: scheduleFit,
-      focus: () => xtermRef.current?.focus(),
-      copySelection: () => copySelectionRef.current(),
-      requestPaste: () => { void requestClipboardPasteRef.current(); },
-      openSearch: () => setSearchOpen(true),
-      toggleSearch: () => setSearchOpen(open => !open),
-    }), [scheduleFit]);
 
     // 共享 xterm host lifecycle 统一负责可测量后 open、RAF fit 合并与 dispose 顺序。
     useEffect(() => {
@@ -537,10 +566,16 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
     // 焦点所有权：连接完成、切换标签、切换分屏之后终端必须自己拿到键盘焦点，
     // 否则按键会落到宿主按钮上——用户看到的是"输出在动但终端没反应"。
     // 具体是否允许聚焦（弹窗打开/真实输入框有焦点时不许抢）由 terminalFocus 决定。
+    //
+    // 同一次激活也把本 surface 登记为终端命令目标：清屏/重置/复制/粘贴等全局
+    // action 只注册一次，必须作用于"用户当前真正面对的那个终端"，而不是某个视图
+    // 私有的终端池。隐藏 Pane、后台标签和不可测量的 RTT 视图都不会成为目标。
     useEffect(() => {
       if (!isActive || !isVisible || !hostMeasurable) return;
+      setActiveTerminalCommandTarget(commandTarget);
       focusTerminalOnActivation(() => xtermRef.current);
-    }, [isActive, isVisible, hostMeasurable]);
+      return () => releaseActiveTerminalCommandTarget(commandTarget);
+    }, [commandTarget, isActive, isVisible, hostMeasurable]);
 
     // Renderer follows display state: GPU rendering only while the terminal is
     // actually shown, DOM renderer while pooled/hidden.
@@ -643,19 +678,16 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
           setSearchOpen(true);
           break;
         case "clear":
-          term.clear();
-          restoreTerminalFocus();
+          commandTarget.clear();
           break;
         case "resetTerminal":
-          resetTerminalSurface(term);
-          refreshPresentation();
-          restoreTerminalFocus();
+          commandTarget.reset();
           break;
         case "disconnect":
           onDisconnectSession?.();
           break;
       }
-    }, [onDisconnectSession, refreshPresentation, restoreTerminalFocus]);
+    }, [commandTarget, onDisconnectSession, restoreTerminalFocus]);
 
     // Read-only mode summary for the context-menu header. It explains why a
     // full-screen app may behave differently (and why Shift is needed to select)
@@ -752,7 +784,6 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
         />
       </div>
     );
-  },
-);
+};
 
 export default TerminalSurface;
