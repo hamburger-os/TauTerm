@@ -154,7 +154,9 @@ pub(crate) fn capture_session_runtime<T>(
 ///
 /// DataBatcher 的所有权被移入回调闭包（通过 `batcher.push()` 消费数据），
 /// 因此只返回 `Box<dyn Fn>`；`DataBatcher::Drop` 在会话断开时自动 flush + 清理。
-/// 虚拟串口不经过 UI 回调旁路，而是直接订阅 DataPlane。
+/// 展示链路不丢字节：队列满时 push 阻塞该会话的接收 pump，而不是丢弃显示块；
+/// 持续堵住超过订阅队列容量时订阅者被摘除，表现为该会话显式断开（见
+/// `kernel::data_batcher`）。虚拟串口不经过 UI 回调旁路，而是直接订阅 DataPlane。
 pub(crate) fn create_on_data_callback(
     app: &AppHandle,
     log_tx: std::sync::mpsc::SyncSender<LogEntry>,
@@ -162,7 +164,6 @@ pub(crate) fn create_on_data_callback(
     encoding: String,
 ) -> Box<dyn Fn(RuntimeIdentity, Vec<u8>) + Send> {
     let app_clone = app.clone();
-    let overflow_app = app.clone();
     let batcher = crate::kernel::data_batcher::DataBatcher::new(move |batched| {
         let _ = app_clone.emit(
             "session-data",
@@ -176,18 +177,7 @@ pub(crate) fn create_on_data_callback(
 
     Box::new(move |identity, data| {
         let data_for_log = data.clone();
-        if let Some(total_dropped) = batcher.push(identity.clone(), data) {
-            if total_dropped == 1 || total_dropped.is_power_of_two() {
-                let _ = overflow_app.emit(
-                    "session-display-overflow",
-                    serde_json::json!({
-                        "session_id": identity.session_id,
-                        "runtime_id": identity.runtime_id,
-                        "dropped_chunks": total_dropped,
-                    }),
-                );
-            }
-        }
+        batcher.push(identity.clone(), data);
         try_send_session_log(
             &log_tx,
             DataLogEntry {

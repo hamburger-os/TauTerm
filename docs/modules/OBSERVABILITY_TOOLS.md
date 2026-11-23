@@ -17,7 +17,9 @@
 
 批处理键采用 [CORE.md](CORE.md) 的完整运行实例身份，同一保存会话的旧/新连接不能合并成一批。显示数据和统计事件携带原代次，由前端丢弃迟到结果；这不改变 Session Data Log 的 best-effort 属性。
 
-DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数据块以保护 UI，但每次丢弃都会累计计数，并按 1/2/4/8… 次节流发送 `session-display-overflow`；同一节流规则也用于后端 overflow warning，避免在过载时用日志本身制造新的队列压力。这个降级语义不能复制到 Recorder/Evidence Path。RTT 等多路观测数据同样必须把 acquisition/history loss、Session Log loss 与 WebView presentation loss 分开计数，不能用“界面丢帧”冒充目标或采集链路丢失。
+DataBatcher 属于 **Presentation Path**，并且**不丢字节**：展示队列满时 `push` 阻塞该 Session 的接收 pump 线程，而不是丢弃数据块。原因是展示链路与 Recorder/Evidence Path 不同——它直接决定 xterm 的解析状态：丢一块就可能打断正在解析的 VT 序列（半个 CSI/OSC，或一个模式开关），让屏幕进入**永久错位**，比“慢一拍”严重得多。因此这条链路没有 `session-display-overflow` 事件，也没有丢弃计数；队列滞留时间超过阈值时会记一条 warning 作为过载证据。
+
+背压的边界必须说清楚：pump 只是 DataPlane 的一个订阅者，Transport actor 发布时仍然是 `try_send`（不阻塞物理读侧）。持续堵住超过订阅队列容量时，该订阅者因 `BacklogExceeded` 被摘除，表现为该 Session **显式断开**（由 `DataPlaneSubscriptionEnd` 记录原因）——仍然不是静默丢块，但也不是“一直慢下去”。这个“不丢”语义只属于展示队列，不能复制到 Recorder/Evidence Path 的丢弃计数模型。RTT 等多路观测数据同样必须把 acquisition/history loss、Session Log loss 与 WebView presentation loss 分开计数，不能用“界面丢帧”冒充目标或采集链路丢失。
 
 ### 日志
 
@@ -127,7 +129,6 @@ CRC canonical `123456789` check vector、严格 byte parsing、64-bit conversion
 flowchart TB
   IO["Session I/O"] --> Batch["Presentation: DataBatcher"]
   Batch --> UI["Terminal / Renderer / Stats"]
-  Batch --> Loss["显式 overflow"]
   IO --> Gate["Active Session Log Gate"]
   Gate --> Log["Best-effort LogEngine"]
   Log --> Files["Append-only Segments"]

@@ -743,31 +743,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: UnlistenFn | null = null;
-    void listen<{ session_id: string; runtime_id: string; dropped_chunks: number }>("session-display-overflow", event => {
-      if (disposed) return;
-      const tab = tabsRef.current.find(item => item.id === event.payload.session_id);
-      if (tab?.runtimeId !== event.payload.runtime_id || tab.state !== "connected") return;
-      dispatch({
-        type: "SET_ERROR",
-        error: i18n.t("session.displayOverflow", {
-          defaultValue: "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path.",
-          session: tab?.name ?? event.payload.session_id,
-          count: event.payload.dropped_chunks,
-        }),
-      });
-    }).then(fn => {
-      if (disposed) fn();
-      else unlisten = fn;
-    }).catch(() => {});
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
-
   const hasActiveLogs = loggingSessions.size > 0;
   useEffect(() => {
     if (!hasActiveLogs) return;

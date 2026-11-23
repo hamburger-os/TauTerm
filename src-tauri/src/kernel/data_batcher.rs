@@ -13,21 +13,26 @@
 //! - 16ms 窗口对人类感知无明显延迟，但能把 200 包/秒降到 ~60 emit/秒
 //! - Base64 编码在 Rust 端开销极小（纯查表），JS 端 atob() 原生实现
 //! - 保留 flush 机制确保交互式输入（如按键）立即回显
+//!
+//! **展示链路不丢字节**：丢块会打断 xterm 正在解析的 VT 序列（可能丢掉半个
+//! CSI/OSC），让屏幕进入永久错位状态，比"慢一拍"严重得多。因此队列满时
+//! `push` 阻塞提交方（该会话的接收 pump 线程）而不是丢块。
+//!
+//! 注意背压的边界：pump 只是 DataPlane 的一个订阅者，Transport actor 发布时
+//! 仍然是 `try_send`（不阻塞物理读侧）。持续堵住超过订阅队列容量时，订阅者会
+//! 因 `BacklogExceeded` 被摘除，表现为该会话**显式断开**——仍然不是静默丢块，
+//! 但也不是"一直慢下去"。
 
 use crate::session::RuntimeIdentity;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 const BATCH_WINDOW_MS: u64 = 16;
 const BATCH_FLUSH_THRESHOLD: usize = 32 * 1024;
-
-fn should_report_drop(total: u64) -> bool {
-    total == 1 || total.is_power_of_two()
-}
+/// 提交方被展示队列堵住的告警阈值。出现即说明 UI 消费明显跟不上 PTY 输出。
+const SLOW_PUSH_WARN: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
 pub struct BatchedData {
@@ -42,7 +47,6 @@ enum BatchCmd {
 
 pub struct DataBatcher {
     tx: mpsc::SyncSender<BatchCmd>,
-    dropped: Arc<AtomicU64>,
 }
 
 impl DataBatcher {
@@ -51,7 +55,6 @@ impl DataBatcher {
         F: Fn(BatchedData) + Send + 'static,
     {
         let (tx, rx) = mpsc::sync_channel::<BatchCmd>(512);
-        let dropped = Arc::new(AtomicU64::new(0));
 
         thread::Builder::new()
             .name("data-batcher".into())
@@ -60,24 +63,25 @@ impl DataBatcher {
             })
             .expect("failed to spawn data-batcher thread");
 
-        Self { tx, dropped }
+        Self { tx }
     }
 
-    /// 入队显示数据。返回 Some(total_dropped) 表示本次因显示队列过载丢弃。
+    /// 入队显示数据。队列满时阻塞，而不是像以前的 `try_send` 那样丢块。
     ///
-    /// 这是 Presentation Path 的受控降级，不代表线路/Recorder 数据可以静默丢失。
-    pub fn push(&self, session_id: RuntimeIdentity, data: Vec<u8>) -> Option<u64> {
-        if self.tx.try_send(BatchCmd::Push(session_id, data)).is_err() {
-            let total = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
-            if should_report_drop(total) {
-                log::warn!(
-                    "DataBatcher: channel full, dropped display chunk (total dropped: {})",
-                    total
-                );
-            }
-            Some(total)
-        } else {
-            None
+    /// 唯一会丢弃的情形是 batcher 线程已经不在了（会话已关闭）：此时没有消费者，
+    /// 丢弃是唯一可能的收尾行为，且它发生在会话生命周期结束之后。
+    pub fn push(&self, session_id: RuntimeIdentity, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        let started = Instant::now();
+        if self.tx.send(BatchCmd::Push(session_id, data)).is_err() {
+            // batcher 线程已随会话断开而退出；没有消费者时丢弃是唯一可能的收尾行为。
+            return;
+        }
+        let waited = started.elapsed();
+        if waited > SLOW_PUSH_WARN {
+            log::warn!("DataBatcher: presentation queue stalled the session pump for {waited:?}");
         }
     }
 
@@ -265,18 +269,6 @@ mod tests {
     #[test]
     fn test_base64_encode_known_vectors() {
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
-    }
-
-    #[test]
-    fn test_drop_reporting_is_exponentially_throttled() {
-        assert!(should_report_drop(1));
-        assert!(should_report_drop(2));
-        assert!(should_report_drop(4));
-        assert!(should_report_drop(8));
-        assert!(!should_report_drop(3));
-        assert!(!should_report_drop(5));
-        assert!(!should_report_drop(6));
-        assert!(!should_report_drop(7));
     }
 
     #[test]

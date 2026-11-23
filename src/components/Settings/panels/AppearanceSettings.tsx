@@ -1,10 +1,19 @@
 import { useTranslation } from "react-i18next";
 import { useTheme, THEMES, type VisualPerformanceMode } from "../../../context/ThemeContext";
+import type { TerminalRendererPolicy } from "../../../core/terminal-renderer";
 import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 /** 行缓冲滑块步长：1,000 行一档，避免拖动时频繁重设 xterm scrollback */
 const BUFFER_LINES_STEP = 1000;
+
+const TERMINAL_RENDERER_OPTIONS: Array<{
+  id: TerminalRendererPolicy;
+  labelKey: string;
+}> = [
+  { id: "auto", labelKey: "settings.terminalRendererAuto" },
+  { id: "cpu", labelKey: "settings.terminalRendererCpu" },
+];
 
 const PERFORMANCE_OPTIONS: Array<{
   id: VisualPerformanceMode;
@@ -32,6 +41,8 @@ export default function AppearanceSettings() {
     setFontSize,
     bufferLines,
     setBufferLines,
+    terminalRenderer,
+    setTerminalRenderer,
   } = useTheme();
 
   return (
@@ -122,6 +133,24 @@ export default function AppearanceSettings() {
         <p className={styles.settingDesc}>
           {t("settings.bufferLines")}: {bufferLines.toLocaleString()} {t("settings.bufferLinesNote")}
         </p>
+      </div>
+
+      {/* 终端渲染器：透明玻璃背景 + WebGL 在部分 WebView 组合下存在渲染缺陷，
+          CPU 档是唯一不改变数据、又能把问题与渲染器绑定的自证手段。 */}
+      <h4 className={styles.categoryTitle}>{t("settings.terminalRenderer")}</h4>
+      <div className={styles.settingGroup}>
+        <div className={styles.optionList}>
+          {TERMINAL_RENDERER_OPTIONS.map(option => (
+            <OptionButton
+              key={option.id}
+              selected={terminalRenderer === option.id}
+              onClick={() => setTerminalRenderer(option.id)}
+            >
+              {t(option.labelKey)}
+            </OptionButton>
+          ))}
+        </div>
+        <p className={styles.settingDesc}>{t("settings.terminalRendererDesc")}</p>
       </div>
     </div>
   );

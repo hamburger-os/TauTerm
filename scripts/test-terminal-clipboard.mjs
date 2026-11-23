@@ -101,7 +101,26 @@ assert.match(terminalSource, /bracketedPasteMode/);
 assert.match(terminalSource, /shouldWarnForLineBreak/);
 assert.match(terminalSource, /pasteAnalysis\.isLargePaste/);
 assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
-assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
+assert.match(
+  terminalSource,
+  /restoreFocusToTerminal\(\(\) => xtermRef\.current\)/,
+  "clipboard completion must return focus through the single terminal focus owner",
+);
+const terminalFocusSource = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "terminalFocus.ts"),
+  "utf8",
+);
+assert.match(terminalFocusSource, /export function restoreTerminalFocus\(/);
+assert.match(
+  terminalFocusSource,
+  /requestAnimationFrame\(\(\) => \{[\s\S]*resolve\(\)\?\.focus\(\)/,
+  "the focus owner must focus the terminal after the current frame",
+);
+assert.match(
+  terminalFocusSource,
+  /hasOpenModal\(\)/,
+  "terminal focus must never be taken over an open dialog or menu",
+);
 assert.doesNotMatch(terminalSource, /clipboardHasText/);
 assert.match(terminalSource, /\(!inputEnabled \|\| !isActive\) && pendingPaste !== null/);
 assert.match(

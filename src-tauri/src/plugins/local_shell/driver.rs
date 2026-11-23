@@ -210,8 +210,14 @@ impl LocalShellDriver {
         super::conpty_engine::install();
 
         let pty_system = portable_pty::native_pty_system();
+        // 显式初始几何：前端是几何所有者，但 PTY 必须先以一个确定尺寸建立。
         let pair = pty_system
-            .openpty(PtySize::default())
+            .openpty(PtySize {
+                rows: crate::session::DEFAULT_TERMINAL_ROWS,
+                cols: crate::session::DEFAULT_TERMINAL_COLUMNS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| io_other(format!("PTY creation failed: {e}")))?;
 
         let mut command = CommandBuilder::new(executable);

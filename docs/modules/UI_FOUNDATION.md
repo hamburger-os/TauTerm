@@ -33,6 +33,11 @@ React 应用由全局上下文和通用组件组成：
 - `TerminalSurface` 是终端渲染的唯一代码所有者：`src/components/Terminal/TerminalSurface.tsx` 是唯一允许构造 xterm 实例的位置，`src/components/Terminal/terminalTheme.ts` 单一生成主题与透明背景常量；渲染器策略（可见时 WebGL、回退 DOM）、`customGlyphs`、cell-grid 对齐、搜索、粘贴安全、右键菜单、滚动到底部与超链接都由该 surface 统一实现。公共 `Terminal.tsx` 只是基于它的 PTY 适配层，协议终端（例如 RTT Terminal）通过数据源适配器复用同一 surface，禁止出现第二套 xterm 构造、局部主题或另一份透明背景常量。玻璃透明仍由 `allowTransparency` 与主题背景 `rgba(0, 0, 0, 0)` 共同保持。该所有权契约由 `npm run check:terminal-surface` 门禁锁定：它拒绝 `TerminalSurface` 之外对 xterm runtime/addon 的值导入与实例构造，禁止把 `background: "transparent"` 当作 xterm 主题关键字，断言透明背景常量 `TERMINAL_SURFACE_BACKGROUND`（`rgba(0, 0, 0, 0)`）与 `createTerminalTheme` 由 `terminalTheme.ts` 提供并被 surface 使用，并要求 `RttTerminalView.tsx` 保持删除；它与 `check:terminal-screen` 的分工是——后者验证“字节 → 单元格”的解析结果，前者验证“只有一个渲染宿主”。主题颜色规则仍只在 `.agents/skills/tauterm-theme/SKILL.md` 维护；
 - xterm.js 是终端语义的唯一所有者。除 [LOCAL_SHELL.md](LOCAL_SHELL.md) 记录的 ConPTY 启动握手外，TauTerm 不解析、不重写 PTY 输出，也不向 PTY 注入清屏/复位序列；宿主只通过 `Terminal.modes`（鼠标上报协议、Bracketed Paste 等）与 `buffer.active.type`（普通/备用屏幕）读取只读呈现状态，只在终端右键菜单显示模式摘要（全屏应用、鼠标上报协议）并支撑恢复入口，不用常驻浮层遮挡内容。全屏应用异常或未清理状态时只提供显式的“重置终端”（xterm `reset()`，RIS），不自动触发，避免打断仍在运行的交互式程序。xterm 6 的备用屏幕、输入法合成层与内部滚动容器属于 renderer 私有 DOM：宿主只通过主题/CSS 维持透明材质与裁剪边界（例如用 `overflow: clip` 防止输入法合成把宿主滚动容器顶偏），不解析其文本或改写模式状态。xterm 与官方 addon 版本由 `package.json` 单一维护。
 - 所有终端粘贴入口统一经 xterm `paste()`；终端剪贴板读写统一经 Tauri 原生 clipboard 插件（capability 只授予读写文本），不使用 `navigator.clipboard`：Tauri 窗口不响应 WebView2 的 `CLIPBOARD_READ` 权限询问，`readText()` 会静默失败并让粘贴表现为“没反应”。读取结果必须区分“空”和“不可用”，不可用时必须用 i18n toast 告知用户；当内容包含换行且当前终端未启用 Bracketed Paste Mode（DECSET 2004），或粘贴内容超过 5 KiB 字符时，先进入安全确认预览；右键复制/粘贴/全选/清屏完成后恢复终端焦点；
+- 终端光标形态由 `terminalTheme.ts` 单一决定：`cursorStyle: block`、失焦 `cursorInactiveStyle: outline`。两者都是 xterm 6 的默认值，本文仍要求显式写出，因为光标形态是用户可见契约：本仓库曾把它强制成 `underline`，而 WebGL 渲染器只画 1 个设备像素高的一条线，在深色玻璃背景 + 高分屏上等于“没有光标”（vim / less / htop 都按覆盖字符的方块设计），这是 v0.6.8 换成 WebGL 渲染器后暴露的真实回归，不是终端仿真缺陷。显式声明让该契约不随上游默认值漂移；应用仍可用 DECSCUSR 覆盖（xterm 6 的 `decPrivateModes.cursorStyle` 优先于选项）。
+- 终端几何的所有权只有一个：前端按真实视口 `fit()` 后通过 `resize_pty` 下发。后端 PTY 在建立时使用 `crate::session::DEFAULT_TERMINAL_COLUMNS/ROWS` = 120×30 的显式初始值（不依赖 PTY 库默认的 24×80），因为全屏 TUI 会按启动瞬间的行列排版。前端的**首个** `fit()` 必须立即下发：不吃 150ms 防抖、且不能因为 `runtimeId` 尚未就绪而丢弃（要记住尺寸并在就绪后补发）；只有后续 resize 才防抖。`resize_pty` 失败通过 `reportFrontendError` 进入 System Log，不再静默吞掉。
+- 终端渲染器策略是用户可见设置（`设置 → 外观 → 终端渲染器`，`auto` / `cpu`），不是隐式行为：透明玻璃背景 + WebGL 在部分 WebView 组合下存在渲染缺陷，`cpu` 档是唯一既不改变数据、又能把问题与渲染器绑定的自证手段。策略类型与判定函数由 `src/core/terminal-renderer.ts` 单一拥有；实际渲染结果仍按下面的 WebGL 渲染器条目上报，右键菜单摘要区分“用户关闭 WebGL”与“WebGL 不可用回退”两种原因。
+- 终端键盘焦点只有一个所有者（`src/components/Terminal/terminalFocus.ts`）：连接完成、切换标签、切换分屏后必须由终端自己拿到键盘焦点，否则按键落到宿主按钮上，表现为“输出在动但终端没反应”。是否允许抢焦点由该模块统一回答——弹窗（`[aria-modal="true"]`）打开或真实输入框持有焦点时一律不抢；终端内部操作（复制/粘贴/搜索/右键菜单）之后的“归还焦点”也走同一模块。
+- 终端展示链路不丢字节：UTF-8 会话的字节直接交给 xterm（宿主不再 `TextDecoder` 解成字符串再让 xterm 重新编码），只有声明了非 UTF-8 编码的会话由宿主转码一次。后端展示队列在过载时对接收 pump 施加背压而不是丢块，原因与契约见 [OBSERVABILITY_TOOLS.md](OBSERVABILITY_TOOLS.md)。
 - 会话字节路由只有一层权威：SessionContext 只把实时数据交给当前终端消费者（消费者卸载时必须传 `null` 取消订阅，不能安装空回调），挂载前的有界缓冲由 `src/core/pending-session-data.ts` 在 TerminalView 内统一负责，禁止在上下文层再保留第二份无上限副本；
 - 终端渲染器优先使用 xterm 的 WebGL 渲染器（`@xterm/addon-webgl`），由 `customGlyphs` 把 block / quadrant / box-drawing 字符绘制成精确的单元格四边形：DOM 渲染器把每个单元格当作独立文本段，在分数单元格宽度（例如 8.1875px）下相邻单元格的字形与底色会各自按设备像素取整，半块像素画 logo、TUI 边框和字符滚动条因此出现 1px 网格缝。GPU 渲染器只在真正显示的 Pane 终端上加载，池中隐藏的终端保持 DOM 渲染，活跃 WebGL 上下文数量由可见 Pane 数（≤4）而非标签页数决定；WebGL2 不可用、上下文创建失败或运行中上下文丢失时自动回退到 DOM 渲染器，终端功能不中断，但 `customGlyphs` 只存在于 WebGL 路径：回退后 block / box-drawing 字符改由字体字形绘制，半块像素画可能因此失去精确的单元格几何。回退不得静默——`src/core/terminal-renderer.ts` 记录实际渲染器，加载失败与上下文丢失都输出一次 console 警告，右键菜单的只读状态摘要显示 `terminal.rendererFallback`，避免把「修复没有生效」误判为终端仿真缺陷。玻璃透明由 `allowTransparency` 与 `rgba(0, 0, 0, 0)` 主题背景共同保持；
 - xterm 6 的 DOM 渲染器按整数设备像素单元格计算行高，再除以设备像素比得到 CSS 行高；在 200% 等分数缩放下会出现半像素行界，逐行裁剪会把框线字符和 TUI 字符滚动条切成虚线。宿主在字体就绪后把 CSS 行高向上对齐到设备像素网格（仅调整 `lineHeight`，不改字号/字距），并据此重新 fit；该处理只影响渲染呈现，不改变 PTY 语义；
@@ -139,6 +144,8 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 - `src/components/Terminal/Terminal.tsx`
 - `src/components/Terminal/TerminalSurface.tsx`
 - `src/components/Terminal/terminalTheme.ts`
+- `src/components/Terminal/terminalFocus.ts`
+- `src/core/terminal-renderer.ts`
 - `src/core/plugin-registry.ts`
 - `src/components/Settings/`
 - `src/components/CommandPalette/`
@@ -150,4 +157,4 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 
 ## 何时更新本文
 
-修改应用壳、内容适配模型、renderer 类型/实例身份、Terminal/xterm 生命周期与 TerminalSurface 渲染所有权、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar/session-presentation 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。
+修改应用壳、内容适配模型、renderer 类型/实例身份、Terminal/xterm 生命周期与 TerminalSurface 渲染所有权、终端渲染器策略、终端焦点所有权、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar/session-presentation 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。

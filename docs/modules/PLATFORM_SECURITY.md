@@ -32,6 +32,16 @@ Release 构建无法连接服务时进入 `direct-uac-on-demand` 并记录真实
 
 App ↔ TauTermService 的窄 IPC 握手携带显式协议版本，版本不匹配必须作为独立错误拒绝，而不是退化成模糊的 read failure；服务命名管道拒绝 remote clients，并在同目录可执行文件/PID 校验后为每个 GUI 连接建立独立处理线程，使多个 TauTerm 实例可以同时使用同一特权服务。每条连接必须先完成 hello，后续请求的 client_id 必须与该连接绑定值一致；com0com mutation 仍由共享 manager 与全局 mutex 串行化。管道断开本身不再等同于 GUI 退出：服务仅在已验证 GUI 进程实际退出后才清理该连接 endpoint，短暂 pipe 断开/重连保留 active ownership，避免旧连接线程与新连接 re-adoption 竞态误删仍在使用的端口。命名管道读写失败保留 Win32 错误/超时上下文用于正式构建诊断。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
+### Windows 子进程可见性
+
+Release 构建是 GUI 子系统（`main.rs` 的 `windows_subsystem = "windows"`），主进程自身没有控制台。因此任何 console 子系统子进程（`wsl.exe`、`setupc.exe`、`taskkill`、TRDP 原生 bridge、crash helper）都会被 Windows **新分配一个控制台窗口**，即使 stdio 全部重定向也不例外，用户看到的是“黑框一闪而过”。
+
+所有通过 `Command` 启动的后台探针、探测与助手进程必须经 `src-tauri/src/kernel/process.rs` 的 `hidden_command`，由它在 Windows 上设置 `CREATE_NO_WINDOW`，其它平台等价于普通 `Command::new`。需要用户真正看见的程序（`explorer` / `open` / `xdg-open` 打开系统文件管理器）继续使用裸 `Command::new`，但必须在同一行标注 `// visible-launcher: <理由>`，让例外在评审中可见。
+
+UAC 提权 helper 是本边界之外的显式例外：它们必须用 `ShellExecuteExW("runas")` 启动（`Command` 无法发起 UAC），并以 `nShow = 0`（SW_HIDE）自身隐藏窗口，因此不会闪出控制台；对应代码是 `src-tauri/src/plugins/local_shell/elevated.rs` 与 `src-tauri/src/virtual_port/elevated.rs`。新增提权 helper 必须同样显式设置 `nShow`，不能依赖默认显示状态。
+
+`npm run check:windows-spawn` 锁定该边界：它扫描 `src-tauri/src` 下所有 Rust 源码，拒绝 `kernel/process.rs` 之外未标注的 `Command::new`，并断言该模块仍拥有 `hidden_command` 与 `CREATE_NO_WINDOW`。它不覆盖 `ShellExecuteExW`（提权路径）与 `portable-pty` 的 pseudoconsole 启动路径（不产生可见窗口）。
+
 ### 崩溃诊断与本地证据
 
 System Log 只能覆盖仍能返回到 Rust 控制流的故障；native exception、驱动/FFI 导致的进程级异常可能在业务日志写入前直接终止进程。TauTerm 因此在 GUI 启动早期安装一层**本地、有限、非上传式** crash diagnostics：
@@ -99,15 +109,17 @@ flowchart LR
 - `src-tauri/src/virtual_port/`
 - `src-tauri/src/bin/`
 - `src-tauri/src/crash_diagnostics.rs`
+- `src-tauri/src/kernel/process.rs`
 - `src-tauri/tauri*.conf.json`
 - `src/hooks/useUpdater.ts`
 - `scripts/prepare-service-bin.js`
 - `scripts/stage-release.js`
 - `scripts/assemble-release.js`
+- `scripts/check-windows-spawn.mjs`
 - `.github/workflows/release.yml`
 
 ## 何时更新本文
 
-修改凭据后端、权限模型、服务/helper IPC、native 加载路径、崩溃诊断/转储策略、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
+修改凭据后端、权限模型、服务/helper IPC、native 加载路径、Windows 子进程可见性边界、崩溃诊断/转储策略、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
 
 Tauri/Windows 平台权威资料见 [PLATFORM_SECURITY.md](../knowledge/PLATFORM_SECURITY.md)；第三方分发和许可证依据见 [LICENSE_COMPLIANCE.md](../knowledge/LICENSE_COMPLIANCE.md)。

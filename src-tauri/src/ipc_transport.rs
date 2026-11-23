@@ -87,6 +87,10 @@ pub async fn write_data(
 }
 
 /// Resize a terminal-capable DataPlane without blocking the application main thread.
+///
+/// 没有终端几何能力的数据面（串口、网络调试、RTT 等原始字节流）把这次通知当作
+/// 无操作的成功：它们没有 PTY 尺寸可同步，"不支持终端控制"是正常回答而不是故障，
+/// 不能让前端的通用终端适配层在每个此类 Session 上记一条错误日志。
 #[tauri::command]
 pub async fn resize_pty(
     state: State<'_, AppState>,
@@ -102,6 +106,9 @@ pub async fn resize_pty(
             runtime_id,
         })?
     };
+    if !io.supports_terminal_control() {
+        return Ok(());
+    }
     io.resize_terminal_async(cols, rows)
         .await
         .map_err(|error| error.to_string())

@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 const MAX_ARGUMENTS: usize = 64;
 const MAX_ARGUMENT_LENGTH: usize = 4096;
@@ -204,7 +204,7 @@ impl LocalShellConfig {
                 })
         };
 
-        let (cwd, args) = if self.shell_kind == "wsl" {
+        let (cwd, args, wsl_cwd_probe) = if self.shell_kind == "wsl" {
             #[cfg(not(windows))]
             return Err(SessionError::ConnectionFailed {
                 reason: "Linux subsystem sessions are not available on this platform".into(),
@@ -217,12 +217,19 @@ impl LocalShellConfig {
                 } else {
                     self.cwd.trim()
                 };
-                validate_wsl_working_directory(&executable, &self.preset_args, wsl_cwd)?;
                 let mut args = self.preset_args.clone();
                 args.push("--cd".into());
                 args.push(wsl_cwd.into());
                 args.extend(self.args.clone());
-                (host_home()?, args)
+                // `resolve()` 同时服务于默认名称生成，必须保持纯计算（不启动任何进程）。
+                // WSL 工作目录的实际存在性由 `connect_with_mode` 在建立 PTY 前用一次
+                // 隐藏探针确认，原因见 `WslCwdProbe`。
+                let probe = WslCwdProbe {
+                    executable: executable.clone(),
+                    preset_args: self.preset_args.clone(),
+                    cwd: wsl_cwd.to_string(),
+                };
+                (host_home()?, args, Some(probe))
             }
         } else {
             let cwd = if self.cwd.trim().is_empty() {
@@ -232,7 +239,7 @@ impl LocalShellConfig {
             }?;
             let mut args = self.preset_args.clone();
             args.extend(self.args.clone());
-            (cwd, args)
+            (cwd, args, None)
         };
         if !cwd.is_dir() {
             return Err(SessionError::ConnectionFailed {
@@ -255,6 +262,7 @@ impl LocalShellConfig {
             cwd,
             env: self.env.clone(),
             label,
+            wsl_cwd_probe,
         })
     }
 }
@@ -274,6 +282,22 @@ struct ResolvedLocalShellConfig {
     cwd: PathBuf,
     env: Vec<LocalShellEnvVar>,
     label: String,
+    /// WSL 会话在建立 PTY 前必须执行的一次隐藏工作目录校验；其它 Shell 为 `None`。
+    wsl_cwd_probe: Option<WslCwdProbe>,
+}
+
+/// WSL 工作目录探针的输入。
+///
+/// `wsl.exe --cd <dir>` 对**不存在**的目录不会失败：实测它只在 stderr 报一行
+/// `chdir(...) failed`，然后在 `/` 里启动进程并返回 0。所以“让 `--cd` 自己失败”
+/// 不能替代校验，否则用户会静默拿到一个住在 `/` 的会话。校验必须显式做，但
+/// 它只允许在真正连接时发生一次，并且必须隐藏启动（见 `kernel::process`）。
+#[derive(Clone)]
+#[cfg_attr(not(windows), allow(dead_code))] // only read by the Windows probe
+struct WslCwdProbe {
+    executable: PathBuf,
+    preset_args: Vec<String>,
+    cwd: String,
 }
 
 fn shell_display_label(executable: &Path) -> String {
@@ -322,6 +346,9 @@ impl LocalShellAdapter {
             }
         })?;
         let resolved = config.resolve()?;
+        if let Some(probe) = resolved.wsl_cwd_probe.clone() {
+            check_wsl_working_directory_blocking(probe).await?;
+        }
         let elevated_supported = cfg!(windows) && config.shell_kind != "wsl";
         let factory = std::sync::Arc::new(LocalShellFactory {
             resolved,
@@ -613,7 +640,7 @@ fn detect_wsl_distributions(wsl: &Path) -> Vec<String> {
     // 不返回。端点发现只用于配置 UI，不允许它成为打开会话配置页的无界阻塞点。
     const DISCOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
-    let mut child = match Command::new(wsl)
+    let mut child = match crate::kernel::process::hidden_command(wsl)
         .args(["--list", "--quiet"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -678,34 +705,181 @@ fn detect_wsl_distributions(wsl: &Path) -> Vec<String> {
         .collect()
 }
 
+/// WSL 工作目录校验的超时。它只覆盖一次发行版内 `sh` 的启动，冷启动偶尔需要
+/// 数秒，因此比端点发现（1.5s，纯列表）宽得多。
 #[cfg(windows)]
-fn validate_wsl_working_directory(
-    executable: &Path,
-    preset_args: &[String],
-    cwd: &str,
-) -> Result<(), SessionError> {
-    let output = Command::new(executable)
-        .args(preset_args)
-        .args(["--cd", cwd, "--exec", "/bin/sh", "-c", "exit 0"])
-        .output()
+const WSL_CWD_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[cfg(windows)]
+async fn check_wsl_working_directory_blocking(probe: WslCwdProbe) -> Result<(), SessionError> {
+    tauri::async_runtime::spawn_blocking(move || check_wsl_working_directory(&probe))
+        .await
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("Linux subsystem working directory check task failed: {error}"),
+        })?
+}
+
+#[cfg(not(windows))]
+async fn check_wsl_working_directory_blocking(_probe: WslCwdProbe) -> Result<(), SessionError> {
+    Ok(())
+}
+
+/// 探针在目标目录不可用（不存在 / 无访问权限）时返回的专用退出码。
+#[cfg_attr(not(windows), allow(dead_code))]
+const WSL_CWD_PROBE_DIR_UNAVAILABLE: i32 = 42;
+
+/// 在 WSL 内确认目标工作目录可用。
+///
+/// 为什么不是"让 `--cd` 自己失败"：实测 `wsl.exe --cd <missing>` **返回 0**，只在
+/// stderr 报一行 `chdir(...) failed`，然后把进程放进 `/`（或默认家目录）。退出码
+/// 不可信，`$PWD` 与请求值的比较又要处理符号链接/尾斜杠/`~` 展开，容易漏判。
+///
+/// 因此探针改为**直接执行与真实会话完全相同的动作**：在同一个发行版、同一用户下
+/// `cd` 到目标目录。`cd` 成功就等于 `--cd` 会成功（同一个 chdir），失败则给出
+/// 专用退出码。`~` 与 `~/…` 在脚本内用 `$HOME` 展开，路径以位置参数传入，
+/// 不参与任何 shell 语法拼接。
+#[cfg(windows)]
+const WSL_CWD_PROBE_SCRIPT: &str = r#"case "$1" in
+  "~") p="$HOME" ;;
+  "~/"*) p="$HOME/${1#~/}" ;;
+  *) p="$1" ;;
+esac
+if cd "$p" 2>/dev/null; then printf %s "$PWD"; else exit 42; fi"#;
+
+#[cfg(windows)]
+fn check_wsl_working_directory(probe: &WslCwdProbe) -> Result<(), SessionError> {
+    let mut child = crate::kernel::process::hidden_command(&probe.executable)
+        .args(&probe.preset_args)
+        .args([
+            "--exec",
+            "/bin/sh",
+            "-c",
+            WSL_CWD_PROBE_SCRIPT,
+            "sh",
+            probe.cwd.as_str(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| SessionError::ConnectionFailed {
             reason: format!("Unable to validate Linux subsystem working directory: {error}"),
         })?;
-    if output.status.success() {
-        return Ok(());
-    }
 
-    let reason = decode_windows_output(&output.stderr);
-    Err(SessionError::ConnectionFailed {
-        reason: if reason.trim().is_empty() {
-            format!("Linux subsystem working directory is unavailable: {cwd}")
-        } else {
-            format!(
-                "Linux subsystem working directory is unavailable: {cwd} ({})",
-                reason.trim()
-            )
-        },
-    })
+    // 输出收集也必须有时限：`try_wait` 只证明 `wsl.exe` 退出了，若某个继承管道写端
+    // 的 WSL 子进程仍存活，直接 `wait_with_output()` 会无界阻塞。
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (pipe_tx, pipe_rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("wsl-cwd-probe-output".into())
+        .spawn(move || {
+            use std::io::Read;
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            if let Some(mut pipe) = stdout {
+                let _ = pipe.read_to_end(&mut out);
+            }
+            if let Some(mut pipe) = stderr {
+                let _ = pipe.read_to_end(&mut err);
+            }
+            let _ = pipe_tx.send((out, err));
+        })
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("Unable to start Linux subsystem working directory reader: {error}"),
+        })?;
+
+    let deadline = std::time::Instant::now() + WSL_CWD_PROBE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SessionError::ConnectionFailed {
+                    reason: format!(
+                        "Linux subsystem working directory check timed out after {:?}: {}",
+                        WSL_CWD_PROBE_TIMEOUT, probe.cwd
+                    ),
+                });
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SessionError::ConnectionFailed {
+                    reason: format!(
+                        "Unable to poll Linux subsystem working directory check: {error}"
+                    ),
+                });
+            }
+        }
+    };
+
+    let remaining = deadline
+        .saturating_duration_since(std::time::Instant::now())
+        .max(std::time::Duration::from_millis(50));
+    let (_stdout, stderr) = match pipe_rx.recv_timeout(remaining) {
+        Ok(collected) => collected,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SessionError::ConnectionFailed {
+                reason: format!(
+                    "Linux subsystem working directory check did not finish within {:?}: {}",
+                    WSL_CWD_PROBE_TIMEOUT, probe.cwd
+                ),
+            });
+        }
+    };
+
+    match wsl_cwd_probe_outcome(status.success(), status.code()) {
+        WslCwdProbeOutcome::Reached => Ok(()),
+        WslCwdProbeOutcome::Unavailable => Err(SessionError::ConnectionFailed {
+            reason: format!(
+                "Linux subsystem working directory is unavailable: {}",
+                probe.cwd
+            ),
+        }),
+        WslCwdProbeOutcome::Failed => {
+            let detail = decode_windows_output(&stderr);
+            Err(SessionError::ConnectionFailed {
+                reason: if detail.trim().is_empty() {
+                    format!(
+                        "Unable to validate Linux subsystem working directory: {}",
+                        probe.cwd
+                    )
+                } else {
+                    format!(
+                        "Unable to validate Linux subsystem working directory: {} ({})",
+                        probe.cwd,
+                        detail.trim()
+                    )
+                },
+            })
+        }
+    }
+}
+
+/// 探针退出码的语义。专用退出码 42 表示“目录不可用”，其它非零退出是真正的失败。
+#[derive(Debug, PartialEq, Eq)]
+enum WslCwdProbeOutcome {
+    Reached,
+    Unavailable,
+    Failed,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn wsl_cwd_probe_outcome(success: bool, exit_code: Option<i32>) -> WslCwdProbeOutcome {
+    if success {
+        return WslCwdProbeOutcome::Reached;
+    }
+    match exit_code {
+        Some(WSL_CWD_PROBE_DIR_UNAVAILABLE) => WslCwdProbeOutcome::Unavailable,
+        _ => WslCwdProbeOutcome::Failed,
+    }
 }
 
 #[cfg(windows)]
@@ -823,6 +997,30 @@ fn shell_display_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `wsl.exe --cd` 的静默回退是这条链路唯一不能靠 `--cd` 退出码发现的失败，
+    /// 因此探针改为在 WSL 内直接 `cd` 到目标目录，并把退出码语义锁成契约。
+    #[test]
+    fn wsl_cwd_probe_maps_exit_codes_to_outcomes() {
+        assert_eq!(
+            wsl_cwd_probe_outcome(true, Some(0)),
+            WslCwdProbeOutcome::Reached
+        );
+        // 目录不存在 / 无访问权限：探针脚本的专用退出码。
+        assert_eq!(
+            wsl_cwd_probe_outcome(false, Some(WSL_CWD_PROBE_DIR_UNAVAILABLE)),
+            WslCwdProbeOutcome::Unavailable
+        );
+        // 发行版未注册、WSL 服务异常等：真正的失败，必须带上 stderr 细节。
+        assert_eq!(
+            wsl_cwd_probe_outcome(false, Some(1)),
+            WslCwdProbeOutcome::Failed
+        );
+        assert_eq!(
+            wsl_cwd_probe_outcome(false, None),
+            WslCwdProbeOutcome::Failed
+        );
+    }
 
     #[test]
     fn rejects_nul_and_excessive_arguments() {

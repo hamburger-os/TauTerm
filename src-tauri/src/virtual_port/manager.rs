@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +20,6 @@ use super::backend::{
 };
 
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::process::CommandExt;
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_INVALID_PARAMETER, HANDLE,
 };
@@ -31,7 +29,6 @@ use windows_sys::Win32::System::Threading::{
     CreateMutexW, OpenProcess, ReleaseMutex, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 const WAIT_OBJECT_0: u32 = 0;
 const WAIT_ABANDONED: u32 = 0x0000_0080;
 const WAIT_TIMEOUT: u32 = 258;
@@ -123,14 +120,13 @@ fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output
         return Err(format!("setupc.exe not found: {:?}", setupc));
     }
 
-    let mut command = Command::new(&setupc);
+    let mut command = crate::kernel::process::hidden_command(&setupc);
     command
         .current_dir(resource_dir)
         .arg("--silent")
         .args(args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW);
+        .stderr(std::process::Stdio::piped());
 
     let child = command
         .spawn()
@@ -149,9 +145,8 @@ fn run_setupc(resource_dir: &Path, args: &[&str]) -> Result<std::process::Output
                 pid,
                 SETUPC_TIMEOUT_SECS
             );
-            let _ = Command::new("taskkill")
+            let _ = crate::kernel::process::hidden_command("taskkill")
                 .args(["/F", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
                 .output();
             Err("setupc.exe execution timed out".into())
         }

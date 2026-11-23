@@ -40,6 +40,10 @@ flowchart TB
 - 该引擎**不是字节直通**：它维护自己的控制台屏幕模型，跨行时用「裸 LF + 相对光标移动（`CUB n`）」重绘行首，所以行首列只有在裸 LF 不被改写时才成立。因此宿主终端**不得**为 PTY 会话开启 xterm 的 `convertEol`：它把每个 LF 改写成 CR+LF，注入的 CR 会把光标钳到第 0 列，随后的相对移动变成空操作，整行贴到最左侧（半块像素画 logo 会因此碎成错位方块）。`convertEol` 只保留给 Serial / RTT 等非 PTY 原始字节流；该契约由 `npm run check:terminal-screen` 锁定。
 - Local Shell 使用终端搜索、尺寸与日志能力，但不启用远端传输或全局 SendBar。
 - shell 发现只提供可解释的候选；自定义 executable、参数和工作目录必须保持独立字段，避免命令字符串拼接。
+- WSL 端点发现与工作目录探针都经 `kernel::process::hidden_command` 启动。Windows 子进程可见性边界（含 UAC 提权 helper 的 `SW_HIDE` 例外）由 [PLATFORM_SECURITY.md](PLATFORM_SECURITY.md) 拥有，由 `npm run check:windows-spawn` 锁定，本文不复述其机制。
+- `LocalShellConfig::resolve()` 是**纯计算**：只做参数校验、executable 解析、工作目录/argv 拼装，不启动任何进程。它同时服务于“生成默认会话名”，因此任何探测放进 `resolve()` 都会变成“改一个配置项就跑一次发行版”。WSL 工作目录的存在性由 `connect_with_mode` 在建立 PTY 前用一次隐藏探针确认，并放在 blocking worker 上执行。
+- 该探针不能被删除：`wsl.exe --cd <dir>` 对**不存在**的目录不会失败——实测它只在 stderr 报一行 `chdir(...) failed`，然后在 `/` 里启动进程并返回 0。因此探针不再依赖 `--cd` 的退出码，而是在同一个发行版/同一用户下直接 `cd` 到目标目录（与真实会话同一个 chdir）；成功即通过，失败返回专用退出码（目录不可用）并给出明确错误。`~`/`~/…` 在探针脚本内用 `$HOME` 展开，路径以位置参数传入，不参与 shell 语法拼接。探针有界（15s，进程等待与管道收集都受限）并在超时后 kill。
+- Local Shell 的 PTY 以宿主共享初始几何（`crate::session::DEFAULT_TERMINAL_COLUMNS/ROWS`）=120×30 建立，不依赖 `portable-pty` 的默认 24×80。终端几何的所有权、前端首次 `fit()` 的下发时机与防抖策略由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 拥有。
 
 ## 代码锚点
 

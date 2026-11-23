@@ -39,6 +39,7 @@
 | `npm run check-reserved-region` | 检查虚拟串口测试保留区与产品常量一致 |
 | `npm run check:brand-neutral-ui` | 检查产品 UI 与主题文案的品牌中性约束 |
 | `npm run check:tauri-blocking` | 检查潜在阻塞的 Tauri command 是否错误地留在同步分发路径 |
+| `npm run check:windows-spawn` | 检查后台子进程是否都经 `kernel::process::hidden_command` 启动（Release 是 GUI 子系统，裸 `Command::new` 会闪出控制台窗口） |
 | `npm run check:runtime-errors` | 检查全局前端异常是否进入统一日志且公共错误文案已国际化 |
 | `npm run check:terminal-clipboard` | 检查终端复制/粘贴快捷键、统一 paste 路径、焦点恢复和多行粘贴安全规则 |
 | `npm run check:conpty` | 检查随包 ConPTY 引擎（`conpty.dll` + `OpenConsole.exe`）的文件哈希、来源记录、驱动接线与 Windows 打包映射 |

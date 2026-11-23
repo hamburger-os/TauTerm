@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crate::session::{DisconnectInfo, RuntimeIdentity};
-use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
+use crate::transport::{
+    DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, DataPlaneSubscriptionEnd, TransportError,
+};
 
 /// Owns one live DataPlane actor plus the session-facing receive pump.
 ///
@@ -57,12 +59,22 @@ impl SessionDataPlane {
                         }
                         Err(_) => {
                             if !event_shutdown_requested.load(Ordering::Acquire) {
-                                on_disconnect(
-                                    event_identity.clone(),
-                                    DisconnectInfo::io_error(
-                                        "transport runtime stopped unexpectedly",
+                                // The subscription carries the real reason it ended. Saying
+                                // "transport runtime stopped unexpectedly" is wrong when the
+                                // actor is alive but detached this consumer for backlog: the
+                                // presentation path deliberately never drops bytes, so an
+                                // overflow has to surface as an explicit, explainable close.
+                                let reason = match subscription.disconnect_reason() {
+                                    Some(DataPlaneSubscriptionEnd::BacklogExceeded {
+                                        capacity_messages,
+                                    }) => format!(
+                                        "presentation backlog exceeded ({capacity_messages} messages); the consumer stopped draining and was detached"
                                     ),
-                                );
+                                    Some(DataPlaneSubscriptionEnd::RuntimeStopped) | None => {
+                                        "transport runtime stopped unexpectedly".to_string()
+                                    }
+                                };
+                                on_disconnect(event_identity.clone(), DisconnectInfo::io_error(reason));
                             }
                             break;
                         }

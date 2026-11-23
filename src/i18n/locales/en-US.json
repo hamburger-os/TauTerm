@@ -130,8 +130,7 @@
     "deletePersistFailed": "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
     "loadPersistFailed": "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
     "workspaceLoadFailed": "Failed to load the workspace layout: {{error}}. Automatic layout saving is paused to preserve the on-disk layout. Restart the app to retry.",
-    "renamePersistFailed": "Failed to rename the saved session: {{error}}. The previous name was restored.",
-    "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
+    "renamePersistFailed": "Failed to rename the saved session: {{error}}. The previous name was restored."
   },
   "stats": {
     "txBytes": "TX",
@@ -871,6 +870,10 @@
     "fontSizeNote": "Changes apply immediately to all terminal views",
     "bufferLines": "Buffer Lines",
     "bufferLinesNote": "lines (1,000–100,000). Changes apply immediately to all modes",
+    "terminalRenderer": "Terminal renderer",
+    "terminalRendererDesc": "Auto keeps the GPU renderer for terminals you are looking at and falls back to the CPU renderer when WebGL is unavailable. Switch to CPU when a terminal surface renders incorrectly (for example a cursor that never appears).",
+    "terminalRendererAuto": "Auto (GPU first)",
+    "terminalRendererCpu": "CPU (WebGL off)",
     "languageLabel": "Interface Language",
     "languageZh": "中文",
     "languageEn": "English",
@@ -1022,6 +1025,7 @@
     "fullscreenApp": "Full-screen app",
     "mouseReporting": "Mouse reporting: {{mode}}",
     "rendererFallback": "Renderer: DOM fallback (no WebGL)",
+    "rendererCpu": "Renderer: CPU (WebGL disabled)",
     "pasteWarningTitle": "Confirm Terminal Paste",
     "pasteWarningMessage": "This paste contains a line break or a large amount of data. It may submit input immediately or send a large payload to the remote system or device. Review it before continuing.",
     "pasteWarningMeta": "{{lines}} content lines · {{characters}} characters",

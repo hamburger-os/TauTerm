@@ -25,6 +25,10 @@ import ScrollToBottomButton from "./ScrollToBottomButton";
 import SearchBar from "./SearchBar";
 import PasteSafetyDialog from "./PasteSafetyDialog";
 import { mountXtermHost, type XtermHostLifecycle } from "./xtermHostLifecycle";
+import {
+  focusTerminalOnActivation,
+  restoreTerminalFocus as restoreFocusToTerminal,
+} from "./terminalFocus";
 import { createTerminalOptions, createTerminalTheme } from "./terminalTheme";
 import { planIntegerCellHeight } from "../../core/terminal-cell-grid";
 import {
@@ -37,8 +41,10 @@ import {
 import {
   DOM_TERMINAL_RENDERER,
   describeRendererFailure,
+  shouldUseWebglRenderer,
   warnRendererFallback,
   type TerminalRendererKind,
+  type TerminalRendererPolicy,
 } from "../../core/terminal-renderer";
 import styles from "./terminalSurface.module.css";
 
@@ -92,8 +98,11 @@ interface TerminalSurfaceProps {
    * 只对**不是 PTY** 的字节流开启：PTY（Local Shell / SSH）的行结束翻译由
    * 远端 termios / ConPTY 自己负责；随包的 ConPTY 引擎还会用「裸 LF + 相对光标
    * 移动」重绘行首，把 LF 改写成 CR+LF 会让那类相对移动失效、整行贴到第 0 列。
+   *
+   * 必填：这个选项决定字节流语义，没有任何安全默认值，必须由每个 surface 调用方
+   * 按自己的流类型显式声明。
    */
-  convertEol?: boolean;
+  convertEol: boolean;
   /** 当前 Session 是否提供 Protocol Inspector 右侧栏 */
   allowProtocolInspect?: boolean;
   /** 提供后右键菜单出现「断开连接」 */
@@ -154,10 +163,11 @@ function applyCellGrid(term: XTerm): boolean {
 function syncWebglRenderer(
   term: XTerm,
   addonRef: { current: WebglAddon | null },
-  visible: boolean,
+  policy: TerminalRendererPolicy,
+  displayed: boolean,
   onFallback: () => void,
 ): TerminalRendererKind {
-  if (visible) {
+  if (shouldUseWebglRenderer(policy, displayed)) {
     if (addonRef.current) return "webgl";
     try {
       const addon = new WebglAddon();
@@ -211,14 +221,14 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
     inputEnabled = true,
     isVisible = true,
     isActive = true,
-    convertEol = true,
+    convertEol,
     allowProtocolInspect = false,
     onDisconnectSession,
     onFit,
   }, ref) {
     const { t } = useTranslation();
     const { showToast } = useToast();
-    const { theme, fontSize, bufferLines } = useTheme();
+    const { theme, fontSize, bufferLines, terminalRenderer } = useTheme();
 
     const wrapperRef = useRef<HTMLDivElement>(null);
     const hostRef = useRef<HTMLDivElement>(null);
@@ -255,11 +265,11 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
     const bufferLinesRef = useRef(bufferLines);
     bufferLinesRef.current = bufferLines;
     const [surfaceTerminal, setSurfaceTerminal] = useState<XTerm | null>(null);
+    const terminalRendererRef = useRef(terminalRenderer);
+    terminalRendererRef.current = terminalRenderer;
 
     const restoreTerminalFocus = useCallback(() => {
-      requestAnimationFrame(() => {
-        xtermRef.current?.focus();
-      });
+      restoreFocusToTerminal(() => xtermRef.current);
     }, []);
 
     /** Re-read the terminal's mode mirror after a host-initiated reset. */
@@ -419,6 +429,7 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
               setRendererKind(syncWebglRenderer(
                 terminal,
                 webglAddonRef,
+                terminalRendererRef.current,
                 isVisibleRef.current && hostMeasurableRef.current,
                 () => { setRendererKind(DOM_TERMINAL_RENDERER); },
               ));
@@ -523,15 +534,27 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
       return () => cancelAnimationFrame(raf);
     }, [isActive, scheduleFit]);
 
+    // 焦点所有权：连接完成、切换标签、切换分屏之后终端必须自己拿到键盘焦点，
+    // 否则按键会落到宿主按钮上——用户看到的是"输出在动但终端没反应"。
+    // 具体是否允许聚焦（弹窗打开/真实输入框有焦点时不许抢）由 terminalFocus 决定。
+    useEffect(() => {
+      if (!isActive || !isVisible || !hostMeasurable) return;
+      focusTerminalOnActivation(() => xtermRef.current);
+    }, [isActive, isVisible, hostMeasurable]);
+
     // Renderer follows display state: GPU rendering only while the terminal is
     // actually shown, DOM renderer while pooled/hidden.
     useEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
-      setRendererKind(syncWebglRenderer(term, webglAddonRef, isVisible && hostMeasurable, () => {
-        setRendererKind(DOM_TERMINAL_RENDERER);
-      }));
-    }, [hostMeasurable, isVisible]);
+      setRendererKind(syncWebglRenderer(
+        term,
+        webglAddonRef,
+        terminalRenderer,
+        isVisible && hostMeasurable,
+        () => { setRendererKind(DOM_TERMINAL_RENDERER); },
+      ));
+    }, [hostMeasurable, isVisible, terminalRenderer]);
 
     // 接管系统 paste 事件的 capture 阶段，确保不会先被 xterm 默认处理后再重复发送。
     // 所有入口（系统 paste / 快捷键 / 右键菜单）最终统一进入 requestPasteText → term.paste。
@@ -651,10 +674,12 @@ const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
       // box-drawing glyphs as exact quads, the DOM fallback uses the font and can
       // fragment pixel-art logos (the app must never hide that difference again).
       if (rendererKind === DOM_TERMINAL_RENDERER) {
-        parts.push(t("terminal.rendererFallback", "Renderer: DOM fallback (no WebGL)"));
+        parts.push(terminalRenderer === "cpu"
+          ? t("terminal.rendererCpu", "Renderer: CPU (WebGL disabled)")
+          : t("terminal.rendererFallback", "Renderer: DOM fallback (no WebGL)"));
       }
       return parts.length > 0 ? parts.join(" · ") : null;
-    }, [presentation, rendererKind, t]);
+    }, [presentation, rendererKind, terminalRenderer, t]);
 
     useEffect(() => {
       // A pending confirmation belongs to exactly one active terminal. If the

@@ -8,13 +8,43 @@
  * therefore records the outcome instead of discarding it: a downgraded surface
  * has to be explainable, not look like a terminal-emulation defect.
  *
- * Renderer *selection* stays in `TerminalSurface.tsx` (the single xterm owner);
- * this module owns only the vocabulary and the report helpers.
+ * Renderer *mechanics* (addon construction, dispose, context-loss handling) stay in
+ * `TerminalSurface.tsx`, the single xterm owner. This module owns the vocabulary:
+ * which renderer is actually drawing, the user-visible policy (`auto` | `cpu`), and
+ * the predicate that decides whether a policy enables WebGL for a displayed surface.
  */
 
 export type TerminalRendererKind = "webgl" | "dom";
 
 export const DOM_TERMINAL_RENDERER: TerminalRendererKind = "dom";
+
+/**
+ * 用户可见的渲染器策略。
+ *
+ * 只有两个值，因为它们才有不同的行为：`auto` 优先 GPU 并在 WebGL 不可用时
+ * 回退 CPU；`cpu` 完全关闭 WebGL。不存在第三个“强制 GPU”——那只是 `auto`
+ * 已经在做的事，多一个同义选项只会让设置页说谎。
+ */
+export type TerminalRendererPolicy = "auto" | "cpu";
+
+export const DEFAULT_TERMINAL_RENDERER_POLICY: TerminalRendererPolicy = "auto";
+
+export function isTerminalRendererPolicy(value: unknown): value is TerminalRendererPolicy {
+  return value === "auto" || value === "cpu";
+}
+
+/**
+ * 该策略下是否应该启用 GPU 渲染器。
+ *
+ * `displayed` 由 surface 提供：只有真正显示出来的终端才值得占用 GPU 上下文，
+ * 池中隐藏的终端继续用 DOM 渲染器，把 WebGL 上下文数量限制在可见 Pane 数内。
+ */
+export function shouldUseWebglRenderer(
+  policy: TerminalRendererPolicy,
+  displayed: boolean,
+): boolean {
+  return policy === "auto" && displayed;
+}
 
 export function describeRendererFailure(error: unknown): string {
   if (error instanceof Error) return error.message;
