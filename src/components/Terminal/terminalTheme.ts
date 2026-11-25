@@ -206,7 +206,16 @@ export function createTerminalOptions(input: TerminalOptionsInput): ITerminalOpt
     // font glyphs (WebGL path). The DOM renderer paints every cell as its own text run,
     // so half-block logos, TUI borders and character scrollbars end up with 1px seams.
     customGlyphs: true,
-    cursorBlink: true,
+    // 关闭光标闪烁。闪烁是宿主里唯一"按定时器重绘单个格子"的路径，也是唯一
+    // 会把光标画在**两个位置**的路径：旧光标靠"下一帧重绘覆盖"来擦除，而
+    // 满屏移动光标、并来回切换 DECSCUSR 的应用（vim / less / htop）会让这份
+    // 重绘节奏与实际光标位置错开，旧光标就留成擦不掉的残影。
+    // 已观察到的判据：残影对窗口 resize、全量重绘、`Ctrl+L` 和切换渲染器
+    // （WebGL / CPU）全部免疫——它不是"脏区没刷"，而是"每帧又被画了一次"。
+    // 关掉闪烁后光标只由真实移动驱动，不存在第二个绘制来源。
+    // 若要恢复闪烁，必须先保证重绘行号直接读 `buffer.active.cursorY`（不缓存），
+    // 并在失焦/获焦、DECSCUSR 变更、运行期 cell 几何变更后强制重绘光标行。
+    cursorBlink: false,
     // 方块光标：xterm 6 的默认值本来就是 `block`，TauTerm 仍然显式写出，因为
     // 光标形态是用户可见契约——本仓库曾把它强制成 `underline`，而 WebGL 渲染器
     // 只画 1 个设备像素高的一条线，在深色玻璃背景 + 高分屏上等于"没有光标"
