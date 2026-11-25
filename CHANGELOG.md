@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.11] — 2026-11-25
+
+### Fixed
+- **vim/less looked like the cursor was frozen** — the terminal's blinking cursor left a second, un-erasable cursor at its previous position, so vim/less appeared stuck while the program underneath kept working (the cursor did move, `:` did enter command mode, `:q` did quit). The artifact survived window resizes, full redraws, `Ctrl+L` and switching between the WebGL and CPU renderers, which ruled out the rasterizer and pointed at the only code path that repaints a single cell on a timer: cursor blinking. Cursor blinking is now off; the cursor is repainted only by real movement. The contract, and the conditions under which blinking may be restored, are owned by `docs/modules/UI_FOUNDATION.md`.
+
 ## [0.6.10] — 2026-11-24
 
 ### Added
